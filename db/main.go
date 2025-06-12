@@ -190,20 +190,11 @@ func loadMaintainersAndProjects(db *gorm.DB, spreadsheetID, readRange string) {
 		log.Fatalf("maintainerd-backend: loadMaintainersAndProjects - readSheetRows: %v", err)
 	}
 
-	var currentProject string
 	var currentMaintainerRef string
 	var currentMailingList string
-	var currentStatus string
 
 	for _, row := range rows {
 		var missingMaintainerFields []string
-
-		previousStatus := currentStatus
-		currentStatus = row[StatusHdr]
-		if currentStatus == "" {
-			currentStatus = previousStatus
-		}
-		currentProject = row[ProjectHdr]
 
 		name := row[MaintNameHdr]
 
@@ -240,14 +231,14 @@ func loadMaintainersAndProjects(db *gorm.DB, spreadsheetID, readRange string) {
 			var project Project
 			if parent.Name == "" {
 				project = Project{
-					Name:          currentProject,
-					Maturity:      Maturity(currentStatus),
+					Name:          row[ProjectHdr],
+					Maturity:      Maturity(row[StatusHdr]),
 					MaintainerRef: currentMaintainerRef,
 					MailingList:   &currentMailingList,
 				}
 			} else {
 				project = Project{
-					Name:            currentProject,
+					Name:            row[ProjectHdr],
 					Maturity:        parent.Maturity,
 					MaintainerRef:   currentMaintainerRef,
 					MailingList:     &currentMailingList,
@@ -281,7 +272,9 @@ func loadMaintainersAndProjects(db *gorm.DB, spreadsheetID, readRange string) {
 	}
 }
 
-// readSheetRows returns every row as a map keyed by the header row.
+// readSheetRows returns every row as a map keyed by the header row,
+// and carries forward the last non‐empty "Project" and "Status" values
+// when those cells are blank or missing.
 func readSheetRows(ctx context.Context, srv *sheets.Service, spreadsheetID, readRange string) ([]map[string]string, error) {
 	resp, err := srv.Spreadsheets.Values.
 		Get(spreadsheetID, readRange).
@@ -300,18 +293,52 @@ func readSheetRows(ctx context.Context, srv *sheets.Service, spreadsheetID, read
 		headers[i] = strings.TrimSpace(fmt.Sprint(cell))
 	}
 
-	// Remaining rows → maps
+	// Find the column indexes for "Project" and "Status"
+	projIdx, statIdx := -1, -1
+	for i, h := range headers {
+		switch h {
+		case "Project":
+			projIdx = i
+		case "Status":
+			statIdx = i
+		}
+	}
+
 	var rows []map[string]string
+	var lastProject, lastStatus string
+
+	// Remaining rows → maps
 	for _, r := range resp.Values[1:] {
 		rowMap := make(map[string]string, len(headers))
-		for i, header := range headers {
+
+		for i, h := range headers {
+			// read raw cell if present
+			var cellVal string
 			if i < len(r) {
-				rowMap[header] = fmt.Sprint(r[i])
-			} else {
-				rowMap[header] = "" // missing cell
+				cellVal = strings.TrimSpace(fmt.Sprint(r[i]))
+			}
+
+			switch i {
+			case projIdx:
+				if cellVal != "" {
+					lastProject = cellVal
+				}
+				rowMap[h] = lastProject
+
+			case statIdx:
+				if cellVal != "" {
+					lastStatus = cellVal
+				}
+				rowMap[h] = lastStatus
+
+			default:
+				// everything else: just use what’s there (or empty string)
+				rowMap[h] = cellVal
 			}
 		}
+
 		rows = append(rows, rowMap)
 	}
+
 	return rows, nil
 }

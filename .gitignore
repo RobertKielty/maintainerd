@@ -6,4 +6,4 @@ tmp/
 credentials.json
 demo.db
 .dirlocals.el
-db
+./db/db
