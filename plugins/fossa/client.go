@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 
@@ -24,6 +25,34 @@ func NewClient(token string) *Client {
 		APIKey:  token,
 		APIBase: apiBase,
 	}
+}
+
+// FetchUserInvitations GETs /api/user-invitations - Retrieves all active (non-expired) user invitations for an
+// organization
+func (c *Client) FetchUserInvitations() (string, error) {
+	req, _ := http.NewRequest("GET", c.APIBase+"/user-invitations", nil)
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Sprintf("FetchUserInvitations failed %s\n", err), err
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			return
+		}
+	}(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("FetchUserInvitations failed: called $s\n\t\t%s – %s", resp.Status, string(body))
+	}
+
+	//if err := json.NewDecoder(resp.Body).Decode(&teams); err != nil {
+	//	return nil, err
+	//}
+	return string(body), nil
 }
 
 // FetchTeams calls GET /api/teams
@@ -55,9 +84,9 @@ func (c *Client) FetchTeams() ([]Team, error) {
 	return teams, nil
 }
 
-// FetchTeamUsers calls GET /api/teams/{teamID}/users
-func (c *Client) FetchTeamUsers(teamID int) ([]User, error) {
-	var url = fmt.Sprintf("%s/teams/%d/users", c.APIBase, teamID)
+// FetchTeamUserEmails calls GET /api/teams/{id}/members
+func (c *Client) FetchTeamUserEmails(teamID int) ([]string, error) {
+	var url = fmt.Sprintf("%s/teams/%d/members", c.APIBase, teamID)
 	req, _ := http.NewRequest("GET", url, nil)
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	req.Header.Set("Accept", "application/json")
@@ -77,12 +106,17 @@ func (c *Client) FetchTeamUsers(teamID int) ([]User, error) {
 		body, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("list team users failed: %s – %s", resp.Status, string(body))
 	}
-
-	var users []User
-	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
-		return nil, err
+	var emails []string
+	var members TeamMembers
+	if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
+		return nil, fmt.Errorf("list team users failed json.NewDecoder returned: %s\nwhen trying to decode %s", err, resp.Body)
 	}
-	return users, nil
+	if members.TotalCount > 0 {
+		for _, result := range members.Results {
+			emails = append(emails, result.Email)
+		}
+	}
+	return emails, nil
 }
 
 // GetTeamId searches a slice of Team objects by name.
@@ -96,52 +130,31 @@ func (c *Client) GetTeamId(teams []Team, name string) (int, error) {
 	return 0, fmt.Errorf("team not found: %q", name)
 }
 
-// FetchTeamUserEmails returns an array of email addresses for members of the team identified by teamId
-func (c *Client) FetchTeamUserEmails(teamID int) ([]string, error) {
-	teams, err := c.FetchTeams()
+// FetchTeamsMap returns a map of FOSSA Teams keyed by the name of the team
+func (c *Client) FetchTeamsMap() (map[string]Team, error) {
+	ta, err := c.FetchTeams()
 	if err != nil {
-		return nil, fmt.Errorf("fetchTeams: %w", err)
+		log.Printf("FOSSA client, FetchTeamsMap:Error fetching teams: %v", err)
+		return nil, err
 	}
+	tm := map[string]Team{}
 
-	var userIDs []int
-	for _, t := range teams {
-		if t.ID == teamID {
-			for _, tu := range t.TeamUsers {
-				userIDs = append(userIDs, tu.UserID)
-			}
-			break
-		}
+	for i, team := range ta {
+		tm[team.Name] = ta[i]
 	}
-	if len(userIDs) == 0 {
-		return nil, fmt.Errorf("no users found for team %d", teamID)
-	}
-	var emails []string
-	for _, uid := range userIDs {
-		url := fmt.Sprintf("%s/users/%d", c.APIBase, uid)
-		req, _ := http.NewRequest("GET", url, nil)
-		req.Header.Set("Authorization", "Bearer "+c.APIKey)
-		req.Header.Set("Accept", "application/json")
+	return tm, nil
+}
 
-		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("request /users/%d failed: %w", uid, err)
-		}
-		defer func(Body io.ReadCloser) {
-			if err := Body.Close(); err != nil {
-				fmt.Fprintf(os.Stderr, "error closing response body: %v\n", err)
-			}
-		}(resp.Body)
-
-		var users []User
-		if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
-			return nil, err
-		}
-		for _, user := range users {
-			emails = append(emails, user.Email)
-		}
-
-	}
-	return emails, nil
+type TeamMembers struct {
+	Results []struct {
+		UserID   int    `json:"userId"`
+		RoleID   int    `json:"roleId"`
+		Username string `json:"username"`
+		Email    string `json:"email"`
+	} `json:"results"`
+	PageSize   int `json:"pageSize"`
+	Page       int `json:"page"`
+	TotalCount int `json:"totalCount"`
 }
 
 // Team models a single team object from GET /api/teams
