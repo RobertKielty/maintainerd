@@ -2,203 +2,50 @@ package main
 
 import (
 	"context"
-	"database/sql/driver"
 	"fmt"
-	"log"
-	"os"
-	"strings"
-	"time"
-
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
+	"log"
+	"os"
+	"strings"
 
+	"maintainerd/model"
 	"maintainerd/plugins/fossa"
 )
-
-type MaintainerStatus string
 
 const (
 	apiTokenEnvVar = "FOSSA_API_TOKEN"
 )
 
 const (
-	ActiveMaintainer      MaintainerStatus = "Active"
-	EmeritusMaintainer    MaintainerStatus = "Emeritus"
-	RetiredMaintainer     MaintainerStatus = "Retired"
-	StatusHdr             string           = "Status"
-	ProjectHdr            string           = "Project"
-	MaintNameHdr          string           = "Maintainer Name"
-	CompanyNameHdr        string           = "Company"
-	EmailHdr              string           = "Emails"
-	GitHubHdr             string           = "Github Name"
-	ParentProjectHdr      string           = "Parent Project"
-	MaintainterFileRefHdr string           = "OWNERS/MAINTAINERS"
-	MailingListAddrHdr    string           = "Mailing List Address"
+	StatusHdr             string = "Status"
+	ProjectHdr            string = "Project"
+	MaintNameHdr          string = "Maintainer Name"
+	CompanyNameHdr        string = "Company"
+	EmailHdr              string = "Emails"
+	GitHubHdr             string = "Github Name"
+	ParentProjectHdr      string = "Parent Project"
+	MaintainterFileRefHdr string = "OWNERS/MAINTAINERS"
+	MailingListAddrHdr    string = "Mailing List Address"
 )
-
-// IsValid returns true id MaintainerStatus is known
-func (s MaintainerStatus) IsValid() bool {
-	switch s {
-	case ActiveMaintainer, EmeritusMaintainer, RetiredMaintainer:
-		return true
-	}
-	return false
-}
-
-func (s *MaintainerStatus) Scan(value interface{ any }) error {
-	v, ok := value.(string)
-	if !ok {
-		return fmt.Errorf("cannot scan %T into MaintainerStatus", value)
-	}
-	*s = MaintainerStatus(v)
-	return nil
-}
-
-func (s MaintainerStatus) Value() (driver.Value, error) {
-	if !s.IsValid() {
-		return nil, fmt.Errorf("invalid MaintainerStatus %q", s)
-	}
-	return string(s), nil
-}
 
 // Maturity - A Project's maturity used by end-users to assess deployability
-type Maturity string
 
-const (
-	Sandbox    Maturity = "Sandbox"
-	Incubating Maturity = "Incubating"
-	Graduated  Maturity = "Graduated"
-	Archived   Maturity = "Archived"
-)
-
-func (m *Maturity) Scan(value interface{ any }) error {
-	v, ok := value.(string)
-	if !ok {
-		return fmt.Errorf("cannot scan %T into Maturity", value)
-	}
-	*m = Maturity(v)
-	return nil
-}
-
-func (m Maturity) Value() (driver.Value, error) {
-	if !m.IsValid() {
-		return nil, fmt.Errorf("invalid Maturity %q", m)
-	}
-	return string(m), nil
-}
-
-func (m Maturity) IsValid() bool {
-	switch m {
-	case Sandbox, Incubating, Graduated, Archived:
-		return true
-	}
-	return false
-}
-
-// A Maintainer is a leader that can speak for a Project
-//
-// At registration, an email needs to be provided
-// Optionally, a Maintainer
-//
-//		has a Company Affiliation
-//	  	TODO kubernetes specific may or may not have have voting rights on a Project,
-//	    has a status of Active, Emeritus or Retired
-type Maintainer struct {
-	gorm.Model
-	Name             string
-	Email            string           `gorm:"size:254;default:EMAIL_MISSING"`
-	GitHubAccount    string           `gorm:"size:100;default:GITHUB_MISSING"`
-	MaintainerStatus MaintainerStatus `gorm:"type:text"`
-	ImportWarnings   string
-	Projects         []Project `gorm:"many2many:maintainer_projects;joinForeignKey:MaintainerID;joinReferences:ProjectID"`
-	RegisteredAt     *time.Time
-	CompanyID        *uint
-	Company          Company
-}
-
-type Project struct {
-	gorm.Model
-	Name            string `gorm:"uniqueIndex,not null;check:name <> ''"`
-	ParentProjectID *uint  `gorm:"index"`
-	Maturity        Maturity
-	MaintainerRef   string
-	MailingList     *string      `gorm:"size:254;default:MML_MISSING"`
-	Maintainers     []Maintainer `gorm:"many2many:maintainer_projects;joinForeignKey:ProjectID;joinReferences:MaintainerID"`
-	Services        []Service    `gorm:"many2many:service_projects;joinForeignKey:ProjectID;joinReferences:ServiceID"`
-}
-
-type MaintainerProject struct {
-	MaintainerID uint       `gorm:"primaryKey;index"` // FK + index
-	ProjectID    uint       `gorm:"primaryKey;index"` // FK + index
-	JoinedAt     time.Time  `gorm:"autoCreateTime"`
-	Maintainer   Maintainer `gorm:"foreignKey:MaintainerID;constraint:OnDelete:CASCADE"`
-	Project      Project    `gorm:"foreignKey:ProjectID;constraint:OnDelete:CASCADE"`
-}
-
-type Company struct {
-	gorm.Model
-	Name string `gorm:"uniqueIndex"`
-}
-
-// For in memory cache
+// ProjectInfo is an in-memory cache. TODO Review this
 type ProjectInfo struct {
-	Project     Project
-	Maintainers []Maintainer
-	Services    []Service
-}
-
-type Service struct {
-	gorm.Model
-	Name        string `gorm:"uniqueIndex"`
-	Description string
-}
-
-type ServiceTeam struct {
-	gorm.Model
-	ProjectID uint `gorm:"primaryKey;index"` // FK + index
-	ServiceID uint `gorm:"primaryKey;index"` // FK + index
-	RemoteID  int  // Service specific ID that identifies the project as a grouping on the service
-}
-
-type ServiceUser struct {
-	gorm.Model
-	ServiceID    uint  `gorm:"primaryKey;index"`
-	MaintainerID *uint `gorm:"primaryKey;index"`
-	CNCFAdminID  *uint `gorm:"primaryKey;index"`
-}
-
-// A FoundationOfficer is a person who has elevated access to
-// Services to carry out Maintainer Operations on behalf of the
-// Foundation that governs projects.
-type FoundationOfficer struct {
-	gorm.Model
-	Name          string
-	Email         string `gorm:"size:254;default:EMAIL_MISSING"`
-	GitHubAccount string `gorm:"size:100;default:GITHUB_MISSING"`
-	RegisteredAt  *time.Time
-	CompanyID     *uint
-	Services      []ServiceUser
-}
-
-type ReconciliationResult struct {
-	gorm.Model
-	Service              Service
-	ProjectID            *uint
-	MissingMaintainerIDs []*uint
-}
-type ServiceInterface interface {
-	listRegisteredProjects() []string
-	listRegisteredMaintainer(project string) []string
+	Project     model.Project
+	Maintainers []model.Maintainer
+	Services    []model.Service
 }
 
 // Action describes steps taken during a reconciliation loop
 type Action struct {
 	Key         string
 	ActionTaken string
-	ServiceID   Service
+	ServiceID   model.Service
 }
 type DiffEntry struct {
 	Project string
@@ -222,7 +69,7 @@ func main() {
 		log.Fatalf("maintainerd: db: ERROR: Environment variable %s is not set", apiTokenEnvVar)
 	}
 
-	var services = []Service{
+	var services = []model.Service{
 		{
 			Name:        "FOSSA",
 			Description: "Static code check we use to ensure 3rd Party License Policy",
@@ -251,13 +98,13 @@ func main() {
 	// Auto‑migrate the schema. The order matters when foreign keys are
 	// present, so we put parent tables first.
 	if err := db.AutoMigrate(
-		&Company{},
-		&Project{},
-		&Maintainer{},
-		&MaintainerProject{},
-		&Service{},
-		&ServiceTeam{},
-		&ServiceUser{},
+		&model.Company{},
+		&model.Project{},
+		&model.Maintainer{},
+		&model.MaintainerProject{},
+		&model.Service{},
+		&model.ServiceTeam{},
+		&model.ServiceUser{},
 		//		&FoundationOfficer{},
 	); err != nil {
 		log.Fatalf("maintainerd: db: auto‑migration failed: %v", err)
@@ -267,7 +114,7 @@ func main() {
 	if loadData {
 		loadServices(db, services)
 		loadMaintainersAndProjects(db, spreadsheetId, readRange)
-		loadFOSSAProjects(db, Service{
+		loadFOSSAProjects(db, model.Service{
 			Model: gorm.Model{ID: 1},
 			Name:  "FOSSA",
 		}, fossaToken)
@@ -293,56 +140,84 @@ func reconcileFOSSATeams(db *gorm.DB) {
 	serviceTeamMap, _ := getProjectServiceTeamMap(db, fossaService.ID)
 	fossaClient := fossa.NewClient(os.Getenv(apiTokenEnvVar))
 
+	if resp, err := fossaClient.FetchUserInvitations(); err != nil {
+		log.Printf("fossa rec, FetchUserInvitations error %v\n", err)
+	} else {
+		log.Printf("fossa rec, FetchUserInvitations response is%v\n", resp)
+	}
+
 	for projectID, svcTeam := range serviceTeamMap {
 		fossaTeamMemberEmails, err := fossaClient.FetchTeamUserEmails(svcTeam.RemoteID)
-		prj, _ := getProjectByID(db, projectID)
-		log.Printf("Reconciling project\n\t\t    project: %s\n\t\t    FOSSATeamID: %d\n\t\t    fossaTeameamMemberEmails: %v\n\t\t    FetchTemUsers err :%v",
-			projectIDMaintainersMap[projectID].Project.Name, svcTeam.RemoteID, fossaTeamMemberEmails, err)
 		if err != nil {
-			log.Printf("https://app.fossa.com/account/settings/organization/teams/%d %s", svcTeam.RemoteID, prj.Name)
+			log.Printf("fossa rec, %s ID-%d, ERR, ftme, https://app.fossa.com/account/settings/organization/teams/%d , %v",
+				projectIDMaintainersMap[projectID].Project.Name, projectIDMaintainersMap[projectID].Project.ID, svcTeam.RemoteID, err)
 		} else {
-			log.Printf("\t\t    FOSSA USERS FOUND!!!%v\n", fossaTeamMemberEmails)
+
 			maintainerSet := make(map[string]struct{})
+
 			for _, pi := range projectIDMaintainersMap[projectID].Maintainers {
 				maintainerSet[strings.ToLower(pi.Email)] = struct{}{}
 			}
-			log.Printf("                            MAINTAINERS %v\n", maintainerSet)
 			fossaSet := make(map[string]struct{})
 			for _, u := range fossaTeamMemberEmails {
 				fossaSet[strings.ToLower(u)] = struct{}{}
 			}
 			if len(fossaSet) == len(projectIDMaintainersMap) {
-				log.Printf("reconcileFOSSATeams %s : %d SIGNED UP FOSSA USERS!\n",
+				log.Printf("fossa rec, %s : %d signed up team members in FOSSA\n",
 					projectIDMaintainersMap[projectID].Project.Name,
 					len(fossaSet))
-
 			} else {
-				log.Printf("reconcileFOSSATeams %s : %d of %d MAINTAINERS !\n",
+				log.Printf("fossa rec, %s, ID-%d, registered maintainer count %d, fossa team members count %d\n",
 					projectIDMaintainersMap[projectID].Project.Name,
-					len(fossaSet),
-					len(projectIDMaintainersMap))
+					projectIDMaintainersMap[projectID].Project.ID,
+					len(projectIDMaintainersMap[projectID].Maintainers),
+					len(fossaSet))
 			}
+			log.Printf("fossa rec, %s, ID-%d, https://app.fossa.com/account/settings/organization/teams/%d , %v",
+				projectIDMaintainersMap[projectID].Project.Name,
+				projectIDMaintainersMap[projectID].Project.ID,
+				svcTeam.RemoteID,
+				fossaTeamMemberEmails)
+
+			var invitations []string
 			for email := range maintainerSet {
 				if _, ok := fossaSet[email]; !ok {
-					log.Printf("reconcileFOSSATeams for %s : SEND INVITE to %s\n",
-						projectIDMaintainersMap[projectID].Project.Name,
-						email)
-					fossaClient.FetchUserInvitations()
+					invitations = append(invitations, email)
 				}
 			}
+			if len(invitations) > 0 {
+				log.Printf("fossa rec, %s, ID-%d, send %d invites to : %v\n",
+					projectIDMaintainersMap[projectID].Project.Name,
+					projectIDMaintainersMap[projectID].Project.ID,
+					len(invitations),
+					invitations)
+			}
+			var unregisteredMembers []string
 			for email := range fossaSet {
 				if _, ok := maintainerSet[email]; !ok {
-					log.Printf("reconcileFOSSATeams for %s : UNREGISTERED Maintainer?%s\n", projectIDMaintainersMap[projectID].Project.Name, email)
+					unregisteredMembers = append(unregisteredMembers, email)
 				}
+			}
+			if len(unregisteredMembers) > 0 {
+				log.Printf("fossa rec, %s, ID-%d, unregistered FOSSA team members, %v\n",
+					projectIDMaintainersMap[projectID].Project.Name,
+					projectIDMaintainersMap[projectID].Project.ID,
+					unregisteredMembers)
 			}
 		}
 
 	}
 }
 
+func getMaintainerCountFromDb(db *gorm.DB, projectId uint) int64 {
+	var count int64
+	db.Model(&model.MaintainerProject{}).Where("PROJECT_ID = ?", projectId).Count(&count)
+	return count
+}
+
 // loadFOSSAProjects is called once at db start-up to retrieve all FOSSA Teams from FOSSA
 // and match them up with their corresponding Foundation Projects
-func loadFOSSAProjects(db *gorm.DB, s Service, token string) {
+func loadFOSSAProjects(db *gorm.DB, s model.Service, token string) {
 	fossaClient := fossa.NewClient(token)
 	pm, err := getProjectMaintainersMap(db)
 	if err != nil {
@@ -356,7 +231,7 @@ func loadFOSSAProjects(db *gorm.DB, s Service, token string) {
 		for fossaTeamName, fossaTeam := range ftm {
 			if pm[fossaTeamName].Project.ID != 0 {
 				log.Printf("project %s is on FOSSA ID is %d", pm[fossaTeamName].Project.Name, fossaTeam.ID)
-				serviceTeam := ServiceTeam{
+				serviceTeam := model.ServiceTeam{
 					ProjectID: pm[fossaTeamName].Project.ID,
 					ServiceID: 1,
 					RemoteID:  fossaTeam.ID,
@@ -375,8 +250,8 @@ func loadFOSSAProjects(db *gorm.DB, s Service, token string) {
 }
 
 // getProjectServicesTeamMap returns a map keyed by the project ID whose value is an array ServiceTeams
-func getProjectServiceTeamMap(db *gorm.DB, serviceID uint) (map[uint]*ServiceTeam, error) {
-	var serviceTeams []ServiceTeam
+func getProjectServiceTeamMap(db *gorm.DB, serviceID uint) (map[uint]*model.ServiceTeam, error) {
+	var serviceTeams []model.ServiceTeam
 
 	// Preload the many-to-many relationship
 	err := db.
@@ -386,7 +261,7 @@ func getProjectServiceTeamMap(db *gorm.DB, serviceID uint) (map[uint]*ServiceTea
 		return nil, fmt.Errorf("querying ServiceTeam for service_id %d: %w", serviceID, err)
 	}
 
-	result := make(map[uint]*ServiceTeam, len(serviceTeams))
+	result := make(map[uint]*model.ServiceTeam, len(serviceTeams))
 
 	for i := range serviceTeams {
 		st := &serviceTeams[i]
@@ -400,7 +275,7 @@ func getProjectServiceTeamMap(db *gorm.DB, serviceID uint) (map[uint]*ServiceTea
 // getProjectMaintainersMap returns a map keyed by the project name which holds a list of Maintainers
 // associated with that project.
 func getProjectMaintainersMap(db *gorm.DB) (map[string]ProjectInfo, error) {
-	var projects []Project
+	var projects []model.Project
 
 	// Preload the many-to-many relationship
 	err := db.Preload("Maintainers").Find(&projects).Error
@@ -422,7 +297,7 @@ func getProjectMaintainersMap(db *gorm.DB) (map[string]ProjectInfo, error) {
 }
 
 func getProjectIDMaintainersMap(db *gorm.DB) (map[uint]ProjectInfo, error) {
-	var projects []Project
+	var projects []model.Project
 
 	// Preload the many-to-many relationship
 	err := db.Preload("Maintainers").Find(&projects).Error
@@ -447,11 +322,10 @@ func getProjectIDMaintainersMap(db *gorm.DB) (map[uint]ProjectInfo, error) {
 // if it is registered, then we add a Reference to the specific "GroupContainer" allocated to the Project.
 // The term "Group Container" is an attempt to smooth over the variety of terms that are used to
 // describe where on the Service a set of our Project Maintainers are added.
-
-func loadServices(db *gorm.DB, services []Service) {
+func loadServices(db *gorm.DB, services []model.Service) {
 	if err := db.Transaction(func(tx *gorm.DB) error {
 		for _, service := range services {
-			if err := tx.FirstOrCreate(&service, Service{Name: service.Name}).Error; err != nil {
+			if err := tx.FirstOrCreate(&service, model.Service{Name: service.Name}).Error; err != nil {
 				return fmt.Errorf("db: loadServices - failed to create service %v: error %v", service.Name, err)
 			}
 		}
@@ -462,15 +336,15 @@ func loadServices(db *gorm.DB, services []Service) {
 }
 
 // getServiceByName returns a &Service the service identified by name
-func getServiceByName(db *gorm.DB, name string) (*Service, error) {
-	var svc Service
+func getServiceByName(db *gorm.DB, name string) (*model.Service, error) {
+	var svc model.Service
 	err := db.Where("name = ?", name).First(&svc).Error
 	return &svc, err
 }
 
 // getProjectByID returns a &Project
-func getProjectByID(db *gorm.DB, id uint) (*Project, error) {
-	var prj Project
+func getProjectByID(db *gorm.DB, id uint) (*model.Project, error) {
+	var prj model.Project
 	err := db.Where("id = ?", id).First(&prj).Error
 	return &prj, err
 }
@@ -523,9 +397,9 @@ func loadMaintainersAndProjects(db *gorm.DB, spreadsheetID, readRange string) {
 			missingMaintainerFields = append(missingMaintainerFields, ":"+GitHubHdr)
 		}
 
-		var parent Project
+		var parent model.Project
 		if parentName := row[ParentProjectHdr]; parentName != "" {
-			parent = Project{}
+			parent = model.Project{}
 			if err := db.Where("name = ?", parentName).
 				First(&parent).Error; err != nil {
 			}
@@ -534,16 +408,16 @@ func loadMaintainersAndProjects(db *gorm.DB, spreadsheetID, readRange string) {
 		currentMailingList = row[MailingListAddrHdr]
 
 		if err := db.Transaction(func(tx *gorm.DB) error {
-			var project Project
+			var project model.Project
 			if parent.Name == "" {
-				project = Project{
+				project = model.Project{
 					Name:          row[ProjectHdr],
-					Maturity:      Maturity(row[StatusHdr]),
+					Maturity:      model.Maturity(row[StatusHdr]),
 					MaintainerRef: currentMaintainerRef,
 					MailingList:   &currentMailingList,
 				}
 			} else {
-				project = Project{
+				project = model.Project{
 					Name:            row[ProjectHdr],
 					Maturity:        parent.Maturity,
 					MaintainerRef:   currentMaintainerRef,
@@ -551,24 +425,24 @@ func loadMaintainersAndProjects(db *gorm.DB, spreadsheetID, readRange string) {
 					ParentProjectID: &parent.ID,
 				}
 			}
-			if err := tx.FirstOrCreate(&project, Project{Name: project.Name}).Error; err != nil {
+			if err := tx.FirstOrCreate(&project, model.Project{Name: project.Name}).Error; err != nil {
 				return fmt.Errorf("maintainerd-backend: loadMaintainersAndProjects - failed calling FirstOrCreate on project %v: error %v", project, err)
 			}
-			if err := tx.FirstOrCreate(&project, Project{Name: project.Name}).Error; err != nil {
+			if err := tx.FirstOrCreate(&project, model.Project{Name: project.Name}).Error; err != nil {
 				return fmt.Errorf("maintainerd-backend: loadMaintainersAndProjects - failed calling FirstOrCreate on project %v: error %v", project, err)
 			}
-			company := Company{Name: company}
-			if err := tx.FirstOrCreate(&company, Company{Name: company.Name}).Error; err != nil {
+			company := model.Company{Name: company}
+			if err := tx.FirstOrCreate(&company, model.Company{Name: company.Name}).Error; err != nil {
 				return fmt.Errorf("maintainerd-backend: loadMaintainersAndProjects - failed calling FirstOrCreate on company %v: error %v", company, err)
 			}
-			maintainer := Maintainer{
+			maintainer := model.Maintainer{
 				Name:             name,
 				GitHubAccount:    github,
 				Email:            email,
 				CompanyID:        &company.ID,
-				MaintainerStatus: ActiveMaintainer,
+				MaintainerStatus: model.ActiveMaintainer,
 			}
-			if err := tx.FirstOrCreate(&maintainer, Maintainer{Email: maintainer.Email}).Error; err != nil {
+			if err := tx.FirstOrCreate(&maintainer, model.Maintainer{Email: maintainer.Email}).Error; err != nil {
 				return fmt.Errorf("maintainerd-backend: loadMaintainersAndProjects - failed calling FirstOrCreate on maintainer %v: error %v", maintainer, err)
 			}
 			// Ensure the association (in case the maintainer existed already)
@@ -640,7 +514,6 @@ func readSheetRows(ctx context.Context, srv *sheets.Service, spreadsheetID, read
 				rowMap[h] = lastStatus
 
 			default:
-				// everything else: just use what’s there (or empty string)
 				rowMap[h] = cellVal
 			}
 		}
