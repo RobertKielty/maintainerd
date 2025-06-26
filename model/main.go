@@ -156,3 +156,10 @@ type ReconciliationResult struct {
 	ProjectID            *uint
 	MissingMaintainerIDs []*uint
 }
+
+// ProjectInfo is an in-memory cache. TODO Review this
+type ProjectInfo struct {
+	Project     Project
+	Maintainers []Maintainer
+	Services    []Service
+}
