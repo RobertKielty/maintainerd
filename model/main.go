@@ -86,6 +86,7 @@ type Maintainer struct {
 	Name             string
 	Email            string           `gorm:"size:254;default:EMAIL_MISSING"`
 	GitHubAccount    string           `gorm:"size:100;default:GITHUB_MISSING"`
+	GitHubEmail      string           `gorm:"size:100;default:GITHUB_MISSING"`
 	MaintainerStatus MaintainerStatus `gorm:"type:text"`
 	ImportWarnings   string
 	Projects         []Project `gorm:"many2many:maintainer_projects;joinForeignKey:MaintainerID;joinReferences:ProjectID"`
@@ -93,7 +94,16 @@ type Maintainer struct {
 	CompanyID        *uint
 	Company          Company
 }
-
+type Collaborator struct {
+	gorm.Model
+	Name          string
+	Email         string    `gorm:"size:254;default:EMAIL_MISSING"`
+	GitHubEmail   *string   `gorm:"size:254;default:GITHUB_EMAIL_MISSING"`
+	GitHubAccount *string   `gorm:"size:100;default:GITHUB_MISSING"`
+	Projects      []Project `gorm:"many2many:maintainer_projects;joinForeignKey:MaintainerID;joinReferences:ProjectID"`
+	LastLogin     time.Time
+	RegisteredAt  time.Time
+}
 type Project struct {
 	gorm.Model
 	Name            string `gorm:"uniqueIndex,not null;check:name <> ''"`
@@ -123,18 +133,35 @@ type Service struct {
 	Description string
 }
 
+type ServiceUserTeams struct {
+	gorm.Model
+
+	ServiceID     uint `gorm:"index"` // This may be redundant — if already tracked via foreign keys below
+	ServiceUserID int  `gorm:"index"` // foreign key part (ServiceUser.ServiceUserID)
+
+	ServiceTeamID uint        `gorm:"index"` // FK to ServiceTeam
+	ServiceTeam   ServiceTeam `gorm:"foreignKey:ServiceTeamID;constraint:OnDelete:CASCADE"`
+
+	MaintainerID   *uint `gorm:"index"` // nullable FK to Maintainer
+	CollaboratorID *uint `gorm:"index"` // nullable FK to Collaborator
+}
+
 type ServiceTeam struct {
 	gorm.Model
-	ProjectID uint `gorm:"primaryKey;index"` // FK + index
-	ServiceID uint `gorm:"primaryKey;index"` // FK + index
-	RemoteID  int  // Service specific ID that identifies the project as a grouping on the service
+	ProjectID       uint `gorm:"index"` // FK to project
+	ServiceID       uint `gorm:"index"` // FK to service
+	ServiceTeamID   int  // ID on the remote service (e.g., FOSSA team ID)
+	ServiceTeamName *string
+	ProjectName     *string // De-normalised for debugging purposes
 }
 
 type ServiceUser struct {
 	gorm.Model
-	ServiceID    uint  `gorm:"primaryKey;index"`
-	MaintainerID *uint `gorm:"primaryKey;index"`
-	CNCFAdminID  *uint `gorm:"primaryKey;index"`
+	ServiceID         uint   `gorm:"index"` // FK to Service
+	ServiceUserID     int    `gorm:"index"` // ID on the remote service
+	ServiceEmail      string `gorm:"size:254;default:EMAIL_MISSING"`
+	ServiceRef        string `gorm:"size:512"`
+	ServiceGitHubName *string
 }
 
 // A FoundationOfficer is a person who has elevated access to
@@ -162,4 +189,14 @@ type ProjectInfo struct {
 	Project     Project
 	Maintainers []Maintainer
 	Services    []Service
+}
+
+type AuditLog struct {
+	gorm.Model
+	ProjectID    uint   `gorm:"index"`
+	MaintainerID *uint  `gorm:"index"`
+	ServiceID    *uint  `gorm:"index"`
+	Action       string `gorm:"index"` // e.g. "ADD_MEMBER", "REMOVE_MEMBER", "INVITE_SENT"
+	Message      string // human-readable message, optional
+	Metadata     string // optional JSON blob for advanced inspection
 }

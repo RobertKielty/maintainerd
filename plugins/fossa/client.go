@@ -27,6 +27,81 @@ func NewClient(token string) *Client {
 	}
 }
 
+// FetchUsers returns an array of User or an error
+func (c *Client) FetchFirstPageOfUsers() ([]User, error) {
+	req, _ := http.NewRequest("GET", c.APIBase+"/users", nil)
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			return
+		}
+	}(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("FetchUsers failed: called $s\n\t\t%s – %s", resp.Status, string(body))
+	}
+	var users []User
+	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
+		return nil, err
+	}
+	return users, nil
+}
+func (c *Client) FetchUsers() ([]User, error) {
+	var allUsers []User
+	page := 1
+	count := 100 // Adjust this value as per FOSSA API limits
+	fmt.Printf("")
+	for {
+		// Construct paginated URL
+		url := fmt.Sprintf("%s/users?count=%d&page=%d", c.APIBase, count, page)
+
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		// Read body early for error handling/logging
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response body: %w", err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("FetchUsers failed: %s\n\t\t%s", resp.Status, string(body))
+		}
+
+		var users []User
+		if err := json.Unmarshal(body, &users); err != nil {
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		allUsers = append(allUsers, users...)
+
+		// If we got fewer users than count, we’re done
+		if len(users) < count {
+			break
+		}
+		page++
+	}
+
+	return allUsers, nil
+}
+
 // FetchUserInvitations GETs /api/user-invitations - Retrieves all active (non-expired) user invitations for an
 // organization
 func (c *Client) FetchUserInvitations() (string, error) {
@@ -49,9 +124,6 @@ func (c *Client) FetchUserInvitations() (string, error) {
 		return "", fmt.Errorf("FetchUserInvitations failed: called $s\n\t\t%s – %s", resp.Status, string(body))
 	}
 
-	//if err := json.NewDecoder(resp.Body).Decode(&teams); err != nil {
-	//	return nil, err
-	//}
 	return string(body), nil
 }
 

@@ -3,9 +3,11 @@ module maintainerd
 go 1.24
 
 require (
+	github.com/erhanakp/sugaredgorm v0.0.1
 	github.com/spf13/cobra v1.9.1
 	github.com/spf13/viper v1.20.1
 	github.com/stretchr/testify v1.10.0
+	go.uber.org/zap v1.27.0
 	google.golang.org/api v0.238.0
 	gorm.io/driver/sqlite v1.6.0
 	gorm.io/gorm v1.30.0
@@ -42,8 +44,7 @@ require (
 	go.opentelemetry.io/otel v1.36.0 // indirect
 	go.opentelemetry.io/otel/metric v1.36.0 // indirect
 	go.opentelemetry.io/otel/trace v1.36.0 // indirect
-	go.uber.org/atomic v1.9.0 // indirect
-	go.uber.org/multierr v1.9.0 // indirect
+	go.uber.org/multierr v1.10.0 // indirect
 	golang.org/x/crypto v0.39.0 // indirect
 	golang.org/x/net v0.41.0 // indirect
 	golang.org/x/oauth2 v0.30.0 // indirect

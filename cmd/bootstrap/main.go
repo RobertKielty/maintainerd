@@ -18,7 +18,7 @@ const (
 	apiTokenEnvVar             = "FOSSA_API_TOKEN"
 	spreadsheetEnvVar          = "MD_WORKSHEET"
 	googleWorkspaceCredentials = "WORKSPACE_CREDENTIALS_FILE"
-	defaultReadRange           = "Active!A1:J1639"
+	defaultReadRange           = "Active!A1:J2095"
 	defaultDBPath              = "maintainers.db"
 	defaultMaxBackups          = 5
 	backupFileExt              = ".bak"
