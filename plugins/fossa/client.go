@@ -1,6 +1,7 @@
 package fossa
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,16 +19,18 @@ const (
 type Client struct {
 	APIKey  string
 	APIBase string
+	OrgId   string
 }
 
 func NewClient(token string) *Client {
 	return &Client{
 		APIKey:  token,
 		APIBase: apiBase,
+		OrgId:   "162", // Org ID for the CNCF Instance of FOSSA.
 	}
 }
 
-// FetchUsers returns an array of User or an error
+// FetchFirstPageOfUsers returns an array of User or an error
 func (c *Client) FetchFirstPageOfUsers() ([]User, error) {
 	req, _ := http.NewRequest("GET", c.APIBase+"/users", nil)
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
@@ -122,6 +125,47 @@ func (c *Client) FetchUserInvitations() (string, error) {
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("FetchUserInvitations failed: called $s\n\t\t%s – %s", resp.Status, string(body))
+	}
+
+	return string(body), nil
+}
+
+// SendInvitation sends a single invitation to the specified email address.
+func (c *Client) SendInvitation(email string) (string, error) {
+	// Prepare request payload
+	payload := map[string]string{
+		"email": email,
+	}
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal invitation payload: %w", err)
+	}
+
+	// Build the request
+	req, err := http.NewRequest("POST", c.APIBase+"/organizations/"+c.OrgId+"/invite", bytes.NewBuffer(payloadBytes))
+	if err != nil {
+		return "", fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	// Send the request
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("SendInvitation failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// Read response body
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check for non-200 response
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("SendInvitation failed: %s – %s", resp.Status, string(body))
 	}
 
 	return string(body), nil
