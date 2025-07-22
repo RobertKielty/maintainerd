@@ -4,6 +4,7 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"gorm.io/gorm"
+	"net/url"
 	"time"
 )
 
@@ -110,6 +111,7 @@ type Project struct {
 	ParentProjectID *uint  `gorm:"index"`
 	Maturity        Maturity
 	MaintainerRef   string
+	OnboardingIssue *string
 	MailingList     *string      `gorm:"size:254;default:MML_MISSING"`
 	Maintainers     []Maintainer `gorm:"many2many:maintainer_projects;joinForeignKey:ProjectID;joinReferences:MaintainerID"`
 	Services        []Service    `gorm:"many2many:service_projects;joinForeignKey:ProjectID;joinReferences:ServiceID"`
@@ -199,4 +201,13 @@ type AuditLog struct {
 	Action       string `gorm:"index"` // e.g. "ADD_MEMBER", "REMOVE_MEMBER", "INVITE_SENT"
 	Message      string // human-readable message, optional
 	Metadata     string // optional JSON blob for advanced inspection
+}
+
+type OnboardingTask struct {
+	Name        string    `json:"name"`
+	Owner       string    `json:"owner"`
+	Number      int       `json:"number"`
+	Complete    bool      `json:"competed"`
+	Issue       url.URL   `json:"issue"`
+	CollectedAt time.Time `json:"collected_at"`
 }

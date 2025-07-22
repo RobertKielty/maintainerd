@@ -27,7 +27,7 @@ func NewClient(token string) *Client {
 	}
 }
 
-// FetchUsers returns an array of User or an error
+// FetchFirstPageOfUsers returns an array of User or an error
 func (c *Client) FetchFirstPageOfUsers() ([]User, error) {
 	req, _ := http.NewRequest("GET", c.APIBase+"/users", nil)
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)

@@ -70,7 +70,7 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		for _, label := range e.Issue.Labels {
 			name := label.GetName()
 			if name == "fossa" {
-				projectName, titleErr := getProjectNameFromProjectTitle(e.Issue.GetTitle())
+				projectName, titleErr := GetProjectNameFromProjectTitle(e.Issue.GetTitle())
 				if titleErr != nil {
 					log.Printf("failed to parse projecN name: %v", err)
 					continue
@@ -88,6 +88,7 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func signProjectUpForFOSSA(context context.Context, store *db.SQLStore, client *fossa.Client, project model.Project) interface{} {
+func signProjectUpForFOSSA(context context.Context, store *db.SQLStore, client *fossa.Client, project model.Project) error {
+	log.Printf("Signing project up for fossa")
 	return nil
 }
