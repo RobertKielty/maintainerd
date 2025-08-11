@@ -125,7 +125,7 @@ func loadMaintainersAndProjects(db *gorm.DB, spreadsheetID, readRange, credentia
 
 	for _, row := range rows {
 		var missingMaintainerFields []string
-
+		log.Printf("TRACE, reading row, %v\n", row)
 		name := row[MaintainerNameHdr]
 
 		if name == "" {
@@ -277,6 +277,7 @@ func readSheetRows(ctx context.Context, srv *sheets.Service, spreadsheetID, read
 	return rows, nil
 }
 
+// loadFOSSA synchronizes all data in CNCF FOSSA
 func loadFOSSA(db *gorm.DB, token string) error {
 	users, teams, err := FetchFossaData(token)
 	if err != nil {
@@ -303,9 +304,9 @@ func loadFOSSA(db *gorm.DB, token string) error {
 				log.Printf("ERR, MapFossaUserCollaborator: error mapping service user using %s: %v", user.Email, err)
 			}
 		}
-		st, err := CreateServiceTeams(db, user.TeamUsers)
+		st, err := CreateServiceTeamsForUser(db, user.TeamUsers)
 		if err != nil {
-			log.Printf("ERR, CreateServiceTeams failed for user %d (%s): %v", user.ID, user.Email, err)
+			log.Printf("ERR, CreateServiceTeamsForUser failed for user %d (%s): %v", user.ID, user.Email, err)
 			continue
 		}
 
@@ -317,7 +318,8 @@ func loadFOSSA(db *gorm.DB, token string) error {
 	return nil
 }
 
-func CreateServiceTeams(
+// CreateServiceTeamsForUser takes a @db connection, and an array of FOSSA TeamUsers and adds them to the DB.
+func CreateServiceTeamsForUser(
 	db *gorm.DB,
 	teamUsers []struct {
 	RoleID int `json:"roleId"`
@@ -345,23 +347,23 @@ func CreateServiceTeams(
 			err := db.Where("service_team_id = ?", team.Team.ID).
 				FirstOrCreate(st).Error
 			if err != nil {
-				msg := fmt.Sprintf("CreateServiceTeams: failed for team %d (%s): %v", team.Team.ID, team.Team.Name, err)
+				msg := fmt.Sprintf("CreateServiceTeamsForUser: failed for team %d (%s): %v", team.Team.ID, team.Team.Name, err)
 				log.Println(msg)
 				errMessages = append(errMessages, msg)
 				continue
 			}
 			teams = append(teams, st)
 		} else {
-			return nil, fmt.Errorf("CreateServiceTeams: ERROR %s is NOT A registered project!\n", team.Team.Name)
+			return nil, fmt.Errorf("CreateServiceTeamsForUser: ERROR %s is NOT A registered project!\n", team.Team.Name)
 		}
 	}
 
 	if len(teams) == 0 {
-		return nil, fmt.Errorf("CreateServiceTeams: no valid teams created")
+		return nil, fmt.Errorf("CreateServiceTeamsForUser: no valid teams created")
 	}
 
 	if len(errMessages) > 0 {
-		return teams, fmt.Errorf("CreateServiceTeams had partial errors:\n%s", strings.Join(errMessages, "\n"))
+		return teams, fmt.Errorf("CreateServiceTeamsForUser had partial errors:\n%s", strings.Join(errMessages, "\n"))
 	}
 
 	return teams, nil

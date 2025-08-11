@@ -1,7 +1,9 @@
 package fossa
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,7 +14,15 @@ import (
 )
 
 const (
-	apiBase = "https://app.fossa.com/api"
+	apiBase                    = "https://app.fossa.com/api"
+	ErrCodeInviteAlreadyExists = 2011
+	ErrCodeUserAlreadyMember   = 2001
+)
+
+var (
+	ErrTeamAlreadyExists   = errors.New("fossa: team already exists")
+	ErrInviteAlreadyExists = errors.New("fossa: invitation already exists")
+	ErrUserAlreadyMember   = errors.New("fossa: user is already a member")
 )
 
 type Client struct {
@@ -27,7 +37,7 @@ func NewClient(token string) *Client {
 	}
 }
 
-// FetchUsers returns an array of User or an error
+// FetchFirstPageOfUsers returns an array of User or an error
 func (c *Client) FetchFirstPageOfUsers() ([]User, error) {
 	req, _ := http.NewRequest("GET", c.APIBase+"/users", nil)
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
@@ -127,6 +137,65 @@ func (c *Client) FetchUserInvitations() (string, error) {
 	return string(body), nil
 }
 
+// SendUserInvitation uses email to send an invitation to join this org of FOSSA
+func (c *Client) SendUserInvitation(email string) error {
+	payload := map[string]string{"email": email}
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("failed to encode body: %w", err)
+	}
+
+	// TODO - orgId hard coded write GetOrg
+	req, err := http.NewRequest("POST", c.APIBase+"/organizations/"+"162"+"/invite", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("FetchUserInvitations failed %w\n", err)
+	}
+	defer func(Body io.ReadCloser) {
+		err := Body.Close()
+		if err != nil {
+			return
+		}
+	}(resp.Body)
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		var fossaErr FossaError
+		if err := json.Unmarshal(body, &fossaErr); err != nil {
+			return fmt.Errorf("SendUserInvitation calling json.Unmarshal failed for %s: %s\n\t\t%s", email, resp.Status, string(body))
+		}
+
+		switch fossaErr.Code {
+		case ErrCodeInviteAlreadyExists:
+			return fmt.Errorf("%w: %s", ErrInviteAlreadyExists, fossaErr.Message)
+		case ErrCodeUserAlreadyMember:
+			return fmt.Errorf("%w: %s", ErrUserAlreadyMember, fossaErr.Message)
+		default:
+			return fmt.Errorf("SendUserInvitation failed for %s (code %d): %s – %s",
+				email, fossaErr.Code, resp.Status, fossaErr.Message)
+		}
+	}
+
+	return nil
+}
+
+// FetchTeam retrieves a team by its name from the list of all teams or returns an error if the team is not found.
+func (c *Client) FetchTeam(name string) (*Team, error) {
+	teams, _ := c.FetchTeams()
+	for _, team := range teams {
+		if team.Name == name {
+			return &team, nil
+		}
+	}
+	return nil, fmt.Errorf("failed to find team with name %s", name)
+}
+
 // FetchTeams calls GET /api/teams
 func (c *Client) FetchTeams() ([]Team, error) {
 	req, _ := http.NewRequest("GET", c.APIBase+"/teams", nil)
@@ -217,6 +286,89 @@ func (c *Client) FetchTeamsMap() (map[string]Team, error) {
 	return tm, nil
 }
 
+// GetTeam returns a *@Team object for the team called @name if it can be retrieved and exists on FOSSA or
+// a nil Team and an error if FOSSA cannot find the team.
+func (c *Client) GetTeam(name string) (*Team, error) {
+	payload := map[string]string{"name": name}
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode body: %w", err)
+	}
+
+	req, err := http.NewRequest("GET", c.APIBase+"/teams", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("FetchTeams failed %w\n", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+
+	var team Team
+	if err := json.Unmarshal(body, &team); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &team, nil
+}
+
+func (c *Client) CreateTeam(name string) (*Team, error) {
+	payload := map[string]string{"name": name}
+	jsonBody, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to encode body: %w", err)
+	}
+
+	req, err := http.NewRequest("POST", c.APIBase+"/teams", bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		var fossaErr FossaError
+		if err := json.Unmarshal(body, &fossaErr); err == nil {
+			switch fossaErr.Code {
+			case 2003:
+				var team *Team
+				if err := json.Unmarshal(body, &team); err != nil {
+					return nil, fmt.Errorf("failed to decode response: %w", err)
+				}
+				team, err = c.FetchTeam(name)
+				if team != nil {
+					return team, nil // We disregard the team-already-exists error
+				}
+			default:
+				return nil, fmt.Errorf("CreateTeam failed with FOSSA error code %d: %s – %s", fossaErr.Code, fossaErr.Name, fossaErr.Message)
+			}
+		}
+		// Fallback: unknown error format
+		return nil, fmt.Errorf("CreateTeam failed: %s\n\tResponse: %s", resp.Status, string(body))
+	}
+
+	var team Team
+	if err := json.Unmarshal(body, &team); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return &team, nil
+}
+
 type TeamMembers struct {
 	Results []struct {
 		UserID   int    `json:"userId"`
@@ -296,4 +448,11 @@ type User struct {
 		Title       string `json:"title"`
 		AccessLevel string `json:"access_level"`
 	} `json:"organization"`
+}
+type FossaError struct {
+	UUID           string `json:"uuid"`
+	Code           int    `json:"code"`
+	Message        string `json:"message"`
+	Name           string `json:"name"`
+	HTTPStatusCode int    `json:"httpStatusCode"`
 }

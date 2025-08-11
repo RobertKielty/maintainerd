@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"log"
 	"maintainerd/model"
+	"strings"
 )
 
 type SQLStore struct {
@@ -231,4 +233,28 @@ func (s *SQLStore) LogAuditEvent(logger *zap.SugaredLogger, event model.AuditLog
 		"message", event.Message,
 	)
 	return nil
+}
+
+// CreateServiceTeam creates or retrieves a service team entry in the database based on the provided project and service details.
+// It accepts a project ID, project name, service ID, and service name as input and returns the service team or an error.
+func (s *SQLStore) CreateServiceTeam(
+	projectID uint, projectName string,
+	serviceID int, serviceName string) (*model.ServiceTeam, error) {
+
+	var errMessages []string
+
+	st := &model.ServiceTeam{
+		ServiceTeamID:   serviceID,
+		ServiceID:       1, // TODO : Hardcoded to FOSSA for now
+		ServiceTeamName: &serviceName,
+		ProjectID:       projectID,
+		ProjectName:     &projectName,
+	}
+	err := s.db.Where("service_team_id = ?", serviceID).FirstOrCreate(st).Error
+	if err != nil {
+		msg := fmt.Sprintf("CreateServiceTeamsForUser: failed for team %d (%s): %v", serviceID, serviceName, err)
+		log.Println(msg)
+		return nil, fmt.Errorf("CreateServiceTeamsForUser had partial errors:\n%s", strings.Join(errMessages, "\n"))
+	}
+	return st, nil
 }
