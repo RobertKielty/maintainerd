@@ -15,10 +15,10 @@ func main() {
 		dbPath        = flag.String("db-path", "/data/onboarding.db", "Path to SQLite database file")
 		fossaEnvVar   = flag.String("fossa-token-env", "FOSSA_API_TOKEN", "Name of the env var holding the FOSSA API token")
 		webhookSecret = flag.String("webhook-secret", "", "GitHub webhook secret (raw string)")
-		addr          = flag.String("addr", ":2525", "Address to listen on (e.g. :2525)")
+		addr          = flag.String("addr", "2525", "Address to listen on (e.g. :2525)")
 		ghRep         = flag.String("repo", "sandbox", "Name of the repository (e.g. sandbox)")
 		ghOrg         = flag.String("org", "cncf", "Name of the GitHub org (e.g. cncf)")
-		ghToken       = flag.String("gh-api", "", "GitHub API toek (raw string)")
+		ghToken       = flag.String("gh-api", "", "GitHub API token (raw string)")
 	)
 	flag.Parse()
 
