@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: maintainerd-bootstrap
+spec:
+  backoffLimit: 3
+  template:
+    spec:
+      imagePullSecrets:
+        - name: ghcr-secret
+      restartPolicy: OnFailure
+      containers:
+        - name: bootstrap
+          image: ghcr.io/robertkielty/maintainerd:latest
+          command: ["/usr/local/bin/bootstrap", "--seed", "--db", "/data/maintainers.db"]
+
+          # Load ALL vars from one Secret
+          envFrom:
+            - secretRef:
+                name: maintainerd-bootstrap-env
+
+          # Path your app reads for credentials
+          env:
+            - name: WORKSPACE_CREDENTIALS_FILE
+              value: /creds/credentials.json
+
+          volumeMounts:
+            - name: db
+              mountPath: /data
+            - name: creds
+              mountPath: /creds
+              readOnly: true
+      volumes:
+      - name: db
+        persistentVolumeClaim:
+          claimName: maintainerd-db
+      - name: creds
+        secret:
+          secretName: workspace-credentials

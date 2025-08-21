@@ -4,14 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"golang.org/x/oauth2"
-	"google.golang.org/api/sourcerepo/v1"
-	"gorm.io/driver/sqlite"
-	"gorm.io/gorm"
 	"log"
 	"maintainerd/model"
 	"net/http"
 	"os"
+
+	"golang.org/x/oauth2"
+	"google.golang.org/api/sourcerepo/v1"
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
 
 	"github.com/google/go-github/v55/github"
 
@@ -87,15 +88,20 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		if e.GetAction() != "labeled" {
 			break
 		}
+		issueTitle := e.Issue.GetTitle()
+		issueUrl := e.Issue.GetURL()
 		for _, label := range e.Issue.Labels {
 			name := label.GetName()
 			if name == "fossa" {
+				log.Printf("handleWebhook: DBG, [%s](%s) lbl fossa", issueUrl, issueTitle)
 				projectName, err := GetProjectNameFromProjectTitle(e.Issue.GetTitle())
 				if err != nil {
-					log.Printf("handleWebhook: WRN, failed to parse project name: %v", err)
+					log.Printf("handleWebhook: WRN, could not parse project name [%s](%s) : %v",
+						issueUrl, issueTitle, err)
 					continue
 				}
-				log.Printf("handleWebhook: DBG, project name: %s", projectName)
+
+				log.Printf("handleWebhook: DBG, %s", projectName)
 
 				// Get Project from db
 				var project model.Project
@@ -123,6 +129,8 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 				err = s.updateIssue(r.Context(), e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetIssue().GetNumber(), comment)
 				if err != nil {
 					log.Printf("handleWebhook: WRN, failed to update GitHub issue: %v", err)
+				} else {
+					log.Printf("handleWebhook: INF, fossa comment added [%s](%s)", issueTitle, issueUrl)
 				}
 			}
 		}

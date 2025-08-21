@@ -1,0 +1,83 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintainerd
+  labels:
+    app: maintainerd
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: maintainerd
+  template:
+    metadata:
+      labels:
+        app: maintainerd
+    spec:
+      imagePullSecrets: # maintainerd GHCR image is private atm
+        - name: ghcr-secret
+      containers:
+        - name: server
+          image: ghcr.io/robertkielty/maintainerd:latest
+          imagePullPolicy: Always
+          # ENTRYPOINT is /usr/local/bin/maintainerd from your Dockerfile.
+          # We only provide args here; no shell needed.
+          args:
+            - "-addr=:2525"
+            - "-db-path=/data/maintainers.db"
+            - "-fossa-token-env=FOSSA_API_TOKEN"
+            # Use env vars for GitHub token and webhook secret.
+            # main.go reads GITHUB_API_TOKEN and GITHUB_WEBHOOK_SECRET when flags are unset.
+            # Omit -org and -repo to use the binary defaults (cncf/sandbox).
+            # If you want to set them from env too, add:
+            # - "-org=$(ORG)"
+            # - "-repo=$(REPO)"
+          ports:
+            - name: http
+              containerPort: 2525
+          envFrom:
+            - secretRef:
+                name: maintainerd-bootstrap-env
+          volumeMounts:
+            - name: db
+              mountPath: /data
+      volumes:
+        - name: db
+          persistentVolumeClaim:
+            claimName: maintainerd-db
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: maintainerd
+  labels:
+    app: maintainerd
+spec:
+  selector:
+    app: maintainerd
+  ports:
+    - name: http
+      port: 2525
+      targetPort: 2525
+      protocol: TCP
+  type: ClusterIP
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: maintainerd
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: maintainerd.localtest.me
+      http:
+        paths:
+          - path: /webhook
+            pathType: Prefix
+            backend:
+              service:
+                name: maintainerd
+                port:
+                  number: 2525

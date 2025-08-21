@@ -323,12 +323,12 @@ func loadFOSSA(db *gorm.DB, token string) error {
 func CreateServiceTeamsForUser(
 	db *gorm.DB,
 	teamUsers []struct {
-	RoleID int `json:"roleId"`
-	Team   struct {
-		ID   int    `json:"id"`
-		Name string `json:"name"`
-	} `json:"team"`
-},
+		RoleID int `json:"roleId"`
+		Team   struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"team"`
+	},
 ) ([]*model.ServiceTeam, error) {
 
 	var teams []*model.ServiceTeam
