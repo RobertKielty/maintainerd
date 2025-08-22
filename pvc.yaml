@@ -2,6 +2,8 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: maintainerd-db
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
 spec:
   accessModes:
     - ReadWriteOnce
@@ -9,4 +11,3 @@ spec:
     requests:
       storage: 1Gi
   # no storageClassName -> use cluster default
-

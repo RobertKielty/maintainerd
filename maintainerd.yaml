@@ -4,6 +4,8 @@ metadata:
   name: maintainerd
   labels:
     app: maintainerd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   replicas: 1
   selector:
@@ -52,6 +54,8 @@ metadata:
   name: maintainerd
   labels:
     app: maintainerd
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
 spec:
   selector:
     app: maintainerd
@@ -69,6 +73,7 @@ metadata:
   name: maintainerd
   annotations:
     kubernetes.io/ingress.class: nginx
+    argocd.argoproj.io/sync-wave: "2"
 spec:
   rules:
     - host: maintainerd.localtest.me

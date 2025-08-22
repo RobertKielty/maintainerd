@@ -2,6 +2,8 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: maintainerd-bootstrap
+  annotations:
+    argocd.argoproj.io/sync-wave: "-1"
 spec:
   backoffLimit: 3
   template:
