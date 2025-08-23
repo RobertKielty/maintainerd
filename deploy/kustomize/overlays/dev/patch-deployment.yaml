@@ -1,0 +1,11 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintainerd
+spec:
+  template:
+    spec:
+      containers:
+        - name: server
+          imagePullPolicy: Always
+

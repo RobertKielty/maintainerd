@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"gorm.io/gorm/logger"
 	"log"
 	"maintainerd/model"
 	"maintainerd/plugins/fossa"
 	"os"
 	"strings"
 	"time"
+
+	"gorm.io/gorm/logger"
 
 	"google.golang.org/api/option"
 	"google.golang.org/api/sheets/v4"
@@ -216,10 +217,10 @@ func readSheetRows(ctx context.Context, srv *sheets.Service, spreadsheetID, read
 		Context(ctx).
 		Do()
 	if err != nil {
-		return nil, fmt.Errorf("db: unable to retrieve worksheet data: %w", err)
+		return nil, fmt.Errorf("db: Using %s:%s unable to retrieve worksheet data: %w", spreadsheetID, readRange, err)
 	}
 	if len(resp.Values) == 0 {
-		return nil, fmt.Errorf("db: worksheet is empty")
+		return nil, fmt.Errorf("db: %s:%s worksheet is empty", spreadsheetID, readRange)
 	}
 
 	// First row → headers
@@ -322,12 +323,12 @@ func loadFOSSA(db *gorm.DB, token string) error {
 func CreateServiceTeamsForUser(
 	db *gorm.DB,
 	teamUsers []struct {
-	RoleID int `json:"roleId"`
-	Team   struct {
-		ID   int    `json:"id"`
-		Name string `json:"name"`
-	} `json:"team"`
-},
+		RoleID int `json:"roleId"`
+		Team   struct {
+			ID   int    `json:"id"`
+			Name string `json:"name"`
+		} `json:"team"`
+	},
 ) ([]*model.ServiceTeam, error) {
 
 	var teams []*model.ServiceTeam

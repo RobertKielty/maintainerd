@@ -1,0 +1,19 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: metallb-config
+  namespace: argocd
+spec:
+  project: maintainerd
+  source:
+    repoURL: https://github.com/robertkielty/maintainerd
+    targetRevision: HEAD
+    path: hack/metallb
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: metallb-system
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true
+

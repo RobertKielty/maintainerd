@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: maintainerd-prod
+  namespace: argocd
+spec:
+  project: maintainerd
+  source:
+    repoURL: https://github.com/robertkielty/maintainerd
+    targetRevision: HEAD
+    path: deploy/kustomize/overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: maintainerd
+  syncPolicy:
+    automated:
+      selfHeal: true
+      prune: true
+    syncOptions:
+      - CreateNamespace=true
+
