@@ -362,10 +362,10 @@ rules:
 ```
 
 ### Deliverables
-- [ ] `codescannerfossa_controller.go` with reconciliation logic
-- [ ] `codescannersnyk_controller.go` with reconciliation logic
-- [ ] RBAC rules for ConfigMap access
-- [ ] Owner references for garbage collection
+- [x] `codescannerfossa_controller.go` with reconciliation logic
+- [x] `codescannersnyk_controller.go` with reconciliation logic
+- [x] RBAC rules for ConfigMap access
+- [x] Owner references for garbage collection
 
 ---
 
@@ -687,10 +687,10 @@ status:
 - [x] Generate CRDs
 
 ### Phase 3: Controllers
-- [ ] Implement Fossa reconciler
-- [ ] Implement Snyk reconciler
-- [ ] Set up RBAC
-- [ ] Configure owner references
+- [x] Implement Fossa reconciler
+- [x] Implement Snyk reconciler
+- [x] Set up RBAC
+- [x] Configure owner references
 
 ### Phase 4: Testing
 - [ ] Set up envtest

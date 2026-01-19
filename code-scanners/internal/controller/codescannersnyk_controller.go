@@ -18,7 +18,11 @@ package controller
 
 import (
 	"context"
+	"fmt"
 
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,28 +40,96 @@ type CodeScannerSnykReconciler struct {
 // +kubebuilder:rbac:groups=maintainer-d.cncf.io,resources=codescannersnyks,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=maintainer-d.cncf.io,resources=codescannersnyks/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=maintainer-d.cncf.io,resources=codescannersnyks/finalizers,verbs=update
+// +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the CodeScannerSnyk object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
-//
-// For more details, check Reconcile and its Result here:
-// - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.22.4/pkg/reconcile
 func (r *CodeScannerSnykReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = logf.FromContext(ctx)
+	log := logf.FromContext(ctx)
 
-	// TODO(user): your logic here
+	// 1. Fetch the CodeScannerSnyk instance
+	snyk := &maintainerdcncfiov1alpha1.CodeScannerSnyk{}
+	if err := r.Get(ctx, req.NamespacedName, snyk); err != nil {
+		if errors.IsNotFound(err) {
+			log.Info("CodeScannerSnyk resource not found, ignoring")
+			return ctrl.Result{}, nil
+		}
+		log.Error(err, "Failed to get CodeScannerSnyk")
+		return ctrl.Result{}, err
+	}
 
+	// 2. Build the ConfigMap
+	configMap := r.configMapForSnyk(snyk)
+
+	// 3. Set owner reference for garbage collection
+	if err := ctrl.SetControllerReference(snyk, configMap, r.Scheme); err != nil {
+		log.Error(err, "Failed to set owner reference on ConfigMap")
+		return ctrl.Result{}, err
+	}
+
+	// 4. Create or Update the ConfigMap
+	existingCM := &corev1.ConfigMap{}
+	err := r.Get(ctx, client.ObjectKeyFromObject(configMap), existingCM)
+	if err != nil && errors.IsNotFound(err) {
+		log.Info("Creating ConfigMap", "name", configMap.Name, "namespace", configMap.Namespace)
+		if err := r.Create(ctx, configMap); err != nil {
+			log.Error(err, "Failed to create ConfigMap")
+			return ctrl.Result{}, err
+		}
+	} else if err != nil {
+		log.Error(err, "Failed to get ConfigMap")
+		return ctrl.Result{}, err
+	} else {
+		// Update existing ConfigMap
+		existingCM.Data = configMap.Data
+		if err := r.Update(ctx, existingCM); err != nil {
+			log.Error(err, "Failed to update ConfigMap")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// 5. Add lineage annotation to CR
+	configMapRef := fmt.Sprintf("%s/%s", configMap.Namespace, configMap.Name)
+	if snyk.Annotations == nil {
+		snyk.Annotations = make(map[string]string)
+	}
+	if snyk.Annotations[AnnotationConfigMapRef] != configMapRef {
+		snyk.Annotations[AnnotationConfigMapRef] = configMapRef
+		if err := r.Update(ctx, snyk); err != nil {
+			log.Error(err, "Failed to update CodeScannerSnyk annotation")
+			return ctrl.Result{}, err
+		}
+	}
+
+	// 6. Update status
+	snyk.Status.ConfigMapRef = configMapRef
+	if err := r.Status().Update(ctx, snyk); err != nil {
+		log.Error(err, "Failed to update CodeScannerSnyk status")
+		return ctrl.Result{}, err
+	}
+
+	log.Info("Reconciliation complete", "configMap", configMapRef)
 	return ctrl.Result{}, nil
+}
+
+func (r *CodeScannerSnykReconciler) configMapForSnyk(snyk *maintainerdcncfiov1alpha1.CodeScannerSnyk) *corev1.ConfigMap {
+	return &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      snyk.Name,
+			Namespace: snyk.Namespace,
+		},
+		Data: map[string]string{
+			ConfigMapKeyCodeScanner: ScannerTypeSnyk,
+			ConfigMapKeyProjectName: snyk.Spec.ProjectName,
+		},
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *CodeScannerSnykReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&maintainerdcncfiov1alpha1.CodeScannerSnyk{}).
+		Owns(&corev1.ConfigMap{}).
 		Named("codescannersnyk").
 		Complete(r)
 }
