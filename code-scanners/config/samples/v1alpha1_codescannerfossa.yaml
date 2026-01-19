@@ -4,6 +4,7 @@ metadata:
   labels:
     app.kubernetes.io/name: code-scanners
     app.kubernetes.io/managed-by: kustomize
-  name: codescannerfossa-sample
+  name: zot-fossa
+  namespace: code-scanners
 spec:
-  # TODO(user): Add fields here
+  projectName: zot

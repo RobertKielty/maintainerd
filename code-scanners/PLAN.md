@@ -183,10 +183,10 @@ make manifests generate
 ```
 
 ### Deliverables
-- [ ] `codescannerfossa_types.go` with spec and status
-- [ ] `codescannersnyk_types.go` with spec and status
-- [ ] Generated CRD YAMLs in `config/crd/bases/`
-- [ ] Generated deep copy functions
+- [x] `codescannerfossa_types.go` with spec and status
+- [x] `codescannersnyk_types.go` with spec and status
+- [x] Generated CRD YAMLs in `config/crd/bases/`
+- [x] Generated deep copy functions
 
 ---
 
@@ -681,10 +681,10 @@ status:
 - [x] Remove Ginkgo/Gomega
 
 ### Phase 2: API Types
-- [ ] Define CodeScannerFossa types
-- [ ] Define CodeScannerSnyk types
-- [ ] Add validation markers
-- [ ] Generate CRDs
+- [x] Define CodeScannerFossa types
+- [x] Define CodeScannerSnyk types
+- [x] Add validation markers
+- [x] Generate CRDs
 
 ### Phase 3: Controllers
 - [ ] Implement Fossa reconciler

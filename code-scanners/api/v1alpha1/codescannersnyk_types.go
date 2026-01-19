@@ -20,38 +20,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
-
 // CodeScannerSnykSpec defines the desired state of CodeScannerSnyk
 type CodeScannerSnykSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-	// The following markers will use OpenAPI v3 schema to validate the value
-	// More info: https://book.kubebuilder.io/reference/markers/crd-validation.html
-
-	// foo is an example field of CodeScannerSnyk. Edit codescannersnyk_types.go to remove/update
-	// +optional
-	Foo *string `json:"foo,omitempty"`
+	// ProjectName is the name of the CNCF project to scan
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ProjectName string `json:"projectName"`
 }
 
 // CodeScannerSnykStatus defines the observed state of CodeScannerSnyk.
 type CodeScannerSnykStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
+	// ConfigMapRef is the namespace/name reference to the created ConfigMap
+	// +optional
+	ConfigMapRef string `json:"configMapRef,omitempty"`
 
-	// For Kubernetes API conventions, see:
-	// https://github.com/kubernetes/community/blob/master/contributors/devel/sig-architecture/api-conventions.md#typical-status-properties
-
-	// conditions represent the current state of the CodeScannerSnyk resource.
-	// Each condition has a unique type and reflects the status of a specific aspect of the resource.
-	//
-	// Standard condition types include:
-	// - "Available": the resource is fully functional
-	// - "Progressing": the resource is being created or updated
-	// - "Degraded": the resource failed to reach or maintain its desired state
-	//
-	// The status of each condition is one of True, False, or Unknown.
+	// Conditions represent the latest available observations of the resource's state
 	// +listType=map
 	// +listMapKey=type
 	// +optional
@@ -60,6 +43,9 @@ type CodeScannerSnykStatus struct {
 
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
+// +kubebuilder:printcolumn:name="Project",type=string,JSONPath=`.spec.projectName`
+// +kubebuilder:printcolumn:name="ConfigMap",type=string,JSONPath=`.status.configMapRef`
+// +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
 
 // CodeScannerSnyk is the Schema for the codescannersnyks API
 type CodeScannerSnyk struct {
