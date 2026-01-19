@@ -47,10 +47,10 @@ kubebuilder create api --group "" --version v1alpha1 --kind CodeScannerSnyk --re
 After scaffolding, replace `internal/controller/suite_test.go` with standard Go test setup using `envtest`.
 
 ### Deliverables
-- [ ] Initialized project with `PROJECT` file
-- [ ] Basic directory structure
-- [ ] `go.mod` and `go.sum`
-- [ ] Scaffolded API and controller files
+- [x] Initialized project with `PROJECT` file
+- [x] Basic directory structure
+- [x] `go.mod` and `go.sum`
+- [x] Scaffolded API and controller files
 
 ---
 
@@ -675,10 +675,10 @@ status:
 ## Summary: Implementation Checklist
 
 ### Phase 1: Project Scaffolding
-- [ ] Install Kubebuilder v4.x
-- [ ] Initialize project in `code-scanners/`
-- [ ] Create API scaffolds
-- [ ] Remove Ginkgo/Gomega
+- [x] Install Kubebuilder v4.x
+- [x] Initialize project in `code-scanners/`
+- [x] Create API scaffolds
+- [x] Remove Ginkgo/Gomega
 
 ### Phase 2: API Types
 - [ ] Define CodeScannerFossa types

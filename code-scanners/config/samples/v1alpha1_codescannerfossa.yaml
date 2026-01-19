@@ -1,0 +1,9 @@
+apiVersion: maintainer-d.cncf.io/v1alpha1
+kind: CodeScannerFossa
+metadata:
+  labels:
+    app.kubernetes.io/name: code-scanners
+    app.kubernetes.io/managed-by: kustomize
+  name: codescannerfossa-sample
+spec:
+  # TODO(user): Add fields here

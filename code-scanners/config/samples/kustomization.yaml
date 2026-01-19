@@ -1,0 +1,5 @@
+## Append samples of your project ##
+resources:
+- v1alpha1_codescannerfossa.yaml
+- v1alpha1_codescannersnyk.yaml
+# +kubebuilder:scaffold:manifestskustomizesamples
