@@ -45,7 +45,7 @@ spec:
 
 ## Library and Code Specifics
 
-- namespace: `code-scanner`
+- namespace: `code-scanners`
 - Kubebuilder the newest version (use Context7 MCP to fetch it)
 - Use standard Go Tests, do not use Ginkgo/Gomega
 - Always use native types in metav1 when available
