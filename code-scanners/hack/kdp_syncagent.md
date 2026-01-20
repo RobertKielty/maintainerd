@@ -27,7 +27,7 @@
 
 ## Configuring (kdp/kcp) Sync Agent (Service Cluster)
 
-1.On the service cluster:
+1.Create a secret with the sync agent kubeconfig:
 
     ```bash
     kubectx context-cdv2c4jfn5q
@@ -42,6 +42,8 @@
         --from-file=kubeconfig=tmp/code-scanners.maintainer-d.cncf.io-kubeconfig
     ```
 
+2. Deploy the sync agent:
+
     ```bash
     helm repo add kcp https://kcp-dev.github.io/helm-charts
     helm repo update
@@ -52,4 +54,13 @@
       --namespace code-scanners
     ```
 
-2.
+    ```bash
+    # check whether the syncagent CRDs are created
+    kubectl api-resources | grep sync
+    ```
+
+3. Publish the resources:
+
+   ```bash
+   TBA
+   ```
