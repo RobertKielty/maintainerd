@@ -39,25 +39,26 @@
     ```bash
     kubectl create secret generic \
         syncagent-code-scanner-svc-kubeconfig \
+        --namespace code-scanners \
         --from-file=kubeconfig=tmp/code-scanners.maintainer-d.cncf.io-kubeconfig
     ```
 
 2. Deploy the sync agent:
 
-    ```bash
-    helm repo add kcp https://kcp-dev.github.io/helm-charts
-    helm repo update
+   ```bash
+   helm repo add kcp https://kcp-dev.github.io/helm-charts
+   helm repo update
 
-    helm install kcp-api-syncagent kcp/api-syncagent \
-      --values hack/kdp-syncagent/code-scanners_api_syncagent_values.yaml \
-      --version=0.2.0 \
-      --namespace code-scanners
-    ```
+   helm install kcp-api-syncagent kcp/api-syncagent \
+     --values hack/kdp-syncagent/code-scanners_api_syncagent_values.yaml \
+     --version=0.2.0 \
+     --namespace code-scanners
+   ```
 
-    ```bash
-    # check whether the syncagent CRDs are created
-    kubectl api-resources | grep sync
-    ```
+   ```bash
+   # check whether the syncagent CRDs are created
+   kubectl api-resources | grep sync
+   ```
 
 3. Apply RBAC for the syncagent:
 
@@ -86,3 +87,5 @@
    ```bash
    kubectl get publishedresources
    ```
+
+5. Activate the service in [services.cncf.io](https://services.cncf.io/).
