@@ -14,7 +14,7 @@ spec:
       kind: ConfigMap
       reference:
         name:
-          path: status.configMapRef
+          path: spec.configMapName
 ---
 apiVersion: syncagent.kcp.io/v1alpha1
 kind: PublishedResource
@@ -31,4 +31,4 @@ spec:
       kind: ConfigMap
       reference:
         name:
-          path: status.configMapRef
+          path: spec.configMapName
