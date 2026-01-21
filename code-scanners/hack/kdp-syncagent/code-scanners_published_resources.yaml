@@ -1,16 +1,34 @@
+---
 apiVersion: syncagent.kcp.io/v1alpha1
 kind: PublishedResource
 metadata:
-  name: publish-code-scanners # name can be freely chosen
+  name: publish-codescannerfossa
 spec:
   resource:
-    kind: CodeScanner
-    apiGroup: code-scanners.maintainer-d.cncf.io
+    kind: CodeScannerFossa
+    apiGroup: maintainer-d.cncf.io
     version: v1alpha1
   related:
-    - identifier: "confimap-with-code-scanner-config"
-      origin: service # service or platform
+    - identifier: "configmap-with-code-scanner-config"
+      origin: service
       kind: ConfigMap
       reference:
         name:
-          path: spec.configMapName
+          path: status.configMapRef
+---
+apiVersion: syncagent.kcp.io/v1alpha1
+kind: PublishedResource
+metadata:
+  name: publish-codescannersnyk
+spec:
+  resource:
+    kind: CodeScannerSnyk
+    apiGroup: maintainer-d.cncf.io
+    version: v1alpha1
+  related:
+    - identifier: "configmap-with-code-scanner-config"
+      origin: service
+      kind: ConfigMap
+      reference:
+        name:
+          path: status.configMapRef

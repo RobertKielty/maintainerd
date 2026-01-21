@@ -59,8 +59,30 @@
     kubectl api-resources | grep sync
     ```
 
-3. Publish the resources:
+3. Apply RBAC for the syncagent:
 
    ```bash
-   TBA
+   # Apply RBAC with default namespace (code-scanners)
+   kubectl kustomize hack/kdp-syncagent/rbac | kubectl apply -f -
+   ```
+
+   To use a custom namespace, substitute the namespace value:
+
+   ```bash
+   export NAMESPACE=my-custom-namespace
+   kubectl kustomize hack/kdp-syncagent/rbac | \
+     sed "s/code-scanners/$NAMESPACE/g" | \
+     kubectl apply -f -
+   ```
+
+4. Publish the resources:
+
+   ```bash
+   kubectl apply -f hack/kdp-syncagent/code-scanners_published_resources.yaml
+   ```
+
+   Verify the published resources:
+
+   ```bash
+   kubectl get publishedresources
    ```

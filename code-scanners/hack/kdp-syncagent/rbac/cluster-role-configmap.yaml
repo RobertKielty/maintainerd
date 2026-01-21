@@ -1,0 +1,15 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    agent.kdp.k8c.io/namespace: "code-scanners"
+    agent.kdp.k8c.io/name: "kcp-api-syncagent"
+  name: kcp-api-syncagent:code-scanners:resources:configmap
+rules:
+  - apiGroups:
+      - ""
+    resources:
+      - configmaps
+    verbs:
+      - "*"
