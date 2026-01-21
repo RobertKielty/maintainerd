@@ -139,6 +139,56 @@ status:
   conditions: []  # Standard metav1.Condition
 ```
 
+## KDP Sync Agent Configuration
+
+The `hack/kdp-syncagent/` directory contains configuration for deploying the kcp API sync agent, which enables the code-scanners CRDs to be available as a Kubermatic Developer Platform (KDP) service.
+
+### Directory Structure
+
+```
+hack/kdp-syncagent/
+├── code-scanners_api_syncagent_values.yaml   # Helm values for sync agent
+├── code-scanners_published_resources.yaml    # PublishedResource CRs
+└── rbac/                                      # RBAC manifests (Kustomize)
+    ├── kustomization.yaml
+    ├── cluster-role-aggregated.yaml
+    ├── cluster-role-binding.yaml
+    ├── cluster-role-configmap.yaml
+    └── cluster-role-resources.yaml
+```
+
+### Configuration Files
+
+| File | Purpose |
+|------|---------|
+| `code-scanners_api_syncagent_values.yaml` | Helm values for `kcp/api-syncagent` chart |
+| `code-scanners_published_resources.yaml` | Defines `CodeScannerFossa` and `CodeScannerSnyk` as published resources with related ConfigMap references |
+| `rbac/` | Kustomize-based RBAC granting sync agent permissions for CRDs and ConfigMaps |
+
+### Deployment Commands
+
+```bash
+# Create namespace and kubeconfig secret
+kubectl create namespace code-scanners
+kubectl create secret generic syncagent-code-scanner-svc-kubeconfig \
+    --from-file=kubeconfig=tmp/code-scanners.maintainer-d.cncf.io-kubeconfig
+
+# Deploy sync agent via Helm
+helm repo add kcp https://kcp-dev.github.io/helm-charts
+helm install kcp-api-syncagent kcp/api-syncagent \
+    --values hack/kdp-syncagent/code-scanners_api_syncagent_values.yaml \
+    --version=0.2.0 \
+    --namespace code-scanners
+
+# Apply RBAC
+kubectl kustomize hack/kdp-syncagent/rbac | kubectl apply -f -
+
+# Publish resources
+kubectl apply -f hack/kdp-syncagent/code-scanners_published_resources.yaml
+```
+
+For detailed setup instructions including KDP service creation, see `hack/kdp_syncagent.md`.
+
 ## Implementation Status
 
 Track progress in `PLAN.md`. Current phases:
