@@ -49,6 +49,10 @@ spec:
           spec:
             description: spec defines the desired state of CodeScannerSnyk
             properties:
+              configMapName:
+                description: ConfigMapName is the name of the ConfigMap to create
+                  for this scanner
+                type: string
               projectName:
                 description: ProjectName is the name of the CNCF project to scan
                 minLength: 1

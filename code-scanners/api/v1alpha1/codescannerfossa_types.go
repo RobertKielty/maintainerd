@@ -26,6 +26,10 @@ type CodeScannerFossaSpec struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MinLength=1
 	ProjectName string `json:"projectName"`
+
+	// ConfigMapName is the name of the ConfigMap to create for this scanner
+	// +optional
+	ConfigMapName string `json:"configMapName,omitempty"`
 }
 
 // CodeScannerFossaStatus defines the observed state of CodeScannerFossa.
