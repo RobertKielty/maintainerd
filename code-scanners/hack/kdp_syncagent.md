@@ -89,3 +89,11 @@
    ```
 
 5. Activate the service in [services.cncf.io](https://services.cncf.io/).
+
+6. Create subscriptions for the Fossa and Snyk.
+
+7. You should see a corresponding CRD in the Service Cluster:
+
+   ```bash
+   k get codescannerfossas.maintainer-d.cncf.io
+   ```
