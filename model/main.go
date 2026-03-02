@@ -171,35 +171,47 @@ type Service struct {
 	Description string
 }
 
-type ServiceUserTeams struct {
+type RemoteTeamUser struct {
 	gorm.Model
 
-	ServiceID     uint `gorm:"index"` // This may be redundant — if already tracked via foreign keys below
-	ServiceUserID int  `gorm:"index"` // foreign key part (ServiceUser.ServiceUserID)
+	ServiceID uint `gorm:"index"` // This may be redundant — if already tracked via foreign keys below
 
-	ServiceTeamID uint        `gorm:"index"` // FK to ServiceTeam
-	ServiceTeam   ServiceTeam `gorm:"foreignKey:ServiceTeamID;constraint:OnDelete:CASCADE"`
+	TeamID uint `gorm:"index"` // FK to RemoteTeam (local DB ID)
+	UserID uint `gorm:"index"` // FK to RemoteUser (local DB ID)
 
 	MaintainerID   *uint `gorm:"index"` // nullable FK to Maintainer
 	CollaboratorID *uint `gorm:"index"` // nullable FK to Collaborator
 }
 
-type ServiceTeam struct {
+type RemoteTeam struct {
 	gorm.Model
-	ProjectID       uint `gorm:"index"` // FK to project
-	ServiceID       uint `gorm:"index"` // FK to service
-	ServiceTeamID   int  // ID on the remote service (e.g., FOSSA team ID)
-	ServiceTeamName *string
-	ProjectName     *string // De-normalised for debugging purposes
+	ProjectID      uint `gorm:"index"` // FK to project
+	ServiceID      uint `gorm:"index"` // FK to service
+	RemoteTeamID   uint // ID on the remote service (e.g., FOSSA team ID)
+	RemoteTeamName *string
+	ProjectName    *string // De-normalised for debugging purposes
 }
 
-type ServiceUser struct {
+type RemoteUser struct {
 	gorm.Model
 	ServiceID         uint   `gorm:"index"` // FK to Service
-	ServiceUserID     int    `gorm:"index"` // ID on the remote service
+	RemoteUserID      uint   `gorm:"index"` // ID on the remote service
 	ServiceEmail      string `gorm:"size:254;default:EMAIL_MISSING"`
-	ServiceRef        string `gorm:"size:512"`
+	RemoteRef         string `gorm:"size:512"`
 	ServiceGitHubName *string
+}
+
+type ServiceInvitation struct {
+	gorm.Model
+	ServiceID     uint       `gorm:"index;uniqueIndex:idx_service_invite_project_email"` // FK to Service
+	RemoteTeamID  uint       `gorm:"not null"`                                           // ID on the remote service (e.g., FOSSA team ID)
+	ProjectID     uint       `gorm:"index;uniqueIndex:idx_service_invite_project_email"` // FK to project
+	MaintainerID  *uint      `gorm:"index"`
+	ServiceEmail  string     `gorm:"size:254;not null;uniqueIndex:idx_service_invite_project_email"`
+	Status        string     `gorm:"size:32;index"` // pending, accepted, expired, error
+	SentAt        *time.Time `gorm:"index"`
+	LastCheckedAt *time.Time `gorm:"index"`
+	LastError     *string    `gorm:"type:text"`
 }
 
 // A FoundationOfficer is a person who has elevated access to
@@ -215,7 +227,7 @@ type FoundationOfficer struct {
 	// Services represent user identities on external services (e.g., FOSSA) that
 	// this officer can operate as. This is a many-to-many relationship because a
 	// service user could (in theory) be shared across officers.
-	Services []ServiceUser `gorm:"many2many:foundation_officer_service_users;constraint:OnDelete:CASCADE"`
+	Services []RemoteUser `gorm:"many2many:foundation_officer_service_users;constraint:OnDelete:CASCADE"`
 }
 
 type ReconciliationResult struct {

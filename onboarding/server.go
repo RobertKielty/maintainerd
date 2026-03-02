@@ -175,14 +175,14 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 		log.Printf("handleWebhook: INF, /fossa-invite accepted by @%s for project %q", actor, project.Name)
 
-		// Ensure a FOSSA ServiceTeam exists for this project
-		stMap, err := s.Store.GetProjectServiceTeamMap("FOSSA")
+		// Ensure a FOSSA RemoteTeam exists for this project
+		stMap, err := s.Store.GetProjectRemoteTeamMap("FOSSA")
 		if err != nil {
 			log.Printf("handleWebhook: ERR, could not get FOSSA team map: %v", err)
 			break
 		}
 		st, ok := stMap[project.ID]
-		if !ok || st == nil || st.ServiceTeamID == 0 {
+		if !ok || st == nil || st.RemoteTeamID == 0 {
 			// Team missing; do not create here per design. Inform via comment.
 			msg := fmt.Sprintf("FOSSA team for project %q was not found. Please add the 'fossa' label to the onboarding issue to create the team, then re-run this command.", project.Name)
 			if err := s.updateIssue(e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetIssue().GetNumber(), msg); err != nil {
@@ -192,7 +192,7 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Process all maintainers: verify acceptance, check membership, add as Team Admin if needed
-		actions, err := s.addProjectMaintainersToFossaTeam(project, st.ServiceTeamID)
+		actions, err := s.addProjectMaintainersToFossaTeam(project, st.RemoteTeamID)
 		if err != nil {
 			log.Printf("handleWebhook: ERR, addProjectMaintainersToFossaTeam: %v", err)
 		}
@@ -424,7 +424,7 @@ func (s *EventListener) signProjectUpForFOSSA(project model.Project) ([]string, 
 	}
 
 	// Do we have a team already in FOSSA for @project?
-	serviceTeams, err := s.Store.GetProjectServiceTeamMap("FOSSA")
+	serviceTeams, err := s.Store.GetProjectRemoteTeamMap("FOSSA")
 	if err != nil {
 		actions = append(actions, fmt.Sprintf(":warning: Problem retrieving serviceTeams.  %v", err))
 	}
@@ -434,9 +434,9 @@ func (s *EventListener) signProjectUpForFOSSA(project model.Project) ([]string, 
 			actions,
 			fmt.Sprintf("👥 [%s team](https://app.fossa.com/account/settings/organization/teams/%d) was already in FOSSA",
 				project.Name,
-				st.ServiceTeamID))
+				st.RemoteTeamID))
 	} else {
-		// create the team on FOSSA, add the team to the ServiceTeams
+		// create the team on FOSSA, add the team to the RemoteTeams
 		team, err := s.FossaClient.CreateTeam(project.Name)
 		if err != nil {
 			actions = append(actions, fmt.Sprintf(":x: Problem creating team on FOSSA for %s: %v", project.Name, err))
@@ -447,11 +447,16 @@ func (s *EventListener) signProjectUpForFOSSA(project model.Project) ([]string, 
 		actions = append(actions,
 			fmt.Sprintf("👥  [%s team](https://app.fossa.com/account/settings/organization/teams/%d) has been created in FOSSA",
 				team.Name, team.ID))
-		_, err = s.Store.CreateServiceTeam(project.ID, project.Name, team.ID, team.Name)
-		if err != nil {
-			log.Printf("handleWebhook: WRN, failed to create service team: %v", err)
+		serviceID, idErr := s.getFossaServiceID()
+		if idErr != nil {
+			log.Printf("handleWebhook: WRN, failed to resolve FOSSA service ID: %v", idErr)
+		} else {
+			_, err = s.Store.CreateRemoteTeam(project.ID, project.Name, serviceID, team.ID, team.Name)
+			if err != nil {
+				log.Printf("handleWebhook: WRN, failed to create service team: %v", err)
+			}
 		}
-		st = &model.ServiceTeam{ServiceTeamID: team.ID}
+		st = &model.RemoteTeam{RemoteTeamID: team.ID}
 	}
 	if len(eligibleMaintainers) == 0 {
 		actions = append(actions, fmt.Sprintf("Maintainers not yet registered, for project %s", project.Name))
@@ -464,7 +469,7 @@ func (s *EventListener) signProjectUpForFOSSA(project model.Project) ([]string, 
 		if errors.Is(err, fossa.ErrInviteAlreadyExists) {
 			invitedMaintainers = append(invitedMaintainers, maintainer.GitHubAccount) // invited already
 		} else if errors.Is(err, fossa.ErrUserAlreadyMember) {
-			err := s.FossaClient.AddUserToTeamByEmail(st.ServiceTeamID, maintainer.Email, 3)
+			err := s.FossaClient.AddUserToTeamByEmail(st.RemoteTeamID, maintainer.Email, 3)
 			if err != nil {
 				actions = append(actions, fmt.Sprintf("@%s : error adding you to your team on CNCF FOSSA", maintainer.GitHubAccount))
 			} else {
@@ -487,12 +492,12 @@ func (s *EventListener) signProjectUpForFOSSA(project model.Project) ([]string, 
 
 	// check if the project team has imported their repos. If we label an onboarding issue with 'fossa' and the project
 	// has been manually setup in the past, better to report that repos have been imported into FOSSA.
-	teamMap, err := s.Store.GetProjectServiceTeamMap("FOSSA")
+	teamMap, err := s.Store.GetProjectRemoteTeamMap("FOSSA")
 	if err != nil {
 		return nil, err
 	}
 
-	count, repos, err := s.FossaClient.FetchImportedRepos(teamMap[project.ID].ServiceTeamID)
+	count, repos, err := s.FossaClient.FetchImportedRepos(teamMap[project.ID].RemoteTeamID)
 	if err != nil {
 		log.Printf("signProjectUpForFOSSA: ERR, FetchImportedRepos: %v", err)
 		actions = append(actions, fmt.Sprintf("Error occurred during FetchImportedRepos %v", err))
@@ -527,9 +532,17 @@ func (s *EventListener) updateIssue(owner, repo string, issueNumber int, comment
 	return err
 }
 
+func (s *EventListener) getFossaServiceID() (uint, error) {
+	var service model.Service
+	if err := s.Store.DB().Where("name = ?", "FOSSA").First(&service).Error; err != nil {
+		return 0, err
+	}
+	return service.ID, nil
+}
+
 // addProjectMaintainersToFossaTeam processes all registered maintainers for a project against the given FOSSA team.
 // It does not include email addresses in returned action strings; only GitHub handles.
-func (s *EventListener) addProjectMaintainersToFossaTeam(project model.Project, teamID int) ([]string, error) {
+func (s *EventListener) addProjectMaintainersToFossaTeam(project model.Project, teamID uint) ([]string, error) {
 	log.Printf("addProjectMaintainersToFossaTeam: project=%q projectID=%d teamID=%d", project.Name, project.ID, teamID)
 	var actions []string
 

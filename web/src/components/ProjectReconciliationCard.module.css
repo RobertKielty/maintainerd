@@ -471,9 +471,282 @@
   box-shadow: 0 6px 14px rgba(214, 34, 147, 0.35);
 }
 
+.inviteActions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.inviteSummary {
+  font-size: 12px;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+}
+
+.inviteMetaRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+
+.tableSection {
+  margin-bottom: 20px;
+}
+
+.tableHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.refreshButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.2));
+  background: var(--md-surface, #f8fafc);
+  color: var(--md-card-text, #0f172a);
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.refreshButton svg {
+  width: 14px;
+  height: 14px;
+}
+
+.refreshButton:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.tableTitle {
+  margin: 0;
+  font-size: 13px;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--md-card-text-strong, #0b1220);
+}
+
+.tableWrap {
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.08));
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--md-card-bg, #ffffff);
+}
+
+.dataTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  color: var(--md-card-text, #0f172a);
+}
+
+.dataTable th,
+.dataTable td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--md-border, rgba(15, 23, 42, 0.08));
+  text-align: left;
+}
+
+.dataTable tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sortButton {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--md-card-text-strong, #0b1220);
+  cursor: pointer;
+}
+
+.tableSelect {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tableEmpty {
+  text-align: center;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+}
+
+.teamList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.teamRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.08));
+  border-radius: 12px;
+  background: #fff;
+}
+
+.teamName {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.teamMeta {
+  font-size: 12px;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+}
+
+.teamRole {
+  border-radius: 999px;
+  background: rgba(34, 197, 94, 0.12);
+  color: #15803d;
+  font-size: 12px;
+  padding: 6px 12px;
+  font-weight: 600;
+}
+
+.inviteMetaLabel {
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+  font-weight: 600;
+}
+
+.inviteList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.inviteRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.08));
+  border-radius: 12px;
+  background: #fff;
+}
+
+.inviteEmail {
+  font-weight: 600;
+  color: #0f172a;
+}
+
+.inviteMeta {
+  font-size: 12px;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+}
+
+.inviteAction {
+  border: 1px solid rgba(214, 34, 147, 0.4);
+  background: rgba(214, 34, 147, 0.08);
+  color: #d62293;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.inviteAction:hover {
+  background: rgba(214, 34, 147, 0.15);
+}
+
+.inviteError {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #b42318;
+}
+
+[data-theme="dark"] .teamRow {
+  background: #0b1220;
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+[data-theme="dark"] .teamName {
+  color: #f8fafc;
+}
+
+[data-theme="dark"] .teamMeta {
+  color: rgba(226, 232, 240, 0.7);
+}
+
+[data-theme="dark"] .teamRole {
+  background: rgba(74, 222, 128, 0.2);
+  color: #86efac;
+}
+
+[data-theme="dark"] .inviteRow {
+  background: #0b1220;
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+[data-theme="dark"] .inviteEmail {
+  color: #f8fafc;
+}
+
+[data-theme="dark"] .inviteMeta {
+  color: rgba(226, 232, 240, 0.7);
+}
+
+[data-theme="dark"] .inviteAction {
+  border-color: rgba(255, 93, 184, 0.4);
+  background: rgba(255, 93, 184, 0.15);
+  color: #ff5db8;
+}
+
+[data-theme="dark"] .inviteAction:hover {
+  background: rgba(255, 93, 184, 0.25);
+}
+
+[data-theme="dark"] .refreshButton {
+  border-color: rgba(148, 163, 184, 0.4);
+  background: rgba(15, 23, 42, 0.6);
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .inviteError {
+  color: #fca5a5;
+}
+
+[data-theme="dark"] .tableTitle {
+  color: #f8fafc;
+}
+
+[data-theme="dark"] .tableWrap {
+  background: #0b1220;
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+[data-theme="dark"] .dataTable th,
+[data-theme="dark"] .dataTable td {
+  border-bottom-color: rgba(148, 163, 184, 0.2);
+  color: #e2e8f0;
+}
+
+[data-theme="dark"] .sortButton {
+  color: #f8fafc;
+}
+
 .empty {
   color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
   font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
 }
 
 .refBody {

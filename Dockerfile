@@ -17,7 +17,8 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     go build -o /sync ./cmd/sync && \
     go build -o /sanitize ./cmd/sanitize && \
     go build -o /migrate ./cmd/migrate && \
-    go build -o /onboarding-backfill ./cmd/onboarding-backfill
+    go build -o /onboarding-backfill ./cmd/onboarding-backfill && \
+    go build -o /fossa-poller ./cmd/fossa-poller
 
 FROM gcr.io/distroless/base-debian12 AS maintainerd
 COPY --from=build /bootstrap /usr/local/bin/bootstrap
@@ -39,3 +40,7 @@ ENTRYPOINT ["/usr/local/bin/migrate"]
 FROM gcr.io/distroless/base-debian12 AS onboarding-backfill
 COPY --from=build /onboarding-backfill /usr/local/bin/onboarding-backfill
 ENTRYPOINT ["/usr/local/bin/onboarding-backfill"]
+
+FROM gcr.io/distroless/base-debian12 AS fossa-poller
+COPY --from=build /fossa-poller /usr/local/bin/fossa-poller
+ENTRYPOINT ["/usr/local/bin/fossa-poller"]

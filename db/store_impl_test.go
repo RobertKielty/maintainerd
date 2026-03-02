@@ -24,7 +24,9 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&model.Maintainer{},
 		&model.MaintainerProject{},
 		&model.Service{},
-		&model.ServiceTeam{},
+		&model.RemoteTeam{},
+		&model.RemoteUser{},
+		&model.RemoteTeamUser{},
 	)
 	require.NoError(t, err)
 
@@ -186,4 +188,99 @@ func TestUpsertMaintainer_FillsMissingFields(t *testing.T) {
 		Where("maintainer_id = ? AND project_id = ?", existing.ID, project.ID).
 		Count(&count).Error)
 	assert.Equal(t, int64(1), count)
+}
+
+func TestUpsertRemoteUser(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewSQLStore(db)
+
+	service := model.Service{Name: "FOSSA"}
+	require.NoError(t, db.Create(&service).Error)
+
+	user := &model.RemoteUser{
+		ServiceID:    service.ID,
+		RemoteUserID: 101,
+		ServiceEmail: "alice@example.com",
+		RemoteRef:    "alice-ref",
+	}
+	created, err := store.UpsertRemoteUser(user)
+	require.NoError(t, err)
+	require.NotNil(t, created)
+
+	userUpdate := &model.RemoteUser{
+		ServiceID:    service.ID,
+		RemoteUserID: 101,
+		ServiceEmail: "alice+updated@example.com",
+		RemoteRef:    "alice-ref-updated",
+	}
+	updated, err := store.UpsertRemoteUser(userUpdate)
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+	assert.Equal(t, "alice+updated@example.com", updated.ServiceEmail)
+	assert.Equal(t, "alice-ref-updated", updated.RemoteRef)
+
+	var count int64
+	require.NoError(t, db.Model(&model.RemoteUser{}).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+func TestUpsertRemoteUserTeam(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewSQLStore(db)
+
+	service := model.Service{Name: "FOSSA"}
+	require.NoError(t, db.Create(&service).Error)
+	project := model.Project{Name: "kubernetes", Maturity: model.Sandbox}
+	require.NoError(t, db.Create(&project).Error)
+	maintainer := model.Maintainer{
+		Name:             "Alice Developer",
+		Email:            "alice@example.com",
+		GitHubAccount:    "alice",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, db.Create(&maintainer).Error)
+
+	remoteTeam := model.RemoteTeam{
+		ServiceID:      service.ID,
+		ProjectID:      project.ID,
+		RemoteTeamID:   999001,
+		RemoteTeamName: strPtr("Team Demo"),
+	}
+	require.NoError(t, db.Create(&remoteTeam).Error)
+
+	remoteUser := model.RemoteUser{
+		ServiceID:    service.ID,
+		RemoteUserID: 101,
+		ServiceEmail: "alice@example.com",
+		RemoteRef:    "alice-ref",
+	}
+	require.NoError(t, db.Create(&remoteUser).Error)
+
+	link := &model.RemoteTeamUser{
+		ServiceID:    service.ID,
+		TeamID:       remoteTeam.ID,
+		UserID:       remoteUser.ID,
+		MaintainerID: &maintainer.ID,
+	}
+	created, err := store.UpsertRemoteUserTeam(link)
+	require.NoError(t, err)
+	require.NotNil(t, created)
+
+	updatedLink := &model.RemoteTeamUser{
+		ServiceID:    service.ID,
+		TeamID:       remoteTeam.ID,
+		UserID:       remoteUser.ID,
+		MaintainerID: &maintainer.ID,
+	}
+	updated, err := store.UpsertRemoteUserTeam(updatedLink)
+	require.NoError(t, err)
+	require.NotNil(t, updated)
+
+	var count int64
+	require.NoError(t, db.Model(&model.RemoteTeamUser{}).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+func strPtr(value string) *string {
+	return &value
 }

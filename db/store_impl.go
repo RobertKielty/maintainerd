@@ -11,6 +11,7 @@ import (
 
 	"go.uber.org/zap"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type SQLStore struct {
@@ -316,8 +317,8 @@ func (s *SQLStore) UpdateMaintainerDetails(maintainerID uint, name, email, githu
 	return &maintainer, nil
 }
 
-func (s *SQLStore) GetServiceTeamByProject(projectID, serviceID uint) (*model.ServiceTeam, error) {
-	var st model.ServiceTeam
+func (s *SQLStore) GetRemoteTeamByProject(projectID, serviceID uint) (*model.RemoteTeam, error) {
+	var st model.RemoteTeam
 	err := s.db.
 		Where("project_id = ? AND service_id = ?", projectID, serviceID).
 		First(&st).Error
@@ -409,10 +410,10 @@ func (s *SQLStore) GetMaintainerMapByGitHubAccount() (map[string]model.Maintaine
 	return m, nil
 }
 
-// GetProjectServiceTeamMap returns a map of projectID to ServiceTeams
+// GetProjectRemoteTeamMap returns a map of projectID to RemoteTeams
 // for every Project that uses the service identified by serviceId
-func (s *SQLStore) GetProjectServiceTeamMap(serviceName string) (map[uint]*model.ServiceTeam, error) {
-	var serviceTeams []model.ServiceTeam
+func (s *SQLStore) GetProjectRemoteTeamMap(serviceName string) (map[uint]*model.RemoteTeam, error) {
+	var serviceTeams []model.RemoteTeam
 	service, err := s.getServiceByName(serviceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get service, %s, by name: %v", serviceName, err)
@@ -422,10 +423,10 @@ func (s *SQLStore) GetProjectServiceTeamMap(serviceName string) (map[uint]*model
 		Where("service_id = ? ", service.ID).
 		Find(&serviceTeams).Error
 	if err != nil {
-		return nil, fmt.Errorf("querying ServiceTeam for service_id %d: %w", service.ID, err)
+		return nil, fmt.Errorf("querying RemoteTeam for service_id %d: %w", service.ID, err)
 	}
 
-	result := make(map[uint]*model.ServiceTeam, len(serviceTeams))
+	result := make(map[uint]*model.RemoteTeam, len(serviceTeams))
 
 	for i := range serviceTeams {
 		st := &serviceTeams[i]
@@ -463,26 +464,26 @@ func (s *SQLStore) LogAuditEvent(logger *zap.SugaredLogger, event model.AuditLog
 	return err
 }
 
-// CreateServiceTeam creates or retrieves a service team entry in the database based on the provided project and service details.
+// CreateRemoteTeam creates or retrieves a service team entry in the database based on the provided project and service details.
 // It accepts a project ID, project name, service ID, and service name as input and returns the service team or an error.
-func (s *SQLStore) CreateServiceTeam(
+func (s *SQLStore) CreateRemoteTeam(
 	projectID uint, projectName string,
-	serviceID int, serviceName string) (*model.ServiceTeam, error) {
+	serviceID uint, remoteTeamID uint, remoteTeamName string) (*model.RemoteTeam, error) {
 
 	var errMessages []string
 
-	st := &model.ServiceTeam{
-		ServiceTeamID:   serviceID,
-		ServiceID:       1, // TODO : Hardcoded to FOSSA for now
-		ServiceTeamName: &serviceName,
-		ProjectID:       projectID,
-		ProjectName:     &projectName,
+	st := &model.RemoteTeam{
+		RemoteTeamID:   remoteTeamID,
+		ServiceID:      serviceID,
+		RemoteTeamName: &remoteTeamName,
+		ProjectID:      projectID,
+		ProjectName:    &projectName,
 	}
-	err := s.db.Where("service_team_id = ?", serviceID).FirstOrCreate(st).Error
+	err := s.db.Where("remote_team_id = ? AND service_id = ?", remoteTeamID, serviceID).FirstOrCreate(st).Error
 	if err != nil {
-		msg := fmt.Sprintf("CreateServiceTeamsForUser: failed for team %d (%s): %v", serviceID, serviceName, err)
+		msg := fmt.Sprintf("CreateRemoteTeamsForUser: failed for team %d (%s): %v", remoteTeamID, remoteTeamName, err)
 		log.Println(msg)
-		return nil, fmt.Errorf("CreateServiceTeamsForUser had partial errors:\n%s", strings.Join(errMessages, "\n"))
+		return nil, fmt.Errorf("CreateRemoteTeamsForUser had partial errors:\n%s", strings.Join(errMessages, "\n"))
 	}
 	return st, nil
 }
@@ -503,6 +504,146 @@ func (s *SQLStore) ListStaffMembers() ([]model.StaffMember, error) {
 		return nil, err
 	}
 	return staffMembers, nil
+}
+
+// ListServiceInvitations returns service invitations for a project and service.
+func (s *SQLStore) ListServiceInvitations(projectID uint, serviceID uint) ([]model.ServiceInvitation, error) {
+	var invites []model.ServiceInvitation
+	if err := s.db.
+		Where("project_id = ? AND service_id = ?", projectID, serviceID).
+		Order("created_at desc").
+		Find(&invites).Error; err != nil {
+		return nil, err
+	}
+	return invites, nil
+}
+
+// ListServiceInvitationsByStatus returns invite rows matching any of the provided statuses for a service.
+func (s *SQLStore) ListServiceInvitationsByStatus(serviceID uint, statuses []string) ([]model.ServiceInvitation, error) {
+	var invites []model.ServiceInvitation
+	if len(statuses) == 0 {
+		return invites, nil
+	}
+	if err := s.db.
+		Where("service_id = ? AND status IN ?", serviceID, statuses).
+		Order("created_at asc").
+		Find(&invites).Error; err != nil {
+		return nil, err
+	}
+	return invites, nil
+}
+
+// UpsertServiceInvitation inserts or updates a service invitation record.
+func (s *SQLStore) UpsertServiceInvitation(invite *model.ServiceInvitation) (*model.ServiceInvitation, error) {
+	if invite == nil {
+		return nil, fmt.Errorf("invite is nil")
+	}
+	err := s.db.Clauses(clause.OnConflict{
+		Columns: []clause.Column{
+			{Name: "project_id"},
+			{Name: "service_id"},
+			{Name: "service_email"},
+		},
+		DoUpdates: clause.AssignmentColumns([]string{
+			"maintainer_id",
+			"remote_team_id",
+			"status",
+			"last_error",
+			"sent_at",
+			"last_checked_at",
+			"updated_at",
+		}),
+	}).Create(invite).Error
+	if err != nil {
+		return nil, err
+	}
+	return invite, nil
+}
+
+// GetServiceInvitationByID loads a single invitation by ID.
+func (s *SQLStore) GetServiceInvitationByID(id uint) (*model.ServiceInvitation, error) {
+	var invite model.ServiceInvitation
+	if err := s.db.First(&invite, id).Error; err != nil {
+		return nil, err
+	}
+	return &invite, nil
+}
+
+// DeleteServiceInvitation removes a service invitation record.
+func (s *SQLStore) DeleteServiceInvitation(id uint) error {
+	return s.db.Delete(&model.ServiceInvitation{}, id).Error
+}
+
+// ListRemoteTeamMaintainers returns maintainers linked to the service team.
+func (s *SQLStore) ListRemoteTeamMaintainers(teamID uint) ([]model.Maintainer, error) {
+	var maintainers []model.Maintainer
+	if err := s.db.
+		Model(&model.Maintainer{}).
+		Distinct("maintainers.*").
+		Joins("JOIN remote_team_users rtu ON rtu.maintainer_id = maintainers.id").
+		Where("rtu.team_id = ?", teamID).
+		Order("maintainers.name asc").
+		Find(&maintainers).Error; err != nil {
+		return nil, err
+	}
+	return maintainers, nil
+}
+
+// UpsertRemoteUser inserts or updates a service user record keyed by service + remote_user_id.
+func (s *SQLStore) UpsertRemoteUser(user *model.RemoteUser) (*model.RemoteUser, error) {
+	if user == nil {
+		return nil, fmt.Errorf("service user is nil")
+	}
+	var existing model.RemoteUser
+	err := s.db.
+		Where("service_id = ? AND remote_user_id = ?", user.ServiceID, user.RemoteUserID).
+		First(&existing).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if createErr := s.db.Create(user).Error; createErr != nil {
+				return nil, createErr
+			}
+			return user, nil
+		}
+		return nil, err
+	}
+	existing.ServiceEmail = user.ServiceEmail
+	existing.RemoteRef = user.RemoteRef
+	existing.ServiceGitHubName = user.ServiceGitHubName
+	if saveErr := s.db.Save(&existing).Error; saveErr != nil {
+		return nil, saveErr
+	}
+	return &existing, nil
+}
+
+// UpsertRemoteUserTeam inserts or updates a service user team link.
+func (s *SQLStore) UpsertRemoteUserTeam(link *model.RemoteTeamUser) (*model.RemoteTeamUser, error) {
+	if link == nil {
+		return nil, fmt.Errorf("service user team link is nil")
+	}
+	query := s.db.Where(
+		"service_id = ? AND team_id = ? AND user_id = ? AND maintainer_id IS NOT DISTINCT FROM ?",
+		link.ServiceID,
+		link.TeamID,
+		link.UserID,
+		link.MaintainerID,
+	)
+	var existing model.RemoteTeamUser
+	err := query.First(&existing).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if createErr := s.db.Create(link).Error; createErr != nil {
+				return nil, createErr
+			}
+			return link, nil
+		}
+		return nil, err
+	}
+	existing.CollaboratorID = link.CollaboratorID
+	if saveErr := s.db.Save(&existing).Error; saveErr != nil {
+		return nil, saveErr
+	}
+	return &existing, nil
 }
 
 // IsStaffGitHubAccount returns true if the GitHub account belongs to a staff member.

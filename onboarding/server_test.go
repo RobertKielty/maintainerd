@@ -65,7 +65,7 @@ func TestMockInfrastructure(t *testing.T) {
 		require.NoError(t, err)
 		assert.NotNil(t, team)
 		assert.Equal(t, "test-project", team.Name)
-		assert.Greater(t, team.ID, 0)
+		assert.NotZero(t, team.ID)
 
 		// Verify tracking
 		created := mockFossa.GetTeamsCreated()

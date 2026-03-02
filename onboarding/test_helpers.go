@@ -29,7 +29,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&model.MaintainerProject{},
 		&model.StaffMember{},
 		&model.Service{},
-		&model.ServiceTeam{},
+		&model.RemoteTeam{},
 		&model.AuditLog{},
 	)
 	require.NoError(t, err)
@@ -93,17 +93,17 @@ func seedProjectData(t *testing.T, database *gorm.DB) (model.Project, []model.Ma
 // seedProjectWithService creates a project with an associated FOSSA service team
 //
 //lint:ignore U1000 This function will be used in future implementation
-func seedProjectWithService(t *testing.T, database *gorm.DB, project model.Project, serviceTeamID int) model.ServiceTeam {
+func seedProjectWithService(t *testing.T, database *gorm.DB, project model.Project, serviceTeamID uint) model.RemoteTeam {
 	// Create or get FOSSA service
 	service := model.Service{Name: "FOSSA"}
 	database.Where("name = ?", "FOSSA").FirstOrCreate(&service)
 
-	serviceTeam := model.ServiceTeam{
-		ServiceTeamID:   serviceTeamID,
-		ServiceID:       service.ID,
-		ServiceTeamName: stringPtr(project.Name),
-		ProjectID:       project.ID,
-		ProjectName:     stringPtr(project.Name),
+	serviceTeam := model.RemoteTeam{
+		RemoteTeamID:   serviceTeamID,
+		ServiceID:      service.ID,
+		RemoteTeamName: stringPtr(project.Name),
+		ProjectID:      project.ID,
+		ProjectName:    stringPtr(project.Name),
 	}
 	require.NoError(t, database.Create(&serviceTeam).Error)
 

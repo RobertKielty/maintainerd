@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Card } from "clo-ui/components/Card";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -28,6 +28,46 @@ type ServiceSummary = {
   description: string;
 };
 
+type FossaInviteSummary = {
+  id: number;
+  email: string;
+  fossaTeamId: number;
+  fossaTeamName: string;
+  status: string;
+  lastError?: string | null;
+  sentAt?: string | null;
+  lastCheckedAt?: string | null;
+};
+
+type FossaTeamMemberSummary = {
+  id: number;
+  name: string;
+  github: string;
+  email: string;
+};
+
+type FossaInviteIneligibleSummary = {
+  id: number;
+  name: string;
+  github: string;
+  email: string;
+  reason: string;
+};
+
+type FossaInviteCandidateSummary = {
+  id: number;
+  name: string;
+  github: string;
+  email: string;
+};
+
+type SortDirection = "asc" | "desc";
+
+type SortState<Key extends string> = {
+  key: Key;
+  direction: SortDirection;
+};
+
 export type AddMaintainerPayload = {
   name: string;
   githubHandle: string;
@@ -38,6 +78,7 @@ export type AddMaintainerPayload = {
 };
 
 type ProjectReconciliationCardProps = {
+  projectId: number;
   name: string;
   maturity: string;
   maintainerRef?: string | null;
@@ -52,6 +93,11 @@ type ProjectReconciliationCardProps = {
   companyOptions?: string[];
   onboardingIssue?: string | null;
   mailingList?: string | null;
+  fossaTeamId?: number | null;
+  fossaTeamName?: string | null;
+  fossaTeamMembers?: FossaTeamMemberSummary[];
+  fossaInviteIneligible?: FossaInviteIneligibleSummary[];
+  fossaInviteCandidates?: FossaInviteCandidateSummary[];
   maintainers: MaintainerSummary[];
   services: ServiceSummary[];
   createdAt?: string | null;
@@ -97,6 +143,38 @@ const formatDate = (value?: string | null) => {
   return `${weekday} ${month} ${day} ${year}`;
 };
 
+const formatDateTime = (value?: string | null) => {
+  if (!value) {
+    return "—";
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return "—";
+  }
+  const weekdays = ["SUN", "MON", "TUE", "WED", "THUR", "FRI", "SAT"];
+  const months = [
+    "JAN",
+    "FEB",
+    "MAR",
+    "APR",
+    "MAY",
+    "JUN",
+    "JUL",
+    "AUG",
+    "SEP",
+    "OCT",
+    "NOV",
+    "DEC",
+  ];
+  const weekday = weekdays[parsed.getUTCDay()];
+  const month = months[parsed.getUTCMonth()];
+  const day = String(parsed.getUTCDate()).padStart(2, "0");
+  const year = parsed.getUTCFullYear();
+  const hours = String(parsed.getUTCHours()).padStart(2, "0");
+  const minutes = String(parsed.getUTCMinutes()).padStart(2, "0");
+  return `${weekday} ${month} ${day} ${year} ${hours}:${minutes} UTC`;
+};
+
 const maintainerRefSchema = {
   ...defaultSchema,
   tagNames: [
@@ -123,6 +201,7 @@ const maintainerRefSchema = {
 const isYamlRef = (value: string) => /\.(ya?ml)(\?|#|$)/i.test(value);
 
 export default function ProjectReconciliationCard({
+  projectId,
   name,
   maturity,
   maintainerRef,
@@ -131,6 +210,12 @@ export default function ProjectReconciliationCard({
   refLines,
   refOnlyGitHub,
   companyOptions = [],
+  fossaTeamId,
+  fossaTeamName,
+  fossaTeamMembers = [],
+  fossaInviteIneligible = [],
+  fossaInviteCandidates = [],
+  services,
   maintainers,
   createdAt,
   updatedAt,
@@ -319,11 +404,353 @@ export default function ProjectReconciliationCard({
   const [maturityModalOpen, setMaturityModalOpen] = useState(false);
   const [maturitySaving, setMaturitySaving] = useState(false);
   const [maturityError, setMaturityError] = useState<string | null>(null);
+  const [fossaInvites, setFossaInvites] = useState<FossaInviteSummary[]>([]);
+  const [fossaInviteStatus, setFossaInviteStatus] = useState<"idle" | "loading" | "ready">("idle");
+  const [fossaInviteError, setFossaInviteError] = useState<string | null>(null);
+  const [fossaInviteSending, setFossaInviteSending] = useState(false);
+  const [fossaInviteRefreshing, setFossaInviteRefreshing] = useState(false);
+  const [fossaTeamSyncing, setFossaTeamSyncing] = useState(false);
+  const [fossaTeamSyncError, setFossaTeamSyncError] = useState<string | null>(null);
+  const [fossaInviteSummary, setFossaInviteSummary] = useState<{
+    invited: number;
+    skipped: number;
+    errors: number;
+  } | null>(null);
+  const [fossaTeamSort, setFossaTeamSort] = useState<SortState<"name" | "email" | "role">>({
+    key: "name",
+    direction: "asc",
+  });
+  const [inviteSort, setInviteSort] = useState<
+    SortState<"name" | "email" | "pending" | "sent" | "checked" | "error">
+  >({
+    key: "name",
+    direction: "asc",
+  });
+  const [fossaChooseStatus, setFossaChooseStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
+  const [fossaChooseError, setFossaChooseError] = useState<string | null>(null);
+
+  const toggleSort = useCallback(
+    <Key extends string>(current: SortState<Key>, setter: (next: SortState<Key>) => void, key: Key) => {
+      if (current.key === key) {
+        setter({ key, direction: current.direction === "asc" ? "desc" : "asc" });
+        return;
+      }
+      setter({ key, direction: "asc" });
+    },
+    []
+  );
+  const sortLabel = useCallback(<Key extends string>(label: string, state: SortState<Key>, key: Key) => {
+    if (state.key !== key) {
+      return label;
+    }
+    return `${label} ${state.direction === "asc" ? "↑" : "↓"}`;
+  }, []);
+
+  const hasSnykService = useMemo(() => {
+    return services.some((service) => service.name.toLowerCase() === "snyk");
+  }, [services]);
+  const fossaInvitesByEmail = useMemo(() => {
+    const map = new Map<string, FossaInviteSummary>();
+    fossaInvites.forEach((invite) => {
+      const normalized = invite.email.trim().toLowerCase();
+      if (normalized) {
+        map.set(normalized, invite);
+      }
+    });
+    return map;
+  }, [fossaInvites]);
+  const pendingInvites = useMemo(() => {
+    return fossaInvites.filter((invite) => invite.status === "pending");
+  }, [fossaInvites]);
+
+  const onboardedMaintainerIds = useMemo(() => {
+    return new Set(fossaTeamMembers.filter((member) => member.id && member.id > 0).map((member) => member.id));
+  }, [fossaTeamMembers]);
+  const onboardedMaintainerEmails = useMemo(() => {
+    return new Set(
+      fossaTeamMembers
+        .map((member) => member.email.trim().toLowerCase())
+        .filter((email) => email !== "")
+    );
+  }, [fossaTeamMembers]);
+
+  const fossaTeamMembersSorted = useMemo(() => {
+    const members = [...fossaTeamMembers];
+    const direction = fossaTeamSort.direction === "asc" ? 1 : -1;
+    members.sort((a, b) => {
+      if (fossaTeamSort.key === "email") {
+        return direction * (a.email || "").localeCompare(b.email || "");
+      }
+      if (fossaTeamSort.key === "role") {
+        return direction * "Team Admin".localeCompare("Team Admin");
+      }
+      return direction * (a.name || a.github || "").localeCompare(b.name || b.github || "");
+    });
+    return members;
+  }, [fossaTeamMembers, fossaTeamSort]);
+
+  const eligibleInviteRows = useMemo(() => {
+    const eligibleCandidates = fossaInviteCandidates.filter((maintainer) => {
+      const email = maintainer.email.trim().toLowerCase();
+      return !onboardedMaintainerIds.has(maintainer.id) && !onboardedMaintainerEmails.has(email);
+    });
+    const rows = eligibleCandidates.map((maintainer) => {
+      const invite = fossaInvitesByEmail.get(maintainer.email.trim().toLowerCase());
+      return {
+        maintainer,
+        invite,
+        pending: invite?.status === "pending",
+        sentAt: invite?.sentAt ?? null,
+        checkedAt: invite?.lastCheckedAt ?? null,
+        error: invite?.lastError ?? null,
+      };
+    });
+    const direction = inviteSort.direction === "asc" ? 1 : -1;
+    rows.sort((a, b) => {
+      switch (inviteSort.key) {
+        case "email":
+          return direction * (a.maintainer.email || "").localeCompare(b.maintainer.email || "");
+        case "pending":
+          return direction * Number(a.pending) - direction * Number(b.pending);
+        case "sent": {
+          const aVal = a.sentAt ? new Date(a.sentAt).getTime() : 0;
+          const bVal = b.sentAt ? new Date(b.sentAt).getTime() : 0;
+          return direction * (aVal - bVal);
+        }
+        case "checked": {
+          const aVal = a.checkedAt ? new Date(a.checkedAt).getTime() : 0;
+          const bVal = b.checkedAt ? new Date(b.checkedAt).getTime() : 0;
+          return direction * (aVal - bVal);
+        }
+        case "error":
+          return direction * (a.error || "").localeCompare(b.error || "");
+        default:
+          return direction * (a.maintainer.name || a.maintainer.github || "").localeCompare(
+            b.maintainer.name || b.maintainer.github || ""
+          );
+      }
+    });
+    return rows;
+  }, [fossaInviteCandidates, fossaInvitesByEmail, inviteSort, onboardedMaintainerEmails, onboardedMaintainerIds]);
+
+  const bffBaseUrl = useMemo(() => {
+    const raw = process.env.NEXT_PUBLIC_BFF_BASE_URL || "/api";
+    return raw.replace(/\/+$/, "");
+  }, []);
+  const apiBaseUrl = useMemo(() => {
+    if (bffBaseUrl === "") {
+      return "/api";
+    }
+    if (bffBaseUrl.endsWith("/api")) {
+      return bffBaseUrl;
+    }
+    return `${bffBaseUrl}/api`;
+  }, [bffBaseUrl]);
   useEffect(() => {
     if ((isRefBroken || refEditing) && refInput.trim() === "" && refUrl) {
       setRefInput(refUrl);
     }
   }, [isRefBroken, refEditing, refInput, refUrl]);
+
+  const loadFossaInvites = useCallback(async () => {
+    if (!projectId || !fossaTeamId) {
+      return;
+    }
+    setFossaInviteStatus("loading");
+    setFossaInviteError(null);
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/services/fossa/invites?projectId=${projectId}`,
+        { credentials: "include" }
+      );
+      if (!response.ok) {
+        throw new Error("failed to load invites");
+      }
+      const data = (await response.json()) as FossaInviteSummary[];
+      setFossaInvites(data);
+    } catch {
+      setFossaInviteError("Unable to load FOSSA invites.");
+    } finally {
+      setFossaInviteStatus("ready");
+    }
+  }, [apiBaseUrl, fossaTeamId, projectId]);
+
+  useEffect(() => {
+    if (activeSection !== "license-checker" || !projectId || !fossaTeamId) {
+      return;
+    }
+    void loadFossaInvites();
+  }, [activeSection, fossaTeamId, loadFossaInvites, projectId]);
+  useEffect(() => {
+    if (eligibleInviteRows.length === 0) {
+      setSelectedMaintainers((prev) => (prev.size === 0 ? prev : new Set()));
+      return;
+    }
+    const next = new Set(eligibleInviteRows.map((row) => row.maintainer.id));
+    setSelectedMaintainers((prev) => {
+      if (prev.size !== next.size) {
+        return next;
+      }
+      for (const id of next) {
+        if (!prev.has(id)) {
+          return next;
+        }
+      }
+      return prev;
+    });
+  }, [eligibleInviteRows]);
+
+  const sendFossaInvites = async () => {
+    if (!projectId || !fossaTeamId || selectedMaintainers.size === 0) {
+      return;
+    }
+    setFossaInviteSending(true);
+    setFossaInviteError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/services/fossa/invite`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ projectId, maintainerIds: Array.from(selectedMaintainers) }),
+      });
+      if (!response.ok) {
+        throw new Error("failed to send invites");
+      }
+      const data = (await response.json()) as {
+        invited: string[];
+        skipped: string[];
+        errors: Record<string, string>;
+      };
+      setFossaInviteSummary({
+        invited: data.invited?.length || 0,
+        skipped: data.skipped?.length || 0,
+        errors: Object.keys(data.errors || {}).length,
+      });
+      await loadFossaInvites();
+      onRefresh?.();
+      clearSelection();
+    } catch {
+      setFossaInviteError("Unable to send FOSSA invites.");
+    } finally {
+      setFossaInviteSending(false);
+    }
+  };
+
+  const deleteFossaInvite = async (inviteId: number) => {
+    if (!fossaTeamId) {
+      return;
+    }
+    setFossaInviteError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/services/fossa/invites/${inviteId}/delete`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error("failed to delete invite");
+      }
+      await loadFossaInvites();
+      onRefresh?.();
+    } catch {
+      setFossaInviteError("Unable to delete invite.");
+    }
+  };
+
+  const reissueFossaInvite = async (inviteId: number) => {
+    if (!fossaTeamId) {
+      return;
+    }
+    setFossaInviteError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/services/fossa/invites/${inviteId}/reissue`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error("failed to reissue invite");
+      }
+      await loadFossaInvites();
+    } catch {
+      setFossaInviteError("Unable to reissue invite.");
+    }
+  };
+
+  const refreshFossaInvites = async () => {
+    if (!projectId || !fossaTeamId) {
+      return;
+    }
+    setFossaInviteRefreshing(true);
+    setFossaInviteError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/services/fossa/invites/refresh?projectId=${projectId}`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error("failed to refresh invites");
+      }
+      await loadFossaInvites();
+      onRefresh?.();
+    } catch {
+      setFossaInviteError("Unable to refresh FOSSA invites.");
+    } finally {
+      setFossaInviteRefreshing(false);
+    }
+  };
+
+  const syncFossaTeam = async () => {
+    if (!projectId || !fossaTeamId) {
+      return;
+    }
+    setFossaTeamSyncing(true);
+    setFossaTeamSyncError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/services/fossa/team/sync?projectId=${projectId}`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        throw new Error("failed to sync team");
+      }
+      await loadFossaInvites();
+      onRefresh?.();
+    } catch {
+      setFossaTeamSyncError("Unable to sync FOSSA team members.");
+    } finally {
+      setFossaTeamSyncing(false);
+    }
+  };
+
+  const chooseFossa = async () => {
+    if (!projectId) {
+      return;
+    }
+    setFossaChooseStatus("loading");
+    setFossaChooseError(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/services/fossa/choose`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ projectId }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        if (payload && typeof payload.error === "string") {
+          const errorAt = typeof payload.errorAt === "string" ? payload.errorAt : null;
+          const errorTime = errorAt ? formatDateTime(errorAt) : "—";
+          throw new Error(`${payload.error} (at ${errorTime})`);
+        }
+        throw new Error("failed to choose fossa");
+      }
+      setFossaChooseStatus("done");
+      onRefresh?.();
+    } catch (err) {
+      setFossaChooseStatus("error");
+      const message = err instanceof Error ? err.message : "Unable to start FOSSA onboarding.";
+      setFossaChooseError(message);
+    }
+  };
 
   const dotProjectSection = (
     <div className={styles.section}>
@@ -549,8 +976,407 @@ export default function ProjectReconciliationCard({
       case "license-checker":
         return (
           <div className={styles.section}>
-            <h3 className={styles.subSectionTitle}>License Checker</h3>
-            <p className={styles.stub}>Placeholder for FOSSA / Snyk license compliance data.</p>
+            {fossaTeamId ? (
+              <>
+                <div className={styles.tableSection}>
+                  <div className={styles.tableHeader}>
+                    <h4 className={styles.tableTitle}>CNCF FOSSA TEAM</h4>
+                    <a
+                      className={styles.link}
+                      href={`https://app.fossa.com/account/settings/organization/teams/${fossaTeamId}`}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {fossaTeamName || `Team ${fossaTeamId}`}
+                    </a>
+                  </div>
+                  {fossaTeamMembersSorted.length === 0 ? (
+                    <div className={styles.empty}>
+                      <div>No FOSSA team members recorded.</div>
+                      {canEdit ? (
+                        <button
+                          type="button"
+                          className={styles.refreshButton}
+                          onClick={syncFossaTeam}
+                          disabled={fossaTeamSyncing}
+                        >
+                          {fossaTeamSyncing ? "Syncing..." : "Sync from FOSSA"}
+                        </button>
+                      ) : null}
+                      {fossaTeamSyncError ? <div className={styles.inviteError}>{fossaTeamSyncError}</div> : null}
+                    </div>
+                  ) : (
+                    <div className={styles.tableWrap}>
+                      <table className={styles.dataTable}>
+                        <thead>
+                          <tr>
+                            <th>
+                              <button
+                                type="button"
+                                className={styles.sortButton}
+                                onClick={() => toggleSort(fossaTeamSort, setFossaTeamSort, "name")}
+                              >
+                                {sortLabel("Maintainer Name", fossaTeamSort, "name")}
+                              </button>
+                            </th>
+                            <th>GitHub</th>
+                            <th>
+                              <button
+                                type="button"
+                                className={styles.sortButton}
+                                onClick={() => toggleSort(fossaTeamSort, setFossaTeamSort, "email")}
+                              >
+                                {sortLabel("FOSSA Email", fossaTeamSort, "email")}
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className={styles.sortButton}
+                                onClick={() => toggleSort(fossaTeamSort, setFossaTeamSort, "role")}
+                              >
+                                {sortLabel("Role", fossaTeamSort, "role")}
+                              </button>
+                            </th>
+                            <th>Maintainerd Match</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fossaTeamMembersSorted.map((member, index) => {
+                            const emailMissing = member.email === "EMAIL_MISSING" || member.email === "";
+                            const rowKey =
+                              member.id && member.id > 0
+                                ? `maintainer-${member.id}`
+                                : member.email || member.github || member.name || `member-${index}`;
+                            const matched = member.id && member.id > 0;
+                            return (
+                              <tr key={rowKey}>
+                                <td>
+                                  {matched ? (
+                                    <Link href={`/maintainers/${member.id}`}>
+                                      {member.name || member.github || "Unknown maintainer"}
+                                    </Link>
+                                  ) : (
+                                    member.name || member.github || "Unknown maintainer"
+                                  )}
+                                </td>
+                                <td>
+                                  {member.github ? (
+                                    <a
+                                      className={styles.link}
+                                      href={`https://github.com/${member.github}`}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                    >
+                                      {member.github}
+                                    </a>
+                                  ) : matched ? (
+                                    "GitHub missing"
+                                  ) : (
+                                    "—"
+                                  )}
+                                </td>
+                                <td>{emailMissing ? "Email missing" : member.email}</td>
+                                <td>Team Admin</td>
+                                <td>{matched ? "Matched" : "Unmatched"}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+                {eligibleInviteRows.length > 0 ? (
+                  <div className={styles.tableSection}>
+                    <div className={styles.tableHeader}>
+                      <h4 className={styles.tableTitle}>ACTIVE MAINTAINERS ELIGABLE FOR INVITATION</h4>
+                    </div>
+                    <div className={styles.tableWrap}>
+                      <table className={styles.dataTable}>
+                        <thead>
+                          <tr>
+                            <th>
+                              <button
+                                type="button"
+                                className={styles.sortButton}
+                                onClick={() => toggleSort(inviteSort, setInviteSort, "name")}
+                              >
+                                {sortLabel("Maintainer Name", inviteSort, "name")}
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className={styles.sortButton}
+                                onClick={() => toggleSort(inviteSort, setInviteSort, "email")}
+                              >
+                                {sortLabel("CNCF Registered Email", inviteSort, "email")}
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className={styles.sortButton}
+                                onClick={() => toggleSort(inviteSort, setInviteSort, "pending")}
+                              >
+                                {sortLabel("Invitation Pending", inviteSort, "pending")}
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className={styles.sortButton}
+                                onClick={() => toggleSort(inviteSort, setInviteSort, "sent")}
+                              >
+                                {sortLabel("Invite sent on", inviteSort, "sent")}
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className={styles.sortButton}
+                                onClick={() => toggleSort(inviteSort, setInviteSort, "checked")}
+                              >
+                                {sortLabel("Last Checked on", inviteSort, "checked")}
+                              </button>
+                            </th>
+                            <th>
+                              <button
+                                type="button"
+                                className={styles.sortButton}
+                                onClick={() => toggleSort(inviteSort, setInviteSort, "error")}
+                              >
+                                {sortLabel("Invite Error", inviteSort, "error")}
+                              </button>
+                            </th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {eligibleInviteRows.map(({ maintainer, invite, pending, sentAt, checkedAt, error }) => (
+                            <tr key={maintainer.id}>
+                              <td>
+                                <label className={styles.tableSelect}>
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedMaintainers.has(maintainer.id)}
+                                    onChange={() => toggleSelected(maintainer.id)}
+                                  />
+                                  <span>
+                                    <Link href={`/maintainers/${maintainer.id}`}>
+                                      {maintainer.name || maintainer.github || "Unknown maintainer"}
+                                    </Link>
+                                  </span>
+                                </label>
+                              </td>
+                              <td>{maintainer.email || "Email missing"}</td>
+                              <td>{pending ? "Yes" : "No"}</td>
+                              <td>{formatDateTime(sentAt)}</td>
+                              <td>{formatDateTime(checkedAt)}</td>
+                              <td>
+                                {error || (invite?.status === "error" ? "Unknown error" : "—")}
+                                {invite && (invite.status === "expired" || invite.status === "error") ? (
+                                  <button
+                                    type="button"
+                                    className={styles.inviteAction}
+                                    onClick={() => reissueFossaInvite(invite.id)}
+                                  >
+                                    Re-issue
+                                  </button>
+                                ) : null}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                    {canEdit ? (
+                      <div className={styles.inviteActions}>
+                        <button
+                          className={styles.addButton}
+                          type="button"
+                          onClick={sendFossaInvites}
+                          disabled={fossaInviteSending || selectedMaintainers.size === 0}
+                        >
+                          {fossaInviteSending
+                            ? "Sending invites..."
+                            : `Send CNCF FOSSA Invites to ${selectedMaintainers.size} Selected Maintainers`}
+                        </button>
+                        {fossaInviteSummary ? (
+                          <div className={styles.inviteSummary}>
+                            Invited {fossaInviteSummary.invited}, skipped {fossaInviteSummary.skipped}, errors{" "}
+                            {fossaInviteSummary.errors}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : null}
+                    {fossaInviteError ? <div className={styles.inviteError}>{fossaInviteError}</div> : null}
+                  </div>
+                ) : null}
+                <div className={styles.tableSection}>
+                  <div className={styles.tableHeader}>
+                    <h4 className={styles.tableTitle}>PENDING INVITATIONS</h4>
+                    {canEdit ? (
+                      <button
+                        type="button"
+                        className={styles.refreshButton}
+                        onClick={refreshFossaInvites}
+                        disabled={fossaInviteRefreshing}
+                        aria-label="Refresh pending FOSSA invites"
+                        title="Refresh from FOSSA"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                          <path
+                            d="M4 12a8 8 0 0 1 13.66-5.66l1.41-1.41v5.66h-5.66l1.93-1.93A6 6 0 1 0 18 12h2a8 8 0 0 1-16 0z"
+                            fill="currentColor"
+                          />
+                        </svg>
+                        {fossaInviteRefreshing ? "Refreshing..." : "Refresh"}
+                      </button>
+                    ) : null}
+                  </div>
+                  <div className={styles.tableWrap}>
+                    <table className={styles.dataTable}>
+                      <thead>
+                        <tr>
+                          <th>Maintainer Email</th>
+                          <th>Team</th>
+                          <th>Status</th>
+                          <th>Invite sent on</th>
+                          <th>Estimated time of expiry</th>
+                          <th>Last Checked</th>
+                          <th>Error</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {fossaInviteStatus === "loading" ? (
+                          <tr>
+                            <td colSpan={7} className={styles.tableEmpty}>
+                              Loading invites…
+                            </td>
+                          </tr>
+                        ) : pendingInvites.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className={styles.tableEmpty}>
+                              No pending FOSSA invites.
+                            </td>
+                          </tr>
+                        ) : (
+                          pendingInvites.map((invite) => {
+                            const sentAt = invite.sentAt ?? null;
+                            const expiry =
+                              sentAt && !Number.isNaN(new Date(sentAt).getTime())
+                                ? new Date(new Date(sentAt).getTime() + 72 * 60 * 60 * 1000).toISOString()
+                                : null;
+                            return (
+                              <tr key={invite.id}>
+                                <td>{invite.email}</td>
+                                <td>{invite.fossaTeamName || "FOSSA"}</td>
+                                <td>{invite.status}</td>
+                                <td>{formatDateTime(sentAt)}</td>
+                                <td>{formatDateTime(expiry)}</td>
+                                <td>{formatDateTime(invite.lastCheckedAt || null)}</td>
+                                <td>
+                                  {invite.lastError || "—"}
+                                  <button
+                                    type="button"
+                                    className={styles.inviteAction}
+                                    onClick={() => deleteFossaInvite(invite.id)}
+                                  >
+                                    Remove
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                <div className={styles.tableSection}>
+                  <div className={styles.tableHeader}>
+                    <h4 className={styles.tableTitle}>REPOS IMPORTED</h4>
+                  </div>
+                  <div className={styles.tableWrap}>
+                    <table className={styles.dataTable}>
+                      <thead>
+                        <tr>
+                          <th>Repo URL</th>
+                          <th>Time last scanned</th>
+                          <th>Number of reported issues</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {/* TODO: wire up imported repos from the backend */}
+                        <tr>
+                          <td colSpan={3} className={styles.tableEmpty}>
+                            No repository data available yet.
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+                {fossaInviteIneligible.length > 0 ? (
+                  <div className={styles.tableSection}>
+                    <div className={styles.tableHeader}>
+                      <h4 className={styles.tableTitle}>NOT ELIGIBLE FOR INVITES</h4>
+                    </div>
+                    <div className={styles.tableWrap}>
+                      <table className={styles.dataTable}>
+                        <thead>
+                          <tr>
+                            <th>Maintainer Name</th>
+                            <th>GitHub</th>
+                            <th>CNCF Registered Email</th>
+                            <th>Reason</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {fossaInviteIneligible.map((maintainer) => (
+                            <tr key={maintainer.id}>
+                              <td>
+                                <Link href={`/maintainers/${maintainer.id}`}>
+                                  {maintainer.name || maintainer.github || "Unknown maintainer"}
+                                </Link>
+                              </td>
+                              <td>{maintainer.github || "GitHub missing"}</td>
+                              <td>{maintainer.email || "Email missing"}</td>
+                              <td>{maintainer.reason}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : null}
+              </>
+            ) : (
+              <div className={styles.stub}>
+                {hasSnykService ? (
+                  <>This project has not selected FOSSA. It may be using Snyk for license checks.</>
+                ) : (
+                  <>This project has not selected a license checker.</>
+                )}
+              </div>
+            )}
+            {!fossaTeamId && canEdit && !hasSnykService ? (
+              <div className={styles.inviteActions}>
+                <button
+                  className={styles.addButton}
+                  type="button"
+                  onClick={chooseFossa}
+                  disabled={fossaChooseStatus === "loading"}
+                >
+                  {fossaChooseStatus === "loading" ? "Starting FOSSA..." : "Choose FOSSA"}
+                </button>
+                {fossaChooseStatus === "done" ? (
+                  <div className={styles.inviteSummary}>FOSSA onboarding started.</div>
+                ) : null}
+                {fossaChooseError ? <div className={styles.inviteError}>{fossaChooseError}</div> : null}
+              </div>
+            ) : null}
           </div>
         );
       case "mailing-maintainers":

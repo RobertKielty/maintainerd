@@ -17,12 +17,12 @@ type Store interface {
 	GetProjectByID(projectID uint) (*model.Project, error)
 	GetProjectMapByName() (map[string]model.Project, error)
 	GetMaintainersByProject(projectID uint) ([]model.Maintainer, error)
-	GetProjectServiceTeamMap(serviceName string) (map[uint]*model.ServiceTeam, error)
+	GetProjectRemoteTeamMap(serviceName string) (map[uint]*model.RemoteTeam, error)
 	GetMaintainerMapByEmail() (map[string]model.Maintainer, error)
-	GetServiceTeamByProject(projectID uint, serviceID uint) (*model.ServiceTeam, error)
+	GetRemoteTeamByProject(projectID uint, serviceID uint) (*model.RemoteTeam, error)
 	LogAuditEvent(logger *zap.SugaredLogger, event model.AuditLog) error
 	GetMaintainerMapByGitHubAccount() (map[string]model.Maintainer, error)
-	CreateServiceTeamForUser(interface{ any }) (*model.ServiceTeam, error)
+	CreateRemoteTeam(projectID uint, projectName string, serviceID uint, remoteTeamID uint, remoteTeamName string) (*model.RemoteTeam, error)
 	UpsertMaintainer(projectID uint, name, email, githubHandle, company string) (*model.Maintainer, error)
 	CreateCompany(name string) (*model.Company, error)
 	UpdateProjectMaturity(projectID uint, maturity model.Maturity) error
@@ -33,6 +33,14 @@ type Store interface {
 	UpdateMaintainerDetails(maintainerID uint, name, email, github string, status model.MaintainerStatus, companyID *uint) (*model.Maintainer, error)
 	ListCompanies() ([]model.Company, error)
 	ListStaffMembers() ([]model.StaffMember, error)
+	ListServiceInvitations(projectID uint, serviceID uint) ([]model.ServiceInvitation, error)
+	ListServiceInvitationsByStatus(serviceID uint, statuses []string) ([]model.ServiceInvitation, error)
+	UpsertServiceInvitation(invite *model.ServiceInvitation) (*model.ServiceInvitation, error)
+	GetServiceInvitationByID(id uint) (*model.ServiceInvitation, error)
+	DeleteServiceInvitation(id uint) error
+	ListRemoteTeamMaintainers(teamID uint) ([]model.Maintainer, error)
+	UpsertRemoteUser(user *model.RemoteUser) (*model.RemoteUser, error)
+	UpsertRemoteUserTeam(link *model.RemoteTeamUser) (*model.RemoteTeamUser, error)
 	GetMaintainerRefCache(projectID uint) (*model.MaintainerRefCache, error)
 	UpsertMaintainerRefCache(cache *model.MaintainerRefCache) error
 	MergeCompanies(fromID, toID uint) error
