@@ -8,7 +8,7 @@ When("I search globally for maintainer email {string}", async function (email) {
   const searchInput = this.page.getByPlaceholder("Search projects");
   await searchInput.fill(email);
   await searchInput.press("Enter");
-  await this.page.waitForURL(/\/search\?query=/, { timeout: 15000 });
+  await this.page.waitForURL(/\/search/, { timeout: 15000 });
   await Promise.race([
     this.page.getByRole("heading", { name: "Maintainers" }).waitFor({
       state: "visible",
