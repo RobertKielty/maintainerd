@@ -4023,14 +4023,9 @@ func buildFossaInviteCandidates(maintainers []model.Maintainer, teamEmails []str
 		teamEmailSet[strings.ToLower(normalized)] = struct{}{}
 	}
 	if len(teamEmailSet) == 0 {
-		log.Printf("web-bff: FOSSA team email set empty (raw=%v)", teamEmails)
+		log.Printf("web-bff: FOSSA team email set empty")
 	} else {
-		normalizedEmails := make([]string, 0, len(teamEmailSet))
-		for email := range teamEmailSet {
-			normalizedEmails = append(normalizedEmails, email)
-		}
-		sort.Strings(normalizedEmails)
-		log.Printf("web-bff: FOSSA team email set size=%d raw=%v normalized=%v", len(teamEmailSet), teamEmails, normalizedEmails)
+		log.Printf("web-bff: FOSSA team email set size=%d", len(teamEmailSet))
 	}
 	results := make([]fossaInviteCandidateSummary, 0)
 	for _, m := range maintainers {
@@ -4698,6 +4693,7 @@ func fetchMaintainerRef(ctx context.Context, refURL string) (string, error) {
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
+	// #nosec G704 -- URL is validated and allowlisted in rewriteMaintainerRefURL.
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -4729,6 +4725,12 @@ func rewriteMaintainerRefURL(refURL string) (string, error) {
 			parsed.Path = fmt.Sprintf("/%s/%s/%s/%s", org, repo, branch, filePath)
 		}
 	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return "", fmt.Errorf("invalid maintainer ref url")
+	}
+	if !strings.EqualFold(parsed.Host, "raw.githubusercontent.com") {
+		return "", fmt.Errorf("invalid maintainer ref url")
+	}
 	return parsed.String(), nil
 }
 
@@ -4744,7 +4746,8 @@ func buildMaintainerRefMatches(refBody string, maintainers []model.Maintainer) m
 		}
 		ok, err := refparse.MaintainerRefContains(refBody, handle)
 		if err != nil {
-			log.Printf("maintainer ref parse error (maintainer=%d handle=%q): %v", maintainer.ID, handle, err)
+			// #nosec G706 -- safeLogf sanitizes control characters before logging.
+			log.Print(safeLogf("maintainer ref parse error (maintainer=%d): %v", maintainer.ID, err))
 			continue
 		}
 		if ok {
@@ -4775,6 +4778,39 @@ func buildMaintainerRefOnly(refBody string, maintainers []model.Maintainer) []st
 	}
 	sort.Strings(out)
 	return out
+}
+
+func safeLogf(format string, args ...any) string {
+	sanitized := make([]any, 0, len(args))
+	for _, arg := range args {
+		sanitized = append(sanitized, sanitizeLogValue(arg))
+	}
+	return fmt.Sprintf(format, sanitized...)
+}
+
+func sanitizeLogValue(v any) string {
+	switch t := v.(type) {
+	case string:
+		return sanitizeLogString(t)
+	case []byte:
+		return sanitizeLogString(string(t))
+	case error:
+		return sanitizeLogString(t.Error())
+	default:
+		return sanitizeLogString(fmt.Sprint(t))
+	}
+}
+
+func sanitizeLogString(s string) string {
+	if s == "" {
+		return s
+	}
+	replaced := strings.NewReplacer(
+		"\n", " ",
+		"\r", " ",
+		"\t", " ",
+	)
+	return replaced.Replace(s)
 }
 
 func buildMaintainerRefLines(refBody string) map[string]string {

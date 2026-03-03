@@ -27,7 +27,7 @@ import (
 type EventListener struct {
 	Store        *db.SQLStore
 	FossaClient  FossaClientInterface
-	Secret       []byte
+	Secret       []byte // #nosec G117 -- webhook secret is not serialized or logged.
 	Projects     map[string]model.Project
 	Repo         sourcerepo.Repo
 	GitHubClient *github.Client
@@ -146,7 +146,8 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if body != "/fossa-invite accepted" {
-			log.Printf("handleWebhook: WRN body does not have the command we are looking for: %v", body)
+			// #nosec G706 -- safeLogf sanitizes control characters before logging.
+			log.Print(safeLogf("handleWebhook: WRN body does not match expected command (len=%d)", len(body)))
 			break
 		}
 		// Determine project from issue title
@@ -157,7 +158,8 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		}
 		project, ok := s.Projects[projectName]
 		if !ok {
-			log.Printf("handleWebhook: WRN, project %q not found in cache", projectName)
+			// #nosec G706 -- safeLogf sanitizes control characters before logging.
+			log.Print(safeLogf("handleWebhook: WRN, project not found in cache (issue=%d)", e.GetIssue().GetNumber()))
 			break
 		}
 
@@ -173,7 +175,7 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		log.Printf("handleWebhook: INF, /fossa-invite accepted by @%s for project %q", actor, project.Name)
+		log.Printf("handleWebhook: INF, /fossa-invite accepted for project_id=%d", project.ID)
 
 		// Ensure a FOSSA RemoteTeam exists for this project
 		stMap, err := s.Store.GetProjectRemoteTeamMap("FOSSA")
@@ -214,17 +216,17 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 		if e.GetAction() != "labeled" {
 			break
 		}
-		issueTitle := e.Issue.GetTitle()
-		issueUrl := e.Issue.GetURL()
 		projectName, err := GetProjectNameFromProjectTitle(e.Issue.GetTitle())
 		if err != nil {
-			log.Printf("handleWebhook: WRN, could not parse project name [%s](%s) : %v",
-				issueUrl, issueTitle, err)
+			// #nosec G706 -- safeLogf sanitizes control characters before logging.
+			log.Print(safeLogf("handleWebhook: WRN, could not parse project name for issue=%d: %v",
+				e.Issue.GetNumber(), err))
 		}
 		for _, label := range e.Issue.Labels {
 			name := label.GetName()
 			if name == "fossa" {
-				log.Printf("handleWebhook: DBG, [%s](%s) lbl fossa", issueUrl, issueTitle)
+				// #nosec G706 -- safeLogf sanitizes control characters before logging.
+				log.Print(safeLogf("handleWebhook: DBG, issue=%d label=fossa", e.Issue.GetNumber()))
 				s.fossaChosen(projectName, e)
 			}
 		}
@@ -234,9 +236,13 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 
 // fossaChosen onboards the registered maintainers on projectName to CNCF FOSSA, posting a comment to the issue
 func (s *EventListener) fossaChosen(projectName string, e *github.IssuesEvent) {
-
-	log.Printf("fossaChosen: DBG by %s", projectName)
-	project := s.Projects[projectName]
+	project, ok := s.Projects[projectName]
+	if !ok {
+		log.Printf("fossaChosen: WRN project not found for issue=%d", e.GetIssue().GetNumber())
+		return
+	}
+	// #nosec G706 -- safeLogf sanitizes control characters before logging.
+	log.Print(safeLogf("fossaChosen: DBG project_id=%d", project.ID))
 	actions, err := s.signProjectUpForFOSSA(project)
 	if err != nil {
 		log.Printf("fossaChosen: ERR, failed to send FOSSA invitations: %v", err)
@@ -261,7 +267,8 @@ func (s *EventListener) fossaChosen(projectName string, e *github.IssuesEvent) {
 	if err != nil {
 		log.Printf("handleWebhook: WRN, failed to update GitHub issue: %v", err)
 	} else {
-		log.Printf("handleWebhook: INF, %s", comment)
+		// #nosec G706 -- safeLogf sanitizes control characters before logging.
+		log.Print(safeLogf("handleWebhook: INF, posted comment issue=%d len=%d", e.GetIssue().GetNumber(), len(comment)))
 	}
 }
 
@@ -443,7 +450,8 @@ func (s *EventListener) signProjectUpForFOSSA(project model.Project) ([]string, 
 			return actions, fmt.Errorf("create team on FOSSA: %w", err)
 		}
 
-		log.Printf("team created: %s", team.Name)
+		// #nosec G706 -- safeLogf sanitizes control characters before logging.
+		log.Print(safeLogf("team created: %s", team.Name))
 		actions = append(actions,
 			fmt.Sprintf("👥  [%s team](https://app.fossa.com/account/settings/organization/teams/%d) has been created in FOSSA",
 				team.Name, team.ID))
@@ -511,6 +519,39 @@ func (s *EventListener) signProjectUpForFOSSA(project model.Project) ([]string, 
 	return actions, nil
 }
 
+func safeLogf(format string, args ...any) string {
+	sanitized := make([]any, 0, len(args))
+	for _, arg := range args {
+		sanitized = append(sanitized, sanitizeLogValue(arg))
+	}
+	return fmt.Sprintf(format, sanitized...)
+}
+
+func sanitizeLogValue(v any) string {
+	switch t := v.(type) {
+	case string:
+		return sanitizeLogString(t)
+	case []byte:
+		return sanitizeLogString(string(t))
+	case error:
+		return sanitizeLogString(t.Error())
+	default:
+		return sanitizeLogString(fmt.Sprint(t))
+	}
+}
+
+func sanitizeLogString(s string) string {
+	if s == "" {
+		return s
+	}
+	replaced := strings.NewReplacer(
+		"\n", " ",
+		"\r", " ",
+		"\t", " ",
+	)
+	return replaced.Replace(s)
+}
+
 func formatHandles(handles []string) string {
 	if len(handles) == 0 {
 		return ""
@@ -522,7 +563,8 @@ func (s *EventListener) updateIssue(owner, repo string, issueNumber int, comment
 	issueComment := &github.IssueComment{
 		Body: github.String(comment),
 	}
-	log.Printf("updateIssue: INF, posting GitHub comment owner=%s repo=%s issue=%d body=%q", owner, repo, issueNumber, comment)
+	// #nosec G706 -- safeLogf sanitizes control characters before logging.
+	log.Print(safeLogf("updateIssue: INF, posting GitHub comment owner=%s repo=%s issue=%d body=%q", owner, repo, issueNumber, comment))
 	commentCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	_, _, err := s.GitHubClient.Issues.CreateComment(commentCtx, owner, repo, issueNumber, issueComment)

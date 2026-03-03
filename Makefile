@@ -1324,6 +1324,21 @@ test-package:
 .PHONY: ci-local
 ci-local:
 	@echo "Running local CI checks..."
+	@echo "→ Tool versions..."
+	@bash -c 'set -euo pipefail; \
+	echo "go: $$(go version)"; \
+	if command -v staticcheck >/dev/null 2>&1; then echo "staticcheck: $$(staticcheck -version)"; else echo "staticcheck: not installed"; fi; \
+	if command -v golangci-lint >/dev/null 2>&1; then echo "golangci-lint: $$(golangci-lint --version | head -n 1)"; else echo "golangci-lint: not installed"; fi; \
+	if command -v node >/dev/null 2>&1; then echo "node: $$(node --version)"; else echo "node: not installed"; fi; \
+	if command -v npm >/dev/null 2>&1; then echo "npm: $$(npm --version)"; else echo "npm: not installed"; fi; \
+	if command -v npx >/dev/null 2>&1; then \
+		( cd web && npx eslint --version 2>/dev/null | awk '\''{print "eslint: " $$1}'\'' ) || echo "eslint: not installed"; \
+		( cd web && npx tsc --version 2>/dev/null | awk '\''{print "tsc: " $$2}'\'' ) || echo "tsc: not installed"; \
+		( cd web && npx cucumber-js --version 2>/dev/null | awk '\''{print "cucumber-js: " $$1}'\'' ) || echo "cucumber-js: not installed"; \
+	else \
+		echo "npx: not installed"; \
+	fi; \
+	'
 	@echo "→ Verifying dependencies..."
 	@go mod verify
 	@echo "→ Running go fmt..."

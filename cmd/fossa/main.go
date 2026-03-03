@@ -35,7 +35,7 @@ func main() {
 
 	// 2) pick a team ID on the CLI
 	if len(os.Args) < 2 {
-		log.Fatalf("usage: %s <teamName>\n", os.Args[0])
+		log.Fatalf("usage: fossa <teamName>\n")
 	}
 	teamName := os.Args[1]
 
