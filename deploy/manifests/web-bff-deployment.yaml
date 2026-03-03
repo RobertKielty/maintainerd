@@ -28,5 +28,3 @@ spec:
                 name: maintainerd-web-bff-env
             - secretRef:
                 name: maintainerd-db-env
-            - secretRef:
-                name: maintainerd-bootstrap-env
