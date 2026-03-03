@@ -2,6 +2,13 @@
 
 MaintainerD - input data (List of Projects and associated Maintainers) 
 
+## Web build-time env
+The web image build reads `NEXT_PUBLIC_BFF_BASE_URL` from
+`deploy/secrets/maintainerd-web-env.yaml` if it is not already set in the
+environment. This ensures production builds bake the correct base URL. To
+override, export `NEXT_PUBLIC_BFF_BASE_URL` before running `make web-image-build`
+or `make web-image-push`.
+
 ## Kubernetes resources overview
 ```mermaid
 graph RL

@@ -102,13 +102,30 @@ fossa-poller-image-build:
 .PHONY: web-image-build
 web-image-build:
 	@echo "Building web image: $(WEB_IMAGE)"
-	@if [ -z "$(NEXT_PUBLIC_BFF_BASE_URL)" ]; then \
-		echo "NEXT_PUBLIC_BFF_BASE_URL not set; default /api will be used by the web build."; \
-	fi
-	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(WEB_IMAGE) -f Dockerfile.web \
-		$(if $(NEXT_PUBLIC_BFF_BASE_URL),--build-arg NEXT_PUBLIC_BFF_BASE_URL=$(NEXT_PUBLIC_BFF_BASE_URL),) \
-		$(if $(NPM_CONFIG_LOGLEVEL),--build-arg NPM_CONFIG_LOGLEVEL=$(NPM_CONFIG_LOGLEVEL),) \
-		$(if $(NPM_CONFIG_REGISTRY),--build-arg NPM_CONFIG_REGISTRY=$(NPM_CONFIG_REGISTRY),) .
+	@bash -c 'set -euo pipefail; \
+	if ! command -v $(SOPS_CMD) >/dev/null 2>&1; then \
+		echo "Missing $(SOPS_CMD); cannot read deploy/secrets/maintainerd-web-env.yaml for build-time NEXT_PUBLIC_BFF_BASE_URL."; \
+		exit 1; \
+	fi; \
+	if [ ! -f deploy/secrets/maintainerd-web-env.yaml ]; then \
+		echo "Missing deploy/secrets/maintainerd-web-env.yaml; cannot read NEXT_PUBLIC_BFF_BASE_URL for web build."; \
+		exit 1; \
+	fi; \
+	bff="$$( $(SOPS_CMD) -d deploy/secrets/maintainerd-web-env.yaml | sed -n '\'' \
+		/^stringData:/,/^[^[:space:]]/{ \
+			s/^[[:space:]]*NEXT_PUBLIC_BFF_BASE_URL:[[:space:]]*//p; \
+		} \
+	'\'' | head -n 1 )"; \
+	if [ -z "$$bff" ]; then \
+		echo "NEXT_PUBLIC_BFF_BASE_URL missing in deploy/secrets/maintainerd-web-env.yaml; aborting web build."; \
+		exit 1; \
+	fi; \
+	echo "Using NEXT_PUBLIC_BFF_BASE_URL=$$bff for web build."; \
+	build_args="--build-arg NEXT_PUBLIC_BFF_BASE_URL=$$bff"; \
+	[ -n "$(NPM_CONFIG_LOGLEVEL)" ] && build_args="$$build_args --build-arg NPM_CONFIG_LOGLEVEL=$(NPM_CONFIG_LOGLEVEL)"; \
+	[ -n "$(NPM_CONFIG_REGISTRY)" ] && build_args="$$build_args --build-arg NPM_CONFIG_REGISTRY=$(NPM_CONFIG_REGISTRY)"; \
+	$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(WEB_IMAGE) -f Dockerfile.web $$build_args .; \
+	'
 
 .PHONY: web-bff-image-build
 web-bff-image-build:
@@ -136,7 +153,7 @@ mntrd-image-deploy: mntrd-image-push
 	@CTX_FLAG="$(if $(KUBECONTEXT),--context $(KUBECONTEXT))" ; \
 	if kubectl $$CTX_FLAG config current-context >/dev/null 2>&1; then \
 		echo "Updating Deployment/maintainerd image to $(IMAGE) [ctx=$(CTX_STR)]"; \
-		kubectl -n $(NAMESPACE) $$CTX_FLAG set image deploy/maintainerd server=$(IMAGE) bootstrap=$(IMAGE); \
+		kubectl -n $(NAMESPACE) $$CTX_FLAG set image deploy/maintainerd '*=$(IMAGE)'; \
 		echo "Rolling restart Deployment/maintainerd [ctx=$(CTX_STR)]"; \
 		kubectl -n $(NAMESPACE) $$CTX_FLAG rollout restart deploy/maintainerd; \
 		echo "Waiting for rollout to complete [ctx=$(CTX_STR)]"; \
@@ -144,6 +161,15 @@ mntrd-image-deploy: mntrd-image-push
 	else \
 		echo "kubectl context $(CTX_STR) unavailable; skipping rollout"; \
 	fi
+
+.PHONY: mntrd-image-set
+mntrd-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make mntrd-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd image to $(IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image deploy/maintainerd '*=$(IMAGE)'
 
 .PHONY: sync-image-push
 sync-image-push: sync-image-build
@@ -338,7 +364,7 @@ migrate-schema-safe:
 	echo "Resolving PVC attachment node for maintainerd-db [ctx=$(CTX_STR)]"; \
 	pv="$$(kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) get pvc maintainerd-db -o jsonpath="{.spec.volumeName}")"; \
 	node="$$(kubectl get volumeattachment -o jsonpath="{range .items[?(@.spec.source.persistentVolumeName==\"$${pv}\")]}{.spec.nodeName}{end}")"; \
-	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete job maintainerd-migrate --ignore-not-found; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete job maintainerd-migrate-schema --ignore-not-found; \
 	if [ -n "$${node}" ]; then \
 		echo "Running schema migration job pinned to node $${node} [ctx=$(CTX_STR)]"; \
 		kubectl create -f deploy/manifests/maintainerd-migrate-schema-job.yaml --dry-run=client -o json | \
@@ -348,7 +374,7 @@ migrate-schema-safe:
 		echo "No attachment node found; running migration job without pinning [ctx=$(CTX_STR)]"; \
 		kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/maintainerd-migrate-schema-job.yaml; \
 	fi; \
-	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/maintainerd-migrate --timeout=300s; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/maintainerd-migrate-schema --timeout=300s; \
 	echo "Scaling Deployment/maintainerd back to 1 [ctx=$(CTX_STR)]"; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) scale deploy/maintainerd --replicas=1; \
 	'
@@ -958,6 +984,46 @@ web-release:
 	@$(MAKE) web-bff-image-push TAG=$(TAG)
 	@$(MAKE) web-image-set TAG=$(TAG)
 	@$(MAKE) web-bff-image-set TAG=$(TAG)
+
+.PHONY: fossa-poller-image-set
+fossa-poller-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make fossa-poller-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-fossa-poller image to $(FOSSA_POLLER_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/maintainerd-fossa-poller fossa-poller=$(FOSSA_POLLER_IMAGE)
+
+.PHONY: sync-image-set
+sync-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make sync-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-sync image to $(SYNC_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/maintainer-sync '*=$(SYNC_IMAGE)'
+
+.PHONY: sanitize-image-set
+sanitize-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make sanitize-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-sanitize image to $(SANITIZE_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/maintainer-sanitize '*=$(SANITIZE_IMAGE)'
+
+.PHONY: onboarding-backfill-image-set
+onboarding-backfill-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make onboarding-backfill-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-onboarding-backfill image to $(ONBOARDING_BACKFILL_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/maintainerd-onboarding-backfill '*=$(ONBOARDING_BACKFILL_IMAGE)'
+
+.PHONY: image-set
+image-set: mntrd-image-set web-image-set web-bff-image-set fossa-poller-image-set sync-image-set sanitize-image-set onboarding-backfill-image-set
+	@true
 
 # Convenience combo target
 .PHONY: secrets
