@@ -33,6 +33,7 @@ make bootstrap-run-dev
 Notes:
 - `maintainerd-bootstrap-env` must include `MD_WORKSHEET`, `FOSSA_API_TOKEN`, and `WORKSPACE_CREDENTIALS_FILE` (internal worksheet credentials).
 - `maintainerd-db-env` must include `MD_DB_DRIVER=postgres` and `MD_DB_DSN=...` for production.
+- Database extensions required by the schema (e.g., `unaccent`, `pg_trgm`) must be available in the Postgres image and created before restore/migrations. Update local DB scripts in `scripts/` if requirements change.
 
 ## Deploy the maintainerd server
 

@@ -63,9 +63,9 @@ func BootstrapDB(driver, dsn, spreadsheetID, worksheetCredentialsPath, fossaToke
 		&model.Collaborator{},
 		&model.MaintainerProject{},
 		&model.Service{},
-		&model.ServiceTeam{},
-		&model.ServiceUser{},
-		&model.ServiceUserTeams{},
+		&model.RemoteTeam{},
+		&model.RemoteUser{},
+		&model.RemoteTeamUser{},
 	); err != nil {
 		return nil, fmt.Errorf("auto-migration failed: %w", err)
 	}
@@ -419,13 +419,13 @@ func loadFOSSA(db *gorm.DB, token string) error {
 	for _, user := range users {
 		var maintainer *model.Maintainer     // A registered maintainer
 		var collaborator *model.Collaborator // A contributor who has been signed up
-		var su *model.ServiceUser
+		var su *model.RemoteUser
 		ghName := safeGitHubName(user.GitHub.Name)
-		if su, err = FirstOrCreateServiceUser(db, user); err != nil {
-			log.Printf("ERR, FirstOrCreateServiceUser, error creating service user for %s: %v", user.Email, err)
+		if su, err = FirstOrCreateRemoteUser(db, user); err != nil {
+			log.Printf("ERR, FirstOrCreateRemoteUser, error creating service user for %s: %v", user.Email, err)
 		}
 		if su == nil {
-			log.Fatalf("ERR, FirstOrCreateServiceUser, service user for %s is nil! Exiting!", user.Email)
+			log.Fatalf("ERR, FirstOrCreateRemoteUser, service user for %s is nil! Exiting!", user.Email)
 		}
 
 		if maintainer = MapFossaUserToMaintainer(db, user.Email, ghName); maintainer != nil {
@@ -435,68 +435,68 @@ func loadFOSSA(db *gorm.DB, token string) error {
 				log.Printf("ERR, MapFossaUserCollaborator: error mapping service user using %s: %v", user.Email, err)
 			}
 		}
-		st, err := CreateServiceTeamsForUser(db, user.TeamUsers)
+		st, err := CreateRemoteTeamsForUser(db, user.TeamUsers)
 		if err != nil {
-			log.Printf("ERR, CreateServiceTeamsForUser failed for user %d (%s): %v", user.ID, user.Email, err)
+			log.Printf("ERR, CreateRemoteTeamsForUser failed for user %d (%s): %v", user.ID, user.Email, err)
 			continue
 		}
 
-		if err := LinkServiceUserToTeam(db, su, st, maintainer, collaborator); err != nil {
-			log.Printf("ERR, LinkServiceUserToTeam failed for user %d (%s): %v", user.ID, user.Email, err)
+		if err := LinkRemoteUserToTeam(db, su, st, maintainer, collaborator); err != nil {
+			log.Printf("ERR, LinkRemoteUserToTeam failed for user %d (%s): %v", user.ID, user.Email, err)
 		}
 	}
 
 	return nil
 }
 
-// CreateServiceTeamsForUser takes a @db connection, and an array of FOSSA TeamUsers and adds them to the DB.
-func CreateServiceTeamsForUser(
+// CreateRemoteTeamsForUser takes a @db connection, and an array of FOSSA TeamUsers and adds them to the DB.
+func CreateRemoteTeamsForUser(
 	db *gorm.DB,
 	teamUsers []struct {
 		RoleID int `json:"roleId"`
 		Team   struct {
-			ID   int    `json:"id"`
+			ID   uint   `json:"id"`
 			Name string `json:"name"`
 		} `json:"team"`
 	},
-) ([]*model.ServiceTeam, error) {
+) ([]*model.RemoteTeam, error) {
 
-	var teams []*model.ServiceTeam
+	var teams []*model.RemoteTeam
 	var errMessages []string
 	s := NewSQLStore(db)
 	projects, err := s.GetProjectMapByName()
 	if err != nil {
-		return nil, fmt.Errorf("CreateServiceTeamsForUser: GetProjectMapByName failed to get project map: %v", err)
+		return nil, fmt.Errorf("CreateRemoteTeamsForUser: GetProjectMapByName failed to get project map: %v", err)
 	}
 	for _, team := range teamUsers {
 		if project, ok := projects[team.Team.Name]; ok {
-			st := &model.ServiceTeam{
-				ServiceTeamID:   team.Team.ID,
-				ServiceID:       1, // TODO : Hardcoded to FOSSA for now
-				ServiceTeamName: &team.Team.Name,
-				ProjectID:       project.ID,
-				ProjectName:     &project.Name,
+			st := &model.RemoteTeam{
+				RemoteTeamID:   team.Team.ID,
+				ServiceID:      1, // TODO : Hardcoded to FOSSA for now
+				RemoteTeamName: &team.Team.Name,
+				ProjectID:      project.ID,
+				ProjectName:    &project.Name,
 			}
-			err := db.Where("service_team_id = ?", team.Team.ID).
+			err := db.Where("remote_team_id = ?", team.Team.ID).
 				FirstOrCreate(st).Error
 			if err != nil {
-				msg := fmt.Sprintf("CreateServiceTeamsForUser: failed for team %d (%s): %v", team.Team.ID, team.Team.Name, err)
+				msg := fmt.Sprintf("CreateRemoteTeamsForUser: failed for team %d (%s): %v", team.Team.ID, team.Team.Name, err)
 				log.Println(msg)
 				errMessages = append(errMessages, msg)
 				continue
 			}
 			teams = append(teams, st)
 		} else {
-			return nil, fmt.Errorf("CreateServiceTeamsForUser: ERROR %s is NOT A registered project", team.Team.Name)
+			return nil, fmt.Errorf("CreateRemoteTeamsForUser: ERROR %s is NOT A registered project", team.Team.Name)
 		}
 	}
 
 	if len(teams) == 0 {
-		return nil, fmt.Errorf("CreateServiceTeamsForUser: no valid teams created")
+		return nil, fmt.Errorf("CreateRemoteTeamsForUser: no valid teams created")
 	}
 
 	if len(errMessages) > 0 {
-		return teams, fmt.Errorf("CreateServiceTeamsForUser had partial errors:\n%s", strings.Join(errMessages, "\n"))
+		return teams, fmt.Errorf("CreateRemoteTeamsForUser had partial errors:\n%s", strings.Join(errMessages, "\n"))
 	}
 
 	return teams, nil
@@ -561,21 +561,21 @@ func MapFossaUserToMaintainer(db *gorm.DB, email string, github string) *model.M
 	return nil
 }
 
-func LinkServiceUserToTeam(
+func LinkRemoteUserToTeam(
 	db *gorm.DB,
-	su *model.ServiceUser,
-	sTeams []*model.ServiceTeam,
+	su *model.RemoteUser,
+	sTeams []*model.RemoteTeam,
 	maintainer *model.Maintainer,
 	collaborator *model.Collaborator,
 ) error {
 	if su == nil {
-		return fmt.Errorf("LinkServiceUserToTeam: service user is nil")
+		return fmt.Errorf("LinkRemoteUserToTeam: service user is nil")
 	}
 	if len(sTeams) == 0 {
-		return fmt.Errorf("LinkServiceUserToTeam: no service teams provided for user %d", su.ServiceUserID)
+		return fmt.Errorf("LinkRemoteUserToTeam: no service teams provided for user %d", su.RemoteUserID)
 	}
 	if maintainer != nil && collaborator != nil {
-		return fmt.Errorf("LinkServiceUserToTeam: cannot link both a maintainer and a collaborator for user %d", su.ServiceUserID)
+		return fmt.Errorf("LinkRemoteUserToTeam: cannot link both a maintainer and a collaborator for user %d", su.RemoteUserID)
 	}
 
 	var linkErrors []string
@@ -585,13 +585,14 @@ func LinkServiceUserToTeam(
 			continue
 		}
 
-		serviceUserTeams := model.ServiceUserTeams{
-			ServiceID:     1, // TODO Remove Magic Number
-			ServiceUserID: su.ServiceUserID,
+		serviceUserTeams := model.RemoteTeamUser{
+			ServiceID: su.ServiceID,
+			TeamID:    st.ID,
+			UserID:    su.ID,
 		}
 
-		err := db.Where("service_id = ? AND service_team_id = ? AND service_user_id = ?",
-			su.ServiceID, st.ID, su.ServiceUserID).
+		err := db.Where("service_id = ? AND team_id = ? AND user_id = ?",
+			su.ServiceID, st.ID, su.ID).
 			FirstOrCreate(&serviceUserTeams).Error
 
 		if err == nil {
@@ -611,28 +612,28 @@ func LinkServiceUserToTeam(
 				if err := db.Save(&serviceUserTeams).Error; err != nil {
 					linkErrors = append(linkErrors,
 						fmt.Sprintf("ERR, db.save failed to update the serviceUserTeams link for user %d to team %d: %v",
-							su.ServiceUserID, st.ID, err))
+							su.RemoteUserID, st.ID, err))
 				} else {
-					log.Printf("INFO, LinkServiceUserToTeam: %s linked as a collaborator on %s \n", su.ServiceEmail, *st.ServiceTeamName)
+					log.Printf("INFO, LinkRemoteUserToTeam: %s linked as a collaborator on %s \n", su.ServiceEmail, *st.RemoteTeamName)
 				}
 			}
 			continue
 		}
 
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			log.Printf("ERROR, LinkServiceUserToTeam, gorm.ErrRecordNotFound for %s to FOSSA team %s\n",
+			log.Printf("ERROR, LinkRemoteUserToTeam, gorm.ErrRecordNotFound for %s to FOSSA team %s\n",
 				su.ServiceEmail,
-				*st.ServiceTeamName)
+				*st.RemoteTeamName)
 			linkErrors = append(linkErrors,
-				fmt.Sprintf("lookup failure for link (user %d, team %d): %v", su.ServiceUserID, st.ID, err))
+				fmt.Sprintf("lookup failure for link (user %d, team %d): %v", su.RemoteUserID, st.ID, err))
 			continue
 		}
 
 		// No link exists, create new
-		newLink := model.ServiceUserTeams{
-			ServiceID:     su.ServiceID,
-			ServiceUserID: su.ServiceUserID,
-			ServiceTeamID: st.ID,
+		newLink := model.RemoteTeamUser{
+			ServiceID: su.ServiceID,
+			TeamID:    st.ID,
+			UserID:    su.ID,
 		}
 		if maintainer != nil {
 			newLink.MaintainerID = &maintainer.ID
@@ -642,36 +643,36 @@ func LinkServiceUserToTeam(
 
 		if err := db.Create(&newLink).Error; err != nil {
 			linkErrors = append(linkErrors,
-				fmt.Sprintf("failed to create link for user %d to team %d: %v", su.ServiceUserID, st.ID, err))
+				fmt.Sprintf("failed to create link for user %d to team %d: %v", su.RemoteUserID, st.ID, err))
 		}
 	}
 
 	if len(linkErrors) > 0 {
-		return fmt.Errorf("LinkServiceUserToTeam: %d linking errors:\n%s", len(linkErrors), strings.Join(linkErrors, "\n"))
+		return fmt.Errorf("LinkRemoteUserToTeam: %d linking errors:\n%s", len(linkErrors), strings.Join(linkErrors, "\n"))
 	}
 
 	return nil
 }
 
-func FirstOrCreateServiceUser(db *gorm.DB, user fossa.User) (*model.ServiceUser, error) {
+func FirstOrCreateRemoteUser(db *gorm.DB, user fossa.User) (*model.RemoteUser, error) {
 	var fossaService = model.Service{Model: gorm.Model{ID: 1}}
 
-	var su model.ServiceUser
+	var su model.RemoteUser
 
-	lookup := model.ServiceUser{
-		ServiceID:     fossaService.ID,
-		ServiceUserID: user.ID,
+	lookup := model.RemoteUser{
+		ServiceID:    fossaService.ID,
+		RemoteUserID: user.ID,
 	}
 
 	// Fields to populate if the record is not found
-	create := model.ServiceUser{
+	create := model.RemoteUser{
 		ServiceGitHubName: user.GitHub.Name,
 		ServiceEmail:      user.Email,
 	}
 
 	// find a service user with fields in lookup, and if not found, create it with these values
 	if err := db.Where(&lookup).Attrs(&create).FirstOrCreate(&su).Error; err != nil {
-		return nil, fmt.Errorf("loadFossa FirstOrCreateServiceUser failed for %v, err : %w", lookup, err)
+		return nil, fmt.Errorf("loadFossa FirstOrCreateRemoteUser failed for %v, err : %w", lookup, err)
 	}
 
 	return &su, nil

@@ -25,10 +25,13 @@ This document gives agents instructions and tips for working in this repository.
 
 ## Local Validation & Testing
 - Watch resources after apply: `kubectl -n maintainerd get deploy,job,svc,ing,pvc -w`.
+- If DB schema/config changes (e.g., extensions, search functions), update and verify local DB scripts in `scripts/` (refresh/restore, init).
 
 ## Notes
 - PVC will bind when the Deployment mounts it. The Deployment includes an initContainer that bootstraps the DB before the server starts.
 - Verify Secrets exist and the image tag is pullable from the GitHub Container Registry.
+- If DB configuration changes (extensions, schema requirements, etc.), update the local DB scripts in `scripts/` (e.g., `refresh-local-podman-db.sh`, `pg_restore_init.sh`) to keep dev workflows aligned.
+- FOSSA rule: `remote_teams.remote_team_id` must be sourced from the FOSSA API. Never derive it from `project.id` or any local identifier.
 
 ## Coding Guidelines
 - Keep changes minimal and focused. Match existing Go style and module layout.

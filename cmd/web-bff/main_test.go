@@ -84,9 +84,10 @@ func setupPostgresTestDB(t *testing.T) *gorm.DB {
 		&model.Collaborator{},
 		&model.MaintainerProject{},
 		&model.Service{},
-		&model.ServiceTeam{},
-		&model.ServiceUser{},
-		&model.ServiceUserTeams{},
+		&model.RemoteTeam{},
+		&model.RemoteUser{},
+		&model.RemoteTeamUser{},
+		&model.ServiceInvitation{},
 	)
 	require.NoError(t, err)
 
@@ -509,4 +510,146 @@ func TestHandleMaintainerFromRef_AuditLog(t *testing.T) {
 	assert.Contains(t, changes, "name")
 	assert.Contains(t, changes, "github")
 	assert.Contains(t, changes, "company")
+}
+
+func TestFossaInviteEndpointsContract(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now().UTC()
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	project := model.Project{Name: "Fossa Project", Maturity: model.Sandbox}
+	require.NoError(t, dbConn.Create(&project).Error)
+
+	service := model.Service{Name: "FOSSA", Description: "FOSSA"}
+	require.NoError(t, dbConn.Create(&service).Error)
+
+	serviceTeamName := "CNCF Test"
+	serviceTeam := model.RemoteTeam{
+		ProjectID:      project.ID,
+		ServiceID:      service.ID,
+		RemoteTeamID:   101,
+		RemoteTeamName: &serviceTeamName,
+	}
+	require.NoError(t, dbConn.Create(&serviceTeam).Error)
+
+	invite := model.ServiceInvitation{
+		ProjectID:    project.ID,
+		ServiceID:    service.ID,
+		ServiceEmail: "maintainer@example.org",
+		RemoteTeamID: 101,
+		Status:       "error",
+		SentAt:       &now,
+	}
+	require.NoError(t, dbConn.Create(&invite).Error)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+	}
+
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	t.Run("list invites returns expected shape", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/services/fossa/invites?projectId=%d", project.ID), nil)
+		req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+		rec := httptest.NewRecorder()
+		handler := s.requireSession(http.HandlerFunc(s.handleFossaInvites))
+		handler.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusOK, rec.Code)
+		var response []fossaInviteSummary
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+		require.Len(t, response, 1)
+		assert.Equal(t, invite.ID, response[0].ID)
+		assert.Equal(t, invite.ServiceEmail, response[0].Email)
+		assert.Equal(t, invite.RemoteTeamID, response[0].FossaTeamID)
+		assert.Equal(t, serviceTeamName, response[0].FossaTeamName)
+		assert.Equal(t, invite.Status, response[0].Status)
+	})
+
+	t.Run("invite requires project id", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/services/fossa/invite", strings.NewReader(`{}`))
+		req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+		rec := httptest.NewRecorder()
+		handler := s.requireSession(http.HandlerFunc(s.handleFossaInvite))
+		handler.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusBadRequest, rec.Code)
+	})
+
+	t.Run("reissue without token returns server error", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/services/fossa/invites/%d/reissue", invite.ID), nil)
+		req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+		rec := httptest.NewRecorder()
+		handler := s.requireSession(http.HandlerFunc(s.handleFossaInviteAction))
+		handler.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusInternalServerError, rec.Code)
+		assert.Contains(t, rec.Body.String(), "FOSSA_API_TOKEN not set")
+	})
+}
+
+func TestFossaChooseRequiresRemoteTeamIDFromFossa(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now().UTC()
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	project := model.Project{Name: "Fossa Project", Maturity: model.Sandbox}
+	require.NoError(t, dbConn.Create(&project).Error)
+
+	service := model.Service{Name: "FOSSA", Description: "FOSSA"}
+	require.NoError(t, dbConn.Create(&service).Error)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		testMode:   true,
+	}
+
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/services/fossa/choose", strings.NewReader(
+		fmt.Sprintf(`{"projectId":%d}`, project.ID),
+	))
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+	rec := httptest.NewRecorder()
+	handler := s.requireSession(http.HandlerFunc(s.handleFossaChoose))
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "RemoteTeamID must come from FOSSA API")
+
+	var count int64
+	require.NoError(t, dbConn.Model(&model.RemoteTeam{}).Count(&count).Error)
+	assert.Equal(t, int64(0), count)
 }

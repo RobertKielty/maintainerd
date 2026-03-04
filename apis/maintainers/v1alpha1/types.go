@@ -178,7 +178,7 @@ type ProjectSpec struct {
 	FoundationRef     *ResourceReference  `json:"foundationRef,omitempty"`
 	MaintainerRefs    []ResourceReference `json:"maintainerRefs,omitempty"`
 	CollaboratorRefs  []ResourceReference `json:"collaboratorRefs,omitempty"`
-	ServiceRefs       []ResourceReference `json:"serviceRefs,omitempty"`
+	RemoteRefs        []ResourceReference `json:"serviceRefs,omitempty"`
 	Tags              map[string]string   `json:"tags,omitempty"`
 }
 
@@ -323,17 +323,17 @@ type ProjectMembershipList struct {
 	Items           []ProjectMembership `json:"items"`
 }
 
-// ServiceTeamSpec captures the join between a service and project.
-type ServiceTeamSpec struct {
-	ServiceRef  ResourceReference `json:"serviceRef"`
+// RemoteTeamSpec captures the join between a service and project.
+type RemoteTeamSpec struct {
+	RemoteRef   ResourceReference `json:"serviceRef"`
 	ProjectRef  ResourceReference `json:"projectRef"`
 	RemoteID    string            `json:"remoteID,omitempty"`
 	DisplayName string            `json:"displayName,omitempty"`
 	ProjectName string            `json:"projectName,omitempty"`
 }
 
-// ServiceTeamStatus tracks membership reconciliation state.
-type ServiceTeamStatus struct {
+// RemoteTeamStatus tracks membership reconciliation state.
+type RemoteTeamStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	LastSynced *metav1.Time       `json:"lastSynced,omitempty"`
 }
@@ -342,27 +342,27 @@ type ServiceTeamStatus struct {
 // +kubebuilder:resource:path=serviceteams,scope=Namespaced,shortName=svcteam,categories=maintainerd
 // +kubebuilder:subresource:status
 
-// ServiceTeam represents a remote service team associated with a project.
-type ServiceTeam struct {
+// RemoteTeam represents a remote service team associated with a project.
+type RemoteTeam struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ServiceTeamSpec   `json:"spec,omitempty"`
-	Status ServiceTeamStatus `json:"status,omitempty"`
+	Spec   RemoteTeamSpec   `json:"spec,omitempty"`
+	Status RemoteTeamStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// ServiceTeamList is a list of ServiceTeam resources.
-type ServiceTeamList struct {
+// RemoteTeamList is a list of RemoteTeam resources.
+type RemoteTeamList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ServiceTeam `json:"items"`
+	Items           []RemoteTeam `json:"items"`
 }
 
-// ServiceUserSpec captures the relationship between a person and an external service.
-type ServiceUserSpec struct {
-	ServiceRef      ResourceReference  `json:"serviceRef"`
+// RemoteUserSpec captures the relationship between a person and an external service.
+type RemoteUserSpec struct {
+	RemoteRef       ResourceReference  `json:"serviceRef"`
 	RemoteID        string             `json:"remoteID,omitempty"`
 	Email           string             `json:"email"`
 	Reference       string             `json:"reference,omitempty"`
@@ -371,8 +371,8 @@ type ServiceUserSpec struct {
 	CollaboratorRef *ResourceReference `json:"collaboratorRef,omitempty"`
 }
 
-// ServiceUserStatus reports derived controller state for a service user.
-type ServiceUserStatus struct {
+// RemoteUserStatus reports derived controller state for a service user.
+type RemoteUserStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	LastSynced *metav1.Time       `json:"lastSynced,omitempty"`
 }
@@ -381,34 +381,34 @@ type ServiceUserStatus struct {
 // +kubebuilder:resource:path=serviceusers,scope=Namespaced,shortName=svcusr,categories=maintainerd
 // +kubebuilder:subresource:status
 
-// ServiceUser models an account on an external service used by maintainers.
-type ServiceUser struct {
+// RemoteUser models an account on an external service used by maintainers.
+type RemoteUser struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ServiceUserSpec   `json:"spec,omitempty"`
-	Status ServiceUserStatus `json:"status,omitempty"`
+	Spec   RemoteUserSpec   `json:"spec,omitempty"`
+	Status RemoteUserStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
 
-// ServiceUserList is a list of ServiceUser resources.
-type ServiceUserList struct {
+// RemoteUserList is a list of RemoteUser resources.
+type RemoteUserList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ServiceUser `json:"items"`
+	Items           []RemoteUser `json:"items"`
 }
 
-// ServiceUserTeamSpec connects a service user with a service team and optional people.
-type ServiceUserTeamSpec struct {
-	ServiceUserRef  ResourceReference  `json:"serviceUserRef"`
-	ServiceTeamRef  ResourceReference  `json:"serviceTeamRef"`
+// RemoteUserTeamSpec connects a service user with a service team and optional people.
+type RemoteUserTeamSpec struct {
+	RemoteUserRef   ResourceReference  `json:"serviceUserRef"`
+	RemoteTeamRef   ResourceReference  `json:"serviceTeamRef"`
 	MaintainerRef   *ResourceReference `json:"maintainerRef,omitempty"`
 	CollaboratorRef *ResourceReference `json:"collaboratorRef,omitempty"`
 }
 
-// ServiceUserTeamStatus captures controller reconciliation data.
-type ServiceUserTeamStatus struct {
+// RemoteUserTeamStatus captures controller reconciliation data.
+type RemoteUserTeamStatus struct {
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	LastSynced *metav1.Time       `json:"lastSynced,omitempty"`
 }
@@ -417,21 +417,21 @@ type ServiceUserTeamStatus struct {
 // +kubebuilder:resource:path=serviceuserteams,scope=Namespaced,shortName=svcutm,categories=maintainerd
 // +kubebuilder:subresource:status
 
-// ServiceUserTeam associates a service user with a service team membership.
-type ServiceUserTeam struct {
+// RemoteUserTeam associates a service user with a service team membership.
+type RemoteUserTeam struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ServiceUserTeamSpec   `json:"spec,omitempty"`
-	Status ServiceUserTeamStatus `json:"status,omitempty"`
+	Spec   RemoteUserTeamSpec   `json:"spec,omitempty"`
+	Status RemoteUserTeamStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
-// ServiceUserTeamList is a list of ServiceUserTeam resources.
-type ServiceUserTeamList struct {
+// RemoteUserTeamList is a list of RemoteUserTeam resources.
+type RemoteUserTeamList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []ServiceUserTeam `json:"items"`
+	Items           []RemoteUserTeam `json:"items"`
 }
 
 // OnboardingTaskSpec describes a project onboarding task pulled from an external tracker.
@@ -483,9 +483,9 @@ func addKnownTypes(scheme *runtime.Scheme) error {
 		&Company{}, &CompanyList{},
 		&Service{}, &ServiceList{},
 		&ProjectMembership{}, &ProjectMembershipList{},
-		&ServiceTeam{}, &ServiceTeamList{},
-		&ServiceUser{}, &ServiceUserList{},
-		&ServiceUserTeam{}, &ServiceUserTeamList{},
+		&RemoteTeam{}, &RemoteTeamList{},
+		&RemoteUser{}, &RemoteUserList{},
+		&RemoteUserTeam{}, &RemoteUserTeamList{},
 		&OnboardingTask{}, &OnboardingTaskList{},
 	)
 	metav1.AddToGroupVersion(scheme, SchemeGroupVersion)

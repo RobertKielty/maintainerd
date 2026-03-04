@@ -23,6 +23,7 @@ import (
 	"maintainerd/db"
 	"maintainerd/model"
 	"maintainerd/onboarding"
+	"maintainerd/plugins/fossa"
 	"maintainerd/refparse"
 
 	"github.com/google/go-github/v55/github"
@@ -73,23 +74,32 @@ const (
 )
 
 type server struct {
-	oauthConfig     *oauth2.Config
-	store           *db.SQLStore
-	sessions        *sessionStore
-	oauthStates     *stateStore
-	cookieName      string
-	stateCookie     string
-	webBaseURL      string
-	cookieDomain    string
-	cookieSecure    bool
-	sessionTTL      time.Duration
-	webOrigin       string
-	testMode        bool
-	logger          *log.Logger
-	githubToken     string
-	fetchIssueTitle func(ctx context.Context, owner, repo string, number int) (string, error)
-	onboardingCache *onboardingIssueCache
-	fetchIssues     func(ctx context.Context) ([]onboardingIssueSummary, error)
+	oauthConfig      *oauth2.Config
+	store            *db.SQLStore
+	sessions         *sessionStore
+	oauthStates      *stateStore
+	cookieName       string
+	stateCookie      string
+	webBaseURL       string
+	cookieDomain     string
+	cookieSecure     bool
+	sessionTTL       time.Duration
+	webOrigin        string
+	testMode         bool
+	allowLiveFossa   bool
+	logger           *log.Logger
+	githubToken      string
+	fossaToken       string
+	fetchIssueTitle  func(ctx context.Context, owner, repo string, number int) (string, error)
+	onboardingCache  *onboardingIssueCache
+	fetchIssues      func(ctx context.Context) ([]onboardingIssueSummary, error)
+	fossaTeamCacheMu sync.RWMutex
+	fossaTeamCache   map[uint]cachedFossaTeam
+}
+
+type cachedFossaTeam struct {
+	emails    []string
+	fetchedAt time.Time
 }
 
 type session struct {
@@ -146,13 +156,15 @@ func main() {
 	sessionTTL := parseDuration(envOr("SESSION_TTL", ""), defaultSessionTTL)
 	cookieSecure := envOr("SESSION_COOKIE_SECURE", "") == "true"
 	testMode := envOr("BFF_TEST_MODE", "") == "true"
+	allowLiveFossa := envOr("BFF_ALLOW_LIVE_FOSSA", "") == "true"
 
 	clientID := os.Getenv("GITHUB_OAUTH_CLIENT_ID")
 	clientSecret := os.Getenv("GITHUB_OAUTH_CLIENT_SECRET")
 	githubToken := strings.TrimSpace(os.Getenv("GITHUB_API_TOKEN"))
+	fossaToken := strings.TrimSpace(os.Getenv("FOSSA_API_TOKEN"))
 	if dbDriver == "sqlite" {
 		logger.Printf(
-			"web-bff: config addr=%s dbDriver=%s dbPath=%s webBaseURL=%s redirectURL=%s cookieName=%s cookieDomain=%s stateCookie=%s sessionTTL=%s cookieSecure=%t testMode=%t clientID=%s",
+			"web-bff: config addr=%s dbDriver=%s dbPath=%s webBaseURL=%s redirectURL=%s cookieName=%s cookieDomain=%s stateCookie=%s sessionTTL=%s cookieSecure=%t testMode=%t allowLiveFossa=%t clientID=%s",
 			addr,
 			dbDriver,
 			dbPath,
@@ -164,11 +176,12 @@ func main() {
 			sessionTTL,
 			cookieSecure,
 			testMode,
+			allowLiveFossa,
 			clientID,
 		)
 	} else {
 		logger.Printf(
-			"web-bff: config addr=%s dbDriver=%s dbDSNSet=%t webBaseURL=%s redirectURL=%s cookieName=%s cookieDomain=%s stateCookie=%s sessionTTL=%s cookieSecure=%t testMode=%t clientID=%s",
+			"web-bff: config addr=%s dbDriver=%s dbDSNSet=%t webBaseURL=%s redirectURL=%s cookieName=%s cookieDomain=%s stateCookie=%s sessionTTL=%s cookieSecure=%t testMode=%t allowLiveFossa=%t clientID=%s",
 			addr,
 			dbDriver,
 			dbDSN != "",
@@ -180,6 +193,7 @@ func main() {
 			sessionTTL,
 			cookieSecure,
 			testMode,
+			allowLiveFossa,
 			clientID,
 		)
 	}
@@ -229,22 +243,25 @@ func main() {
 			Scopes:       []string{"read:user"},
 			Endpoint:     ghoauth.Endpoint,
 		},
-		store:        store,
-		sessions:     newSessionStore(logger),
-		oauthStates:  newStateStore(defaultStateTTL),
-		cookieName:   cookieName,
-		stateCookie:  stateCookie,
-		webBaseURL:   strings.TrimRight(webBaseURL, "/"),
-		cookieDomain: cookieDomain,
-		cookieSecure: cookieSecure,
-		sessionTTL:   sessionTTL,
-		webOrigin:    originFromBaseURL(webBaseURL),
-		testMode:     testMode,
-		logger:       logger,
-		githubToken:  githubToken,
+		store:          store,
+		sessions:       newSessionStore(logger),
+		oauthStates:    newStateStore(defaultStateTTL),
+		cookieName:     cookieName,
+		stateCookie:    stateCookie,
+		webBaseURL:     strings.TrimRight(webBaseURL, "/"),
+		cookieDomain:   cookieDomain,
+		cookieSecure:   cookieSecure,
+		sessionTTL:     sessionTTL,
+		webOrigin:      originFromBaseURL(webBaseURL),
+		testMode:       testMode,
+		allowLiveFossa: allowLiveFossa,
+		logger:         logger,
+		githubToken:    githubToken,
+		fossaToken:     fossaToken,
 		onboardingCache: &onboardingIssueCache{
 			expires: time.Time{},
 		},
+		fossaTeamCache: make(map[uint]cachedFossaTeam),
 	}
 	s.fetchIssueTitle = s.fetchIssueTitleFromGitHub
 	s.fetchIssues = s.fetchOnboardingIssuesFromGitHub
@@ -285,6 +302,12 @@ func main() {
 	mux.Handle("/api/companies/", s.withCORS(s.requireSession(http.HandlerFunc(s.handleCompany))))
 	mux.Handle("/api/onboarding/resolve", s.withCORS(s.requireSession(http.HandlerFunc(s.handleResolveOnboarding))))
 	mux.Handle("/api/onboarding/issues", s.withCORS(s.requireSession(http.HandlerFunc(s.handleOnboardingIssues))))
+	mux.Handle("/api/services/fossa/invite", s.withCORS(s.requireSession(http.HandlerFunc(s.handleFossaInvite))))
+	mux.Handle("/api/services/fossa/choose", s.withCORS(s.requireSession(http.HandlerFunc(s.handleFossaChoose))))
+	mux.Handle("/api/services/fossa/invites", s.withCORS(s.requireSession(http.HandlerFunc(s.handleFossaInvites))))
+	mux.Handle("/api/services/fossa/invites/refresh", s.withCORS(s.requireSession(http.HandlerFunc(s.handleFossaInviteRefresh))))
+	mux.Handle("/api/services/fossa/invites/", s.withCORS(s.requireSession(http.HandlerFunc(s.handleFossaInviteAction))))
+	mux.Handle("/api/services/fossa/team/sync", s.withCORS(s.requireSession(http.HandlerFunc(s.handleFossaTeamSync))))
 	mux.Handle("/api/", s.withCORS(s.requireSession(http.HandlerFunc(s.handleAPINotImplemented))))
 
 	server := &http.Server{
@@ -595,6 +618,28 @@ type serviceSummary struct {
 	Description string `json:"description"`
 }
 
+type fossaTeamMemberSummary struct {
+	ID     uint   `json:"id"`
+	Name   string `json:"name"`
+	GitHub string `json:"github"`
+	Email  string `json:"email"`
+}
+
+type fossaInviteIneligibleSummary struct {
+	ID     uint   `json:"id"`
+	Name   string `json:"name"`
+	GitHub string `json:"github"`
+	Email  string `json:"email"`
+	Reason string `json:"reason"`
+}
+
+type fossaInviteCandidateSummary struct {
+	ID     uint   `json:"id"`
+	Name   string `json:"name"`
+	GitHub string `json:"github"`
+	Email  string `json:"email"`
+}
+
 type maintainerRefStatus struct {
 	URL       string     `json:"url,omitempty"`
 	Status    string     `json:"status"`
@@ -602,25 +647,30 @@ type maintainerRefStatus struct {
 }
 
 type projectDetailResponse struct {
-	ID                      uint                      `json:"id"`
-	Name                    string                    `json:"name"`
-	Maturity                string                    `json:"maturity"`
-	ParentProjectID         *uint                     `json:"parentProjectId,omitempty"`
-	LegacyMaintainerRef     string                    `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef       string                    `json:"dotProjectYamlRef,omitempty"`
-	RefStatus               maintainerRefStatus       `json:"maintainerRefStatus"`
-	LegacyMaintainerRefBody string                    `json:"legacyMaintainerRefBody,omitempty"`
-	RefOnlyGitHub           []string                  `json:"refOnlyGitHub"`
-	RefLines                map[string]string         `json:"refLines,omitempty"`
-	OnboardingIssue         string                    `json:"onboardingIssue,omitempty"`
-	MailingList             string                    `json:"mailingList,omitempty"`
-	Maintainers             []projectMaintainerDetail `json:"maintainers"`
-	Services                []serviceSummary          `json:"services"`
-	CreatedAt               time.Time                 `json:"createdAt"`
-	UpdatedAt               time.Time                 `json:"updatedAt"`
-	DeletedAt               *time.Time                `json:"deletedAt,omitempty"`
-	UpdatedBy               string                    `json:"updatedBy,omitempty"`
-	UpdatedAuditID          *uint                     `json:"updatedAuditId,omitempty"`
+	ID                      uint                           `json:"id"`
+	Name                    string                         `json:"name"`
+	Maturity                string                         `json:"maturity"`
+	ParentProjectID         *uint                          `json:"parentProjectId,omitempty"`
+	LegacyMaintainerRef     string                         `json:"legacyMaintainerRef,omitempty"`
+	DotProjectYamlRef       string                         `json:"dotProjectYamlRef,omitempty"`
+	RefStatus               maintainerRefStatus            `json:"maintainerRefStatus"`
+	LegacyMaintainerRefBody string                         `json:"legacyMaintainerRefBody,omitempty"`
+	RefOnlyGitHub           []string                       `json:"refOnlyGitHub"`
+	RefLines                map[string]string              `json:"refLines,omitempty"`
+	OnboardingIssue         string                         `json:"onboardingIssue,omitempty"`
+	MailingList             string                         `json:"mailingList,omitempty"`
+	Maintainers             []projectMaintainerDetail      `json:"maintainers"`
+	Services                []serviceSummary               `json:"services"`
+	FossaTeamID             *uint                          `json:"fossaTeamId,omitempty"`
+	FossaTeamName           string                         `json:"fossaTeamName,omitempty"`
+	FossaTeamMembers        []fossaTeamMemberSummary       `json:"fossaTeamMembers,omitempty"`
+	FossaInviteIneligible   []fossaInviteIneligibleSummary `json:"fossaInviteIneligible,omitempty"`
+	FossaInviteCandidates   []fossaInviteCandidateSummary  `json:"fossaInviteCandidates,omitempty"`
+	CreatedAt               time.Time                      `json:"createdAt"`
+	UpdatedAt               time.Time                      `json:"updatedAt"`
+	DeletedAt               *time.Time                     `json:"deletedAt,omitempty"`
+	UpdatedBy               string                         `json:"updatedBy,omitempty"`
+	UpdatedAuditID          *uint                          `json:"updatedAuditId,omitempty"`
 }
 
 func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -1091,6 +1141,147 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 		updatedAuditID = &audit.ID
 	}
 
+	var fossaTeamID *uint
+	var fossaTeamName string
+	var fossaTeamMembers []fossaTeamMemberSummary
+	var fossaTeamEmails []string
+	var fossaInviteIneligible []fossaInviteIneligibleSummary
+	var fossaInviteCandidates []fossaInviteCandidateSummary
+	if serviceID, err := s.getFossaServiceID(); err == nil {
+		if serviceTeam, err := s.store.GetRemoteTeamByProject(project.ID, serviceID); err == nil && serviceTeam != nil {
+			idVal := serviceTeam.RemoteTeamID
+			fossaTeamID = &idVal
+			if serviceTeam.RemoteTeamName != nil {
+				fossaTeamName = *serviceTeam.RemoteTeamName
+			}
+			if !s.testMode || s.allowLiveFossa {
+				var fossaMembersErr error
+				if cachedEmails, ok := s.getCachedFossaTeamEmails(serviceTeam.RemoteTeamID); ok {
+					fossaTeamEmails = cachedEmails
+					s.logger.Printf("web-bff: FOSSA team email cache hit project=%d remoteTeamID=%d count=%d", project.ID, serviceTeam.RemoteTeamID, len(fossaTeamEmails))
+				} else if client, err := s.fossaClient(); err == nil {
+					s.logger.Printf("web-bff: fetching FOSSA team state project=%d remoteTeamID=%d", project.ID, serviceTeam.RemoteTeamID)
+					if emails, err := client.FetchTeamUserEmails(serviceTeam.RemoteTeamID); err == nil {
+						fossaTeamEmails = emails
+						s.setCachedFossaTeamEmails(serviceTeam.RemoteTeamID, emails)
+					} else {
+						fossaMembersErr = err
+						s.logger.Printf("web-bff: failed to load FOSSA team emails from API project=%d err=%v", project.ID, err)
+					}
+				} else {
+					fossaMembersErr = err
+				}
+				if len(fossaTeamEmails) > 0 {
+					domainCounts := make(map[string]int)
+					for _, email := range fossaTeamEmails {
+						parts := strings.Split(strings.ToLower(strings.TrimSpace(email)), "@")
+						if len(parts) == 2 && parts[1] != "" {
+							domainCounts[parts[1]]++
+						} else {
+							domainCounts["(invalid)"]++
+						}
+					}
+					domains := make([]string, 0, len(domainCounts))
+					for domain := range domainCounts {
+						domains = append(domains, domain)
+					}
+					sort.Strings(domains)
+					parts := make([]string, 0, len(domains))
+					for _, domain := range domains {
+						parts = append(parts, fmt.Sprintf("%s=%d", domain, domainCounts[domain]))
+					}
+					s.logger.Printf("web-bff: FOSSA team email domains project=%d remoteTeamID=%d %s", project.ID, serviceTeam.RemoteTeamID, strings.Join(parts, ", "))
+					emailToMaintainer := make(map[string]model.Maintainer, len(project.Maintainers))
+					for _, maintainer := range project.Maintainers {
+						normalized := strings.ToLower(strings.TrimSpace(maintainer.Email))
+						if normalized != "" && !strings.EqualFold(normalized, "EMAIL_MISSING") {
+							emailToMaintainer[normalized] = maintainer
+						}
+					}
+					fossaTeamMembers = make([]fossaTeamMemberSummary, 0, len(fossaTeamEmails))
+					for _, email := range fossaTeamEmails {
+						normalized := strings.ToLower(strings.TrimSpace(email))
+						name := strings.TrimSpace(email)
+						var maintainerID uint
+						var github string
+						if matched, ok := emailToMaintainer[normalized]; ok {
+							maintainerID = matched.ID
+							if matched.Name != "" {
+								name = matched.Name
+							}
+							github = matched.GitHubAccount
+						}
+						fossaTeamMembers = append(fossaTeamMembers, fossaTeamMemberSummary{
+							ID:     maintainerID,
+							Name:   name,
+							GitHub: github,
+							Email:  email,
+						})
+					}
+					s.logger.Printf("web-bff: loaded FOSSA team emails project=%d remoteTeamID=%d count=%d", project.ID, serviceTeam.RemoteTeamID, len(fossaTeamEmails))
+				}
+				if fossaMembersErr != nil {
+					if members, err := s.store.ListRemoteTeamMaintainers(serviceTeam.ID); err == nil {
+						fossaTeamMembers = make([]fossaTeamMemberSummary, 0, len(members))
+						for _, member := range members {
+							fossaTeamMembers = append(fossaTeamMembers, fossaTeamMemberSummary{
+								ID:     member.ID,
+								Name:   member.Name,
+								GitHub: member.GitHubAccount,
+								Email:  member.Email,
+							})
+						}
+						fossaTeamEmails = make([]string, 0, len(members))
+						for _, member := range members {
+							if member.Email != "" {
+								fossaTeamEmails = append(fossaTeamEmails, member.Email)
+							}
+						}
+					} else {
+						s.logger.Printf("web-bff: failed to load FOSSA team members from db project=%d err=%v", project.ID, err)
+					}
+				}
+			}
+			if s.testMode && (!s.allowLiveFossa || len(fossaTeamEmails) == 0) {
+				if members, err := s.store.ListRemoteTeamMaintainers(serviceTeam.ID); err == nil {
+					fossaTeamMembers = make([]fossaTeamMemberSummary, 0, len(members))
+					for _, member := range members {
+						fossaTeamMembers = append(fossaTeamMembers, fossaTeamMemberSummary{
+							ID:     member.ID,
+							Name:   member.Name,
+							GitHub: member.GitHubAccount,
+							Email:  member.Email,
+						})
+					}
+					fossaTeamEmails = make([]string, 0, len(members))
+					for _, member := range members {
+						if member.Email != "" {
+							fossaTeamEmails = append(fossaTeamEmails, member.Email)
+						}
+					}
+				}
+			}
+
+			fossaInviteIneligible = classifyIneligibleMaintainers(project.Maintainers)
+			if role == roleStaff {
+				pendingInviteEmails := make(map[string]struct{})
+				if invites, err := s.store.ListServiceInvitations(project.ID, serviceID); err == nil {
+					for _, invite := range invites {
+						if strings.EqualFold(invite.Status, "pending") {
+							normalized := strings.ToLower(strings.TrimSpace(invite.ServiceEmail))
+							if normalized != "" {
+								pendingInviteEmails[normalized] = struct{}{}
+							}
+						}
+					}
+				}
+				s.logger.Printf("web-bff: build invite candidates project=%d remoteTeamID=%d fossaTeamEmails=%v pendingInviteEmails=%d",
+					project.ID, serviceTeam.RemoteTeamID, fossaTeamEmails, len(pendingInviteEmails))
+				fossaInviteCandidates = buildFossaInviteCandidates(project.Maintainers, fossaTeamEmails, pendingInviteEmails)
+			}
+		}
+	}
+
 	response := projectDetailResponse{
 		ID:                      project.ID,
 		Name:                    project.Name,
@@ -1102,6 +1293,11 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 		RefLines:                refLines,
 		Maintainers:             maintainers,
 		Services:                services,
+		FossaTeamID:             fossaTeamID,
+		FossaTeamName:           fossaTeamName,
+		FossaTeamMembers:        fossaTeamMembers,
+		FossaInviteIneligible:   fossaInviteIneligible,
+		FossaInviteCandidates:   fossaInviteCandidates,
 		CreatedAt:               project.CreatedAt,
 		UpdatedAt:               project.UpdatedAt,
 		DeletedAt:               deletedAt,
@@ -1987,6 +2183,34 @@ type addMaintainerRequest struct {
 	Company      string `json:"company"`
 }
 
+type fossaInviteRequest struct {
+	ProjectID     uint   `json:"projectId"`
+	MaintainerIDs []uint `json:"maintainerIds,omitempty"`
+}
+
+type fossaChooseRequest struct {
+	ProjectID uint `json:"projectId"`
+}
+
+type fossaInviteSummary struct {
+	ID            uint       `json:"id"`
+	ProjectID     uint       `json:"projectId"`
+	MaintainerID  *uint      `json:"maintainerId,omitempty"`
+	Email         string     `json:"email"`
+	FossaTeamID   uint       `json:"fossaTeamId"`
+	FossaTeamName string     `json:"fossaTeamName"`
+	Status        string     `json:"status"`
+	LastError     *string    `json:"lastError,omitempty"`
+	SentAt        *time.Time `json:"sentAt,omitempty"`
+	LastCheckedAt *time.Time `json:"lastCheckedAt,omitempty"`
+}
+
+type fossaInviteResponse struct {
+	Invited []string          `json:"invited"`
+	Skipped []string          `json:"skipped"`
+	Errors  map[string]string `json:"errors"`
+}
+
 type addMaintainerResponse struct {
 	ID      uint   `json:"id"`
 	Name    string `json:"name"`
@@ -2845,6 +3069,11 @@ type resolveOnboardingResponse struct {
 	ProjectName string `json:"projectName"`
 }
 
+type fossaChooseErrorResponse struct {
+	Error   string `json:"error"`
+	ErrorAt string `json:"errorAt"`
+}
+
 func (s *server) handleResolveOnboarding(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -2926,6 +3155,912 @@ func (s *server) handleOnboardingIssues(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+func (s *server) handleFossaChoose(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	writeChooseError := func(status int, err error) {
+		w.Header().Set(headerContentType, contentTypeJSON)
+		w.WriteHeader(status)
+		payload := fossaChooseErrorResponse{
+			Error:   err.Error(),
+			ErrorAt: time.Now().UTC().Format(time.RFC3339),
+		}
+		if encodeErr := json.NewEncoder(w).Encode(payload); encodeErr != nil {
+			s.logger.Printf("web-bff: handleFossaChoose encode error: %v", encodeErr)
+		}
+	}
+	var req fossaChooseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.ProjectID == 0 {
+		http.Error(w, "missing projectId", http.StatusBadRequest)
+		return
+	}
+	project, err := s.store.GetProjectByID(req.ProjectID)
+	if err != nil {
+		if errors.Is(err, db.ErrProjectNotFound) {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		writeChooseError(http.StatusInternalServerError, fmt.Errorf("failed to load project"))
+		return
+	}
+	serviceID, err := s.getFossaServiceID()
+	if err != nil {
+		writeChooseError(http.StatusInternalServerError, fmt.Errorf("failed to resolve FOSSA service"))
+		return
+	}
+	var service model.Service
+	if err := s.store.DB().First(&service, serviceID).Error; err != nil {
+		writeChooseError(http.StatusInternalServerError, fmt.Errorf("failed to load FOSSA service"))
+		return
+	}
+	if err := s.store.DB().Model(project).Association("Services").Append(&service); err != nil {
+		writeChooseError(http.StatusInternalServerError, fmt.Errorf("failed to associate FOSSA service"))
+		return
+	}
+	staffID := lookupStaffID(s.store, session.Login)
+	logFossaTeamAudit := func(action string, team *model.RemoteTeam) {
+		teamName := ""
+		if team.RemoteTeamName != nil {
+			teamName = *team.RemoteTeamName
+		}
+		metadata := map[string]map[string]string{
+			"team": {
+				"id":   fmt.Sprintf("%d", team.RemoteTeamID),
+				"name": teamName,
+			},
+		}
+		metadataJSON, err := json.Marshal(metadata)
+		if err != nil {
+			s.logger.Printf("web-bff: handleFossaChoose marshal metadata error: %v", err)
+			return
+		}
+		event := model.AuditLog{
+			StaffID:   staffID,
+			Action:    action,
+			Message:   action,
+			Metadata:  string(metadataJSON),
+			ProjectID: &project.ID,
+		}
+		if err := s.store.DB().Create(&event).Error; err != nil {
+			s.logger.Printf("web-bff: handleFossaChoose audit log failed: %v", err)
+		}
+	}
+	if (s.testMode && !s.allowLiveFossa) || strings.TrimSpace(s.fossaToken) == "" {
+		s.logger.Printf(
+			"web-bff: skipping live FOSSA choose project=%d testMode=%t allowLiveFossa=%t fossaTokenSet=%t",
+			project.ID,
+			s.testMode,
+			s.allowLiveFossa,
+			strings.TrimSpace(s.fossaToken) != "",
+		)
+		if team, err := s.store.GetRemoteTeamByProject(project.ID, serviceID); err == nil && team != nil {
+			logFossaTeamAudit("FOSSA_TEAM_REUSED", team)
+			w.Header().Set(headerContentType, contentTypeJSON)
+			if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+				s.logger.Printf("web-bff: handleFossaChoose encode error: %v", err)
+			}
+			return
+		}
+		if s.testMode {
+			if raw := strings.TrimSpace(os.Getenv("BFF_TEST_FOSSA_TEAM_ID")); raw != "" {
+				if parsed, err := strconv.ParseUint(raw, 10, 64); err == nil && parsed > 0 {
+					teamName := project.Name
+					serviceTeam := model.RemoteTeam{
+						ProjectID:      project.ID,
+						ServiceID:      serviceID,
+						RemoteTeamID:   uint(parsed),
+						RemoteTeamName: &teamName,
+						ProjectName:    &teamName,
+					}
+					if err := s.store.DB().Create(&serviceTeam).Error; err != nil {
+						writeChooseError(http.StatusInternalServerError, fmt.Errorf("failed to create FOSSA team"))
+						return
+					}
+					logFossaTeamAudit("FOSSA_TEAM_CREATED", &serviceTeam)
+					w.Header().Set(headerContentType, contentTypeJSON)
+					if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+						s.logger.Printf("web-bff: handleFossaChoose encode error: %v", err)
+					}
+					return
+				}
+			}
+		}
+		writeChooseError(http.StatusBadRequest, fmt.Errorf("FOSSA team not found; RemoteTeamID must come from FOSSA API"))
+		return
+	}
+	client, err := s.fossaClient()
+	if err != nil {
+		writeChooseError(http.StatusInternalServerError, err)
+		return
+	}
+	team, created, err := s.ensureFossaTeam(*project, client)
+	if err != nil {
+		s.logger.Printf("web-bff: fossa choose ensure team failed project=%d err=%v", project.ID, err)
+		writeChooseError(http.StatusBadGateway, fmt.Errorf("failed to start FOSSA onboarding"))
+		return
+	}
+	if team != nil {
+		if created {
+			logFossaTeamAudit("FOSSA_TEAM_CREATED", team)
+		} else {
+			logFossaTeamAudit("FOSSA_TEAM_REUSED", team)
+		}
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+		s.logger.Printf("web-bff: handleFossaChoose encode error: %v", err)
+	}
+}
+
+func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var req fossaInviteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	if req.ProjectID == 0 {
+		http.Error(w, "missing projectId", http.StatusBadRequest)
+		return
+	}
+	project, err := s.store.GetProjectByID(req.ProjectID)
+	if err != nil {
+		if errors.Is(err, db.ErrProjectNotFound) {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to load project", http.StatusInternalServerError)
+		return
+	}
+	maintainers := project.Maintainers
+	if len(req.MaintainerIDs) > 0 {
+		allowed := make(map[uint]struct{}, len(req.MaintainerIDs))
+		for _, id := range req.MaintainerIDs {
+			allowed[id] = struct{}{}
+		}
+		filtered := make([]model.Maintainer, 0, len(req.MaintainerIDs))
+		for _, maintainer := range maintainers {
+			if _, ok := allowed[maintainer.ID]; ok {
+				filtered = append(filtered, maintainer)
+			}
+		}
+		maintainers = filtered
+	}
+	serviceID, err := s.getFossaServiceID()
+	if err != nil {
+		http.Error(w, "failed to resolve FOSSA service", http.StatusInternalServerError)
+		return
+	}
+	if s.testMode && strings.TrimSpace(s.fossaToken) == "" {
+		serviceTeam, err := s.store.GetRemoteTeamByProject(project.ID, serviceID)
+		if err != nil || serviceTeam == nil {
+			http.Error(w, "failed to resolve FOSSA team", http.StatusInternalServerError)
+			return
+		}
+		now := time.Now().UTC()
+		resp := fossaInviteResponse{
+			Invited: []string{},
+			Skipped: []string{},
+			Errors:  map[string]string{},
+		}
+		for _, maintainer := range maintainers {
+			if maintainer.MaintainerStatus != "" && maintainer.MaintainerStatus != model.ActiveMaintainer {
+				resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
+				continue
+			}
+			email := strings.TrimSpace(maintainer.Email)
+			if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
+				resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
+				continue
+			}
+			inviteStatus := &model.ServiceInvitation{
+				ProjectID:     project.ID,
+				MaintainerID:  &maintainer.ID,
+				ServiceID:     serviceID,
+				ServiceEmail:  email,
+				RemoteTeamID:  serviceTeam.RemoteTeamID,
+				Status:        "pending",
+				SentAt:        &now,
+				LastCheckedAt: &now,
+			}
+			if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
+				resp.Errors[email] = "failed to store invite status"
+				continue
+			}
+			resp.Invited = append(resp.Invited, email)
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			s.logger.Printf("web-bff: handleFossaInvite encode error: %v", err)
+		}
+		return
+	}
+
+	client, err := s.fossaClient()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	serviceTeam, _, err := s.ensureFossaTeam(*project, client)
+	if err != nil {
+		s.logger.Printf("web-bff: fossa invite ensure team failed project=%d err=%v", project.ID, err)
+		http.Error(w, "failed to resolve FOSSA team", http.StatusInternalServerError)
+		return
+	}
+	now := time.Now().UTC()
+	resp := fossaInviteResponse{
+		Invited: []string{},
+		Skipped: []string{},
+		Errors:  map[string]string{},
+	}
+	for _, maintainer := range maintainers {
+		if maintainer.MaintainerStatus != "" && maintainer.MaintainerStatus != model.ActiveMaintainer {
+			resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
+			continue
+		}
+		email := strings.TrimSpace(maintainer.Email)
+		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
+			resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
+			continue
+		}
+
+		err := client.SendUserInvitation(email)
+		if err == nil || errors.Is(err, fossa.ErrInviteAlreadyExists) {
+			inviteStatus := &model.ServiceInvitation{
+				ProjectID:     project.ID,
+				MaintainerID:  &maintainer.ID,
+				ServiceID:     serviceID,
+				ServiceEmail:  email,
+				RemoteTeamID:  serviceTeam.RemoteTeamID,
+				Status:        "pending",
+				SentAt:        &now,
+				LastCheckedAt: &now,
+			}
+			if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
+				resp.Errors[email] = "failed to store invite status"
+				continue
+			}
+			resp.Invited = append(resp.Invited, email)
+			continue
+		}
+
+		if errors.Is(err, fossa.ErrUserAlreadyMember) {
+			const fossaTeamAdminRoleID = 3
+			if addErr := client.AddUserToTeamByEmail(serviceTeam.RemoteTeamID, email, fossaTeamAdminRoleID); addErr == nil {
+				inviteStatus := &model.ServiceInvitation{
+					ProjectID:     project.ID,
+					MaintainerID:  &maintainer.ID,
+					ServiceID:     serviceID,
+					ServiceEmail:  email,
+					RemoteTeamID:  serviceTeam.RemoteTeamID,
+					Status:        "accepted",
+					LastCheckedAt: &now,
+				}
+				if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
+					resp.Errors[email] = "failed to store invite status"
+				}
+				continue
+			} else {
+				msg := addErr.Error()
+				inviteStatus := &model.ServiceInvitation{
+					ProjectID:     project.ID,
+					MaintainerID:  &maintainer.ID,
+					ServiceID:     serviceID,
+					ServiceEmail:  email,
+					RemoteTeamID:  serviceTeam.RemoteTeamID,
+					Status:        "error",
+					LastError:     &msg,
+					LastCheckedAt: &now,
+				}
+				if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
+					resp.Errors[email] = "failed to store invite status"
+				} else {
+					resp.Errors[email] = msg
+				}
+				continue
+			}
+		}
+
+		msg := err.Error()
+		inviteStatus := &model.ServiceInvitation{
+			ProjectID:     project.ID,
+			MaintainerID:  &maintainer.ID,
+			ServiceID:     serviceID,
+			ServiceEmail:  email,
+			RemoteTeamID:  serviceTeam.RemoteTeamID,
+			Status:        "error",
+			LastError:     &msg,
+			LastCheckedAt: &now,
+		}
+		if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
+			resp.Errors[email] = "failed to store invite status"
+		} else {
+			resp.Errors[email] = msg
+		}
+	}
+
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.logger.Printf("web-bff: handleFossaInvite encode error: %v", err)
+	}
+}
+
+func (s *server) handleFossaInvites(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	projectIDStr := strings.TrimSpace(r.URL.Query().Get("projectId"))
+	if projectIDStr == "" {
+		http.Error(w, "missing projectId", http.StatusBadRequest)
+		return
+	}
+	projectID, err := strconv.ParseUint(projectIDStr, 10, 64)
+	if err != nil || projectID == 0 {
+		http.Error(w, "invalid projectId", http.StatusBadRequest)
+		return
+	}
+	serviceID, err := s.getFossaServiceID()
+	if err != nil {
+		http.Error(w, "failed to resolve FOSSA service", http.StatusInternalServerError)
+		return
+	}
+	invites, err := s.store.ListServiceInvitations(uint(projectID), serviceID)
+	if err != nil {
+		http.Error(w, "failed to load invites", http.StatusInternalServerError)
+		return
+	}
+	var fossaTeamName string
+	if serviceTeam, err := s.store.GetRemoteTeamByProject(uint(projectID), serviceID); err == nil && serviceTeam != nil {
+		if serviceTeam.RemoteTeamName != nil {
+			fossaTeamName = *serviceTeam.RemoteTeamName
+		}
+	}
+	resp := make([]fossaInviteSummary, 0, len(invites))
+	for _, invite := range invites {
+		resp = append(resp, fossaInviteSummary{
+			ID:            invite.ID,
+			ProjectID:     invite.ProjectID,
+			MaintainerID:  invite.MaintainerID,
+			Email:         invite.ServiceEmail,
+			FossaTeamID:   invite.RemoteTeamID,
+			FossaTeamName: fossaTeamName,
+			Status:        invite.Status,
+			LastError:     invite.LastError,
+			SentAt:        invite.SentAt,
+			LastCheckedAt: invite.LastCheckedAt,
+		})
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.logger.Printf("web-bff: handleFossaInvites encode error: %v", err)
+	}
+}
+
+func (s *server) handleFossaInviteRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	projectIDStr := strings.TrimSpace(r.URL.Query().Get("projectId"))
+	if projectIDStr == "" {
+		http.Error(w, "missing projectId", http.StatusBadRequest)
+		return
+	}
+	projectID, err := strconv.ParseUint(projectIDStr, 10, 64)
+	if err != nil || projectID == 0 {
+		http.Error(w, "invalid projectId", http.StatusBadRequest)
+		return
+	}
+	project, err := s.store.GetProjectByID(uint(projectID))
+	if err != nil {
+		if errors.Is(err, db.ErrProjectNotFound) {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to load project", http.StatusInternalServerError)
+		return
+	}
+	serviceID, err := s.getFossaServiceID()
+	if err != nil {
+		http.Error(w, "failed to resolve FOSSA service", http.StatusInternalServerError)
+		return
+	}
+	serviceTeam, err := s.store.GetRemoteTeamByProject(project.ID, serviceID)
+	if err != nil {
+		http.Error(w, "failed to load FOSSA team", http.StatusInternalServerError)
+		return
+	}
+	if serviceTeam == nil {
+		http.Error(w, "FOSSA team not assigned", http.StatusBadRequest)
+		return
+	}
+	client, err := s.fossaClient()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	pendingEmails, err := client.FetchUserInvitationEmails()
+	if err != nil {
+		s.logger.Printf("web-bff: refresh FOSSA invites failed project=%d err=%v", project.ID, err)
+		http.Error(w, "failed to refresh FOSSA invites", http.StatusBadGateway)
+		return
+	}
+
+	activeMaintainers := make(map[string]model.Maintainer)
+	for _, maintainer := range project.Maintainers {
+		if maintainer.MaintainerStatus != "" && maintainer.MaintainerStatus != model.ActiveMaintainer {
+			continue
+		}
+		email := strings.TrimSpace(maintainer.Email)
+		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
+			continue
+		}
+		activeMaintainers[strings.ToLower(email)] = maintainer
+	}
+
+	invites, err := s.store.ListServiceInvitations(project.ID, serviceID)
+	if err != nil {
+		http.Error(w, "failed to load invites", http.StatusInternalServerError)
+		return
+	}
+	existing := make(map[string]model.ServiceInvitation, len(invites))
+	for _, invite := range invites {
+		email := strings.TrimSpace(invite.ServiceEmail)
+		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
+			continue
+		}
+		existing[strings.ToLower(email)] = invite
+	}
+
+	now := time.Now().UTC()
+	added := 0
+	updated := 0
+	removed := 0
+
+	for email := range pendingEmails {
+		maintainer, ok := activeMaintainers[email]
+		if !ok {
+			continue
+		}
+		if invite, ok := existing[email]; ok {
+			invite.Status = "pending"
+			invite.LastError = nil
+			invite.LastCheckedAt = &now
+			if _, upsertErr := s.store.UpsertServiceInvitation(&invite); upsertErr == nil {
+				updated++
+			}
+			continue
+		}
+		invite := &model.ServiceInvitation{
+			ProjectID:     project.ID,
+			MaintainerID:  &maintainer.ID,
+			ServiceID:     serviceID,
+			ServiceEmail:  maintainer.Email,
+			RemoteTeamID:  serviceTeam.RemoteTeamID,
+			Status:        "pending",
+			LastCheckedAt: &now,
+		}
+		if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr == nil {
+			added++
+		}
+	}
+
+	for _, invite := range invites {
+		if invite.RemoteTeamID != serviceTeam.RemoteTeamID {
+			continue
+		}
+		email := strings.ToLower(strings.TrimSpace(invite.ServiceEmail))
+		if email == "" || strings.EqualFold(email, "email_missing") {
+			continue
+		}
+		if _, ok := pendingEmails[email]; ok {
+			continue
+		}
+		if err := s.store.DeleteServiceInvitation(invite.ID); err == nil {
+			removed++
+		}
+	}
+
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(map[string]int{
+		"added":   added,
+		"updated": updated,
+		"removed": removed,
+	}); err != nil {
+		s.logger.Printf("web-bff: handleFossaInviteRefresh encode error: %v", err)
+	}
+}
+
+func (s *server) handleFossaTeamSync(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	projectIDStr := strings.TrimSpace(r.URL.Query().Get("projectId"))
+	if projectIDStr == "" {
+		http.Error(w, "missing projectId", http.StatusBadRequest)
+		return
+	}
+	projectID, err := strconv.ParseUint(projectIDStr, 10, 64)
+	if err != nil || projectID == 0 {
+		http.Error(w, "invalid projectId", http.StatusBadRequest)
+		return
+	}
+	project, err := s.store.GetProjectByID(uint(projectID))
+	if err != nil {
+		if errors.Is(err, db.ErrProjectNotFound) {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to load project", http.StatusInternalServerError)
+		return
+	}
+	serviceID, err := s.getFossaServiceID()
+	if err != nil {
+		http.Error(w, "failed to resolve FOSSA service", http.StatusInternalServerError)
+		return
+	}
+	serviceTeam, err := s.store.GetRemoteTeamByProject(project.ID, serviceID)
+	if err != nil {
+		http.Error(w, "failed to load FOSSA team", http.StatusInternalServerError)
+		return
+	}
+	if serviceTeam == nil {
+		http.Error(w, "FOSSA team not assigned", http.StatusBadRequest)
+		return
+	}
+	client, err := s.fossaClient()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	members, err := client.FetchTeamMembers(serviceTeam.RemoteTeamID)
+	if err != nil {
+		s.logger.Printf("web-bff: sync FOSSA team failed project=%d err=%v", project.ID, err)
+		http.Error(w, "failed to sync FOSSA team", http.StatusBadGateway)
+		return
+	}
+
+	maintainerByEmail := make(map[string]model.Maintainer, len(project.Maintainers))
+	for _, maintainer := range project.Maintainers {
+		email := strings.ToLower(strings.TrimSpace(maintainer.Email))
+		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
+			continue
+		}
+		maintainerByEmail[email] = maintainer
+	}
+
+	emails := make([]string, 0, len(members))
+	updatedUsers := 0
+	linkedMaintainers := 0
+	for _, member := range members {
+		email := strings.TrimSpace(member.Email)
+		if email == "" {
+			continue
+		}
+		emails = append(emails, email)
+		remoteUser, err := s.store.UpsertRemoteUser(&model.RemoteUser{
+			ServiceID:    serviceID,
+			RemoteUserID: member.UserID,
+			ServiceEmail: email,
+			RemoteRef:    member.Username,
+		})
+		if err == nil {
+			updatedUsers++
+		} else {
+			s.logger.Printf("web-bff: sync FOSSA user upsert failed project=%d userID=%d err=%v",
+				project.ID, member.UserID, err)
+		}
+		var maintainerID *uint
+		if maintainer, ok := maintainerByEmail[strings.ToLower(email)]; ok {
+			maintainerID = &maintainer.ID
+		}
+		if remoteUser != nil {
+			if _, err := s.store.UpsertRemoteUserTeam(&model.RemoteTeamUser{
+				ServiceID:    serviceID,
+				TeamID:       serviceTeam.ID,
+				UserID:       remoteUser.ID,
+				MaintainerID: maintainerID,
+			}); err == nil {
+				if maintainerID != nil {
+					linkedMaintainers++
+				}
+			} else {
+				s.logger.Printf("web-bff: sync FOSSA team link failed project=%d teamID=%d userID=%d err=%v",
+					project.ID, serviceTeam.ID, member.UserID, err)
+			}
+		} else {
+			s.logger.Printf("web-bff: sync FOSSA team link skipped project=%d teamID=%d userID=%d err=missing remote user",
+				project.ID, serviceTeam.ID, member.UserID)
+		}
+	}
+	if len(emails) > 0 {
+		s.setCachedFossaTeamEmails(serviceTeam.RemoteTeamID, emails)
+	}
+
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(map[string]int{
+		"usersUpserted": updatedUsers,
+		"linksUpserted": linkedMaintainers,
+	}); err != nil {
+		s.logger.Printf("web-bff: handleFossaTeamSync encode error: %v", err)
+	}
+}
+
+func (s *server) handleFossaInviteAction(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	trimmed := strings.TrimPrefix(r.URL.Path, "/api/services/fossa/invites/")
+	parts := strings.Split(strings.Trim(trimmed, "/"), "/")
+	if len(parts) != 2 || (parts[1] != "reissue" && parts[1] != "delete") {
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+	id, err := strconv.Atoi(parts[0])
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid invite id", http.StatusBadRequest)
+		return
+	}
+	invite, err := s.store.GetServiceInvitationByID(uint(id))
+	if err != nil {
+		http.Error(w, "invite not found", http.StatusNotFound)
+		return
+	}
+	if invite.ServiceEmail == "" {
+		http.Error(w, "missing email", http.StatusBadRequest)
+		return
+	}
+	email := strings.TrimSpace(invite.ServiceEmail)
+	if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
+		http.Error(w, "missing email", http.StatusBadRequest)
+		return
+	}
+	if parts[1] == "delete" {
+		client, err := s.fossaClient()
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		s.logger.Printf("web-bff: delete FOSSA invite attempt invite=%d remoteTeamID=%d email=%s", invite.ID, invite.RemoteTeamID, email)
+		if err := client.DeleteUserInvitation(email); err != nil {
+			s.logger.Printf("web-bff: delete FOSSA invite failed invite=%d email=%s err=%v", invite.ID, email, err)
+			http.Error(w, "failed to delete invite on FOSSA", http.StatusBadGateway)
+			return
+		}
+		if err := s.store.DeleteServiceInvitation(invite.ID); err != nil {
+			http.Error(w, "failed to delete invite", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "deleted"}); err != nil {
+			s.logger.Printf("web-bff: handleFossaInviteAction encode error: %v", err)
+		}
+		return
+	}
+	client, err := s.fossaClient()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	now := time.Now().UTC()
+
+	err = client.SendUserInvitation(email)
+	if err == nil || errors.Is(err, fossa.ErrInviteAlreadyExists) {
+		invite.Status = "pending"
+		invite.LastError = nil
+		invite.SentAt = &now
+		invite.LastCheckedAt = &now
+		if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr != nil {
+			http.Error(w, "failed to update invite", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set(headerContentType, contentTypeJSON)
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "ok"}); err != nil {
+			s.logger.Printf("web-bff: handleFossaInviteAction encode error: %v", err)
+		}
+		return
+	}
+	if errors.Is(err, fossa.ErrUserAlreadyMember) {
+		const fossaTeamAdminRoleID = 3
+		if addErr := client.AddUserToTeamByEmail(invite.RemoteTeamID, email, fossaTeamAdminRoleID); addErr == nil {
+			invite.Status = "accepted"
+			invite.LastError = nil
+			invite.LastCheckedAt = &now
+			if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr != nil {
+				http.Error(w, "failed to update invite", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set(headerContentType, contentTypeJSON)
+			if err := json.NewEncoder(w).Encode(map[string]string{"status": "added"}); err != nil {
+				s.logger.Printf("web-bff: handleFossaInviteAction encode error: %v", err)
+			}
+			return
+		} else {
+			msg := addErr.Error()
+			invite.Status = "error"
+			invite.LastError = &msg
+			invite.LastCheckedAt = &now
+			if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr != nil {
+				s.logger.Printf("web-bff: handleFossaInviteAction upsert error: %v", upsertErr)
+			}
+			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
+	}
+
+	msg := err.Error()
+	invite.Status = "error"
+	invite.LastError = &msg
+	invite.LastCheckedAt = &now
+	if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr != nil {
+		s.logger.Printf("web-bff: handleFossaInviteAction upsert error: %v", upsertErr)
+	}
+	http.Error(w, msg, http.StatusBadRequest)
+}
+
+func (s *server) fossaClient() (*fossa.Client, error) {
+	if strings.TrimSpace(s.fossaToken) == "" {
+		return nil, fmt.Errorf("FOSSA_API_TOKEN not set")
+	}
+	return fossa.NewClient(s.fossaToken), nil
+}
+
+func (s *server) getFossaServiceID() (uint, error) {
+	var service model.Service
+	if err := s.store.DB().Where("name = ?", "FOSSA").First(&service).Error; err != nil {
+		return 0, err
+	}
+	return service.ID, nil
+}
+
+func (s *server) ensureFossaTeam(project model.Project, client *fossa.Client) (*model.RemoteTeam, bool, error) {
+	serviceID, err := s.getFossaServiceID()
+	if err != nil {
+		return nil, false, err
+	}
+	serviceTeam, err := s.store.GetRemoteTeamByProject(project.ID, serviceID)
+	if err != nil {
+		return nil, false, err
+	}
+	if serviceTeam != nil {
+		return serviceTeam, false, nil
+	}
+	team, err := client.FetchTeam(project.Name)
+	if err != nil {
+		team, err = client.CreateTeam(project.Name)
+		if err != nil {
+			return nil, false, err
+		}
+		createdTeam, err := s.store.CreateRemoteTeam(project.ID, project.Name, serviceID, team.ID, team.Name)
+		return createdTeam, true, err
+	}
+	createdTeam, err := s.store.CreateRemoteTeam(project.ID, project.Name, serviceID, team.ID, team.Name)
+	return createdTeam, false, err
+}
+
+func classifyIneligibleMaintainers(maintainers []model.Maintainer) []fossaInviteIneligibleSummary {
+	results := make([]fossaInviteIneligibleSummary, 0)
+	for _, m := range maintainers {
+		var reasons []string
+		if m.MaintainerStatus != "" && m.MaintainerStatus != model.ActiveMaintainer {
+			reasons = append(reasons, "Not active")
+		}
+		email := strings.TrimSpace(m.Email)
+		github := strings.TrimSpace(m.GitHubAccount)
+		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
+			reasons = append(reasons, "Missing email")
+		}
+		if github == "" || strings.EqualFold(github, "GITHUB_MISSING") {
+			reasons = append(reasons, "Missing GitHub handle")
+		}
+		if len(reasons) == 0 {
+			continue
+		}
+		name := strings.TrimSpace(m.Name)
+		if name == "" {
+			name = github
+		}
+		results = append(results, fossaInviteIneligibleSummary{
+			ID:     m.ID,
+			Name:   name,
+			GitHub: github,
+			Email:  email,
+			Reason: strings.Join(reasons, ", "),
+		})
+	}
+	return results
+}
+
+func buildFossaInviteCandidates(maintainers []model.Maintainer, teamEmails []string, pendingInviteEmails map[string]struct{}) []fossaInviteCandidateSummary {
+	teamEmailSet := make(map[string]struct{}, len(teamEmails))
+	for _, email := range teamEmails {
+		normalized := strings.TrimSpace(email)
+		if normalized == "" || strings.EqualFold(normalized, "EMAIL_MISSING") {
+			continue
+		}
+		teamEmailSet[strings.ToLower(normalized)] = struct{}{}
+	}
+	if len(teamEmailSet) == 0 {
+		log.Printf("web-bff: FOSSA team email set empty")
+	} else {
+		log.Printf("web-bff: FOSSA team email set size=%d", len(teamEmailSet))
+	}
+	results := make([]fossaInviteCandidateSummary, 0)
+	for _, m := range maintainers {
+		if m.MaintainerStatus != "" && m.MaintainerStatus != model.ActiveMaintainer {
+			continue
+		}
+		email := strings.TrimSpace(m.Email)
+		github := strings.TrimSpace(m.GitHubAccount)
+		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
+			continue
+		}
+		if github == "" || strings.EqualFold(github, "GITHUB_MISSING") {
+			continue
+		}
+		normalized := strings.ToLower(email)
+		if _, ok := teamEmailSet[normalized]; ok {
+			continue
+		}
+		if _, ok := pendingInviteEmails[normalized]; ok {
+			continue
+		}
+		name := strings.TrimSpace(m.Name)
+		if name == "" {
+			name = github
+		}
+		results = append(results, fossaInviteCandidateSummary{
+			ID:     m.ID,
+			Name:   name,
+			GitHub: github,
+			Email:  email,
+		})
+	}
+	return results
+}
+
 func (s *server) getOnboardingIssues(ctx context.Context) ([]onboardingIssueSummary, error) {
 	if s.fetchIssues == nil {
 		return nil, fmt.Errorf("onboarding issue fetcher not configured")
@@ -2958,6 +4093,29 @@ func (s *server) getOnboardingIssues(ctx context.Context) ([]onboardingIssueSumm
 	s.onboardingCache.expires = now.Add(onboardingIssueCacheTTL)
 	s.onboardingCache.mu.Unlock()
 	return filtered, nil
+}
+
+func (s *server) getCachedFossaTeamEmails(teamID uint) ([]string, bool) {
+	const cacheTTL = 30 * time.Second
+	s.fossaTeamCacheMu.RLock()
+	cached, ok := s.fossaTeamCache[teamID]
+	s.fossaTeamCacheMu.RUnlock()
+	if !ok {
+		return nil, false
+	}
+	if time.Since(cached.fetchedAt) > cacheTTL {
+		return nil, false
+	}
+	return cached.emails, true
+}
+
+func (s *server) setCachedFossaTeamEmails(teamID uint, emails []string) {
+	s.fossaTeamCacheMu.Lock()
+	s.fossaTeamCache[teamID] = cachedFossaTeam{
+		emails:    emails,
+		fetchedAt: time.Now(),
+	}
+	s.fossaTeamCacheMu.Unlock()
 }
 
 func (s *server) getOnboardingIssuesRaw(ctx context.Context) ([]onboardingIssueSummary, error) {
@@ -3535,6 +4693,7 @@ func fetchMaintainerRef(ctx context.Context, refURL string) (string, error) {
 	client := &http.Client{
 		Timeout: 5 * time.Second,
 	}
+	// #nosec G704 -- URL is validated and allowlisted in rewriteMaintainerRefURL.
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", err
@@ -3566,6 +4725,12 @@ func rewriteMaintainerRefURL(refURL string) (string, error) {
 			parsed.Path = fmt.Sprintf("/%s/%s/%s/%s", org, repo, branch, filePath)
 		}
 	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return "", fmt.Errorf("invalid maintainer ref url")
+	}
+	if !strings.EqualFold(parsed.Host, "raw.githubusercontent.com") {
+		return "", fmt.Errorf("invalid maintainer ref url")
+	}
 	return parsed.String(), nil
 }
 
@@ -3581,7 +4746,8 @@ func buildMaintainerRefMatches(refBody string, maintainers []model.Maintainer) m
 		}
 		ok, err := refparse.MaintainerRefContains(refBody, handle)
 		if err != nil {
-			log.Printf("maintainer ref parse error (maintainer=%d handle=%q): %v", maintainer.ID, handle, err)
+			// #nosec G706 -- safeLogf sanitizes control characters before logging.
+			log.Print(safeLogf("maintainer ref parse error (maintainer=%d): %v", maintainer.ID, err))
 			continue
 		}
 		if ok {
@@ -3612,6 +4778,39 @@ func buildMaintainerRefOnly(refBody string, maintainers []model.Maintainer) []st
 	}
 	sort.Strings(out)
 	return out
+}
+
+func safeLogf(format string, args ...any) string {
+	sanitized := make([]any, 0, len(args))
+	for _, arg := range args {
+		sanitized = append(sanitized, sanitizeLogValue(arg))
+	}
+	return fmt.Sprintf(format, sanitized...)
+}
+
+func sanitizeLogValue(v any) string {
+	switch t := v.(type) {
+	case string:
+		return sanitizeLogString(t)
+	case []byte:
+		return sanitizeLogString(string(t))
+	case error:
+		return sanitizeLogString(t.Error())
+	default:
+		return sanitizeLogString(fmt.Sprint(t))
+	}
+}
+
+func sanitizeLogString(s string) string {
+	if s == "" {
+		return s
+	}
+	replaced := strings.NewReplacer(
+		"\n", " ",
+		"\r", " ",
+		"\t", " ",
+	)
+	return replaced.Replace(s)
 }
 
 func buildMaintainerRefLines(refBody string) map[string]string {

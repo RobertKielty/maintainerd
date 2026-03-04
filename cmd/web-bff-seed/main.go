@@ -36,9 +36,10 @@ func main() {
 		&model.MaintainerProject{},
 		&model.MaintainerRefCache{},
 		&model.Service{},
-		&model.ServiceTeam{},
-		&model.ServiceUser{},
-		&model.ServiceUserTeams{},
+		&model.RemoteTeam{},
+		&model.RemoteUser{},
+		&model.RemoteTeamUser{},
+		&model.ServiceInvitation{},
 	); err != nil {
 		log.Fatalf("seed: auto-migrate failed: %v", err)
 	}
@@ -119,6 +120,15 @@ func main() {
 			CompanyID:        &company.ID,
 			RegisteredAt:     timePtr(time.Now()),
 		},
+		{
+			Name:             "Sam NoEmail",
+			Email:            "EMAIL_MISSING",
+			GitHubAccount:    "sam-noemail",
+			GitHubEmail:      "sam@example.dev",
+			MaintainerStatus: model.ActiveMaintainer,
+			CompanyID:        &company.ID,
+			RegisteredAt:     timePtr(time.Now()),
+		},
 	}
 
 	for i := range maintainers {
@@ -131,6 +141,12 @@ func main() {
 		{Name: "Project Atlas", Maturity: model.Graduated},
 		{Name: "Project Beacon", Maturity: model.Incubating},
 		{Name: "Project Comet", Maturity: model.Sandbox},
+		{Name: "Project Fossa Full", Maturity: model.Sandbox},
+		{Name: "Project Fossa Partial", Maturity: model.Sandbox},
+		{Name: "Project Fossa Invites", Maturity: model.Sandbox},
+		{Name: "Project Fossa Missing Email", Maturity: model.Sandbox},
+		{Name: "Project Snyk", Maturity: model.Sandbox},
+		{Name: "Project No License", Maturity: model.Sandbox},
 	}
 
 	for i := range projects {
@@ -158,6 +174,162 @@ func main() {
 		&maintainers[5],
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
+	}
+
+	fossa := model.Service{Name: "FOSSA", Description: "License compliance"}
+	snyk := model.Service{Name: "Snyk", Description: "License compliance"}
+	if err := db.FirstOrCreate(&fossa, model.Service{Name: fossa.Name}).Error; err != nil {
+		log.Fatalf("seed: service insert failed: %v", err)
+	}
+	if err := db.FirstOrCreate(&snyk, model.Service{Name: snyk.Name}).Error; err != nil {
+		log.Fatalf("seed: service insert failed: %v", err)
+	}
+
+	projectMap := map[string]*model.Project{}
+	for i := range projects {
+		projectMap[projects[i].Name] = &projects[i]
+	}
+	if err := db.Model(projectMap["Project Fossa Full"]).Association("Maintainers").Replace(
+		&maintainers[0],
+		&maintainers[1],
+	); err != nil {
+		log.Fatalf("seed: association failed: %v", err)
+	}
+	if err := db.Model(projectMap["Project Fossa Partial"]).Association("Maintainers").Replace(
+		&maintainers[2],
+		&maintainers[3],
+	); err != nil {
+		log.Fatalf("seed: association failed: %v", err)
+	}
+	if err := db.Model(projectMap["Project Fossa Invites"]).Association("Maintainers").Replace(
+		&maintainers[4],
+		&maintainers[5],
+	); err != nil {
+		log.Fatalf("seed: association failed: %v", err)
+	}
+	if err := db.Model(projectMap["Project Fossa Missing Email"]).Association("Maintainers").Replace(
+		&maintainers[6],
+	); err != nil {
+		log.Fatalf("seed: association failed: %v", err)
+	}
+	if err := db.Model(projectMap["Project Snyk"]).Association("Maintainers").Replace(
+		&maintainers[0],
+	); err != nil {
+		log.Fatalf("seed: association failed: %v", err)
+	}
+	if err := db.Model(projectMap["Project No License"]).Association("Maintainers").Replace(
+		&maintainers[1],
+	); err != nil {
+		log.Fatalf("seed: association failed: %v", err)
+	}
+
+	if err := db.Model(projectMap["Project Fossa Full"]).Association("Services").Append(&fossa); err != nil {
+		log.Fatalf("seed: service association failed: %v", err)
+	}
+	if err := db.Model(projectMap["Project Fossa Partial"]).Association("Services").Append(&fossa); err != nil {
+		log.Fatalf("seed: service association failed: %v", err)
+	}
+	if err := db.Model(projectMap["Project Fossa Invites"]).Association("Services").Append(&fossa); err != nil {
+		log.Fatalf("seed: service association failed: %v", err)
+	}
+	if err := db.Model(projectMap["Project Fossa Missing Email"]).Association("Services").Append(&fossa); err != nil {
+		log.Fatalf("seed: service association failed: %v", err)
+	}
+	if err := db.Model(projectMap["Project Snyk"]).Association("Services").Append(&snyk); err != nil {
+		log.Fatalf("seed: service association failed: %v", err)
+	}
+
+	teamNameFull := "Project Fossa Full"
+	teamNamePartial := "Project Fossa Partial"
+	teamNameInvites := "Project Fossa Invites"
+	teamNameMissing := "Project Fossa Missing Email"
+
+	teams := []model.RemoteTeam{
+		{ProjectID: projectMap[teamNameFull].ID, ServiceID: fossa.ID, RemoteTeamID: 101, RemoteTeamName: &teamNameFull, ProjectName: &teamNameFull},
+		{ProjectID: projectMap[teamNamePartial].ID, ServiceID: fossa.ID, RemoteTeamID: 102, RemoteTeamName: &teamNamePartial, ProjectName: &teamNamePartial},
+		{ProjectID: projectMap[teamNameInvites].ID, ServiceID: fossa.ID, RemoteTeamID: 103, RemoteTeamName: &teamNameInvites, ProjectName: &teamNameInvites},
+		{ProjectID: projectMap[teamNameMissing].ID, ServiceID: fossa.ID, RemoteTeamID: 104, RemoteTeamName: &teamNameMissing, ProjectName: &teamNameMissing},
+	}
+	for i := range teams {
+		if err := db.Where("remote_team_id = ?", teams[i].RemoteTeamID).FirstOrCreate(&teams[i]).Error; err != nil {
+			log.Fatalf("seed: service team insert failed: %v", err)
+		}
+	}
+
+	remoteUsers := []model.RemoteUser{
+		{ServiceID: fossa.ID, RemoteUserID: 1, ServiceEmail: maintainers[0].Email},
+		{ServiceID: fossa.ID, RemoteUserID: 2, ServiceEmail: maintainers[1].Email},
+		{ServiceID: fossa.ID, RemoteUserID: 3, ServiceEmail: maintainers[2].Email},
+		{ServiceID: fossa.ID, RemoteUserID: 4, ServiceEmail: maintainers[5].Email},
+	}
+	for i := range remoteUsers {
+		if err := db.Where("remote_user_id = ?", remoteUsers[i].RemoteUserID).FirstOrCreate(&remoteUsers[i]).Error; err != nil {
+			log.Fatalf("seed: remote user insert failed: %v", err)
+		}
+	}
+
+	serviceUserTeams := []model.RemoteTeamUser{
+		{ServiceID: fossa.ID, TeamID: teams[0].ID, UserID: remoteUsers[0].ID, MaintainerID: &maintainers[0].ID},
+		{ServiceID: fossa.ID, TeamID: teams[0].ID, UserID: remoteUsers[1].ID, MaintainerID: &maintainers[1].ID},
+		{ServiceID: fossa.ID, TeamID: teams[1].ID, UserID: remoteUsers[2].ID, MaintainerID: &maintainers[2].ID},
+		{ServiceID: fossa.ID, TeamID: teams[2].ID, UserID: remoteUsers[3].ID, MaintainerID: &maintainers[5].ID},
+	}
+	for i := range serviceUserTeams {
+		if err := db.Where("team_id = ? AND maintainer_id = ?", serviceUserTeams[i].TeamID, serviceUserTeams[i].MaintainerID).
+			FirstOrCreate(&serviceUserTeams[i]).Error; err != nil {
+			log.Fatalf("seed: service user team insert failed: %v", err)
+		}
+	}
+
+	now := time.Now().UTC()
+	errMsg := "FOSSA check failed"
+	invites := []model.ServiceInvitation{
+		{
+			ServiceID:     fossa.ID,
+			RemoteTeamID:  teams[2].RemoteTeamID,
+			ProjectID:     projectMap[teamNameInvites].ID,
+			MaintainerID:  &maintainers[4].ID,
+			ServiceEmail:  maintainers[4].Email,
+			Status:        "pending",
+			SentAt:        &now,
+			LastCheckedAt: &now,
+		},
+		{
+			ServiceID:     fossa.ID,
+			RemoteTeamID:  teams[2].RemoteTeamID,
+			ProjectID:     projectMap[teamNameInvites].ID,
+			MaintainerID:  &maintainers[5].ID,
+			ServiceEmail:  maintainers[5].Email,
+			Status:        "accepted",
+			LastCheckedAt: &now,
+		},
+		{
+			ServiceID:     fossa.ID,
+			RemoteTeamID:  teams[2].RemoteTeamID,
+			ProjectID:     projectMap[teamNameInvites].ID,
+			MaintainerID:  &maintainers[2].ID,
+			ServiceEmail:  maintainers[2].Email,
+			Status:        "expired",
+			SentAt:        &now,
+			LastCheckedAt: &now,
+		},
+		{
+			ServiceID:     fossa.ID,
+			RemoteTeamID:  teams[2].RemoteTeamID,
+			ProjectID:     projectMap[teamNameInvites].ID,
+			MaintainerID:  &maintainers[3].ID,
+			ServiceEmail:  maintainers[3].Email,
+			Status:        "error",
+			LastCheckedAt: &now,
+			LastError:     &errMsg,
+		},
+	}
+	for i := range invites {
+		if err := db.Where("project_id = ? AND service_id = ? AND service_email = ?",
+			invites[i].ProjectID, invites[i].ServiceID, invites[i].ServiceEmail).
+			FirstOrCreate(&invites[i]).Error; err != nil {
+			log.Fatalf("seed: service invite insert failed: %v", err)
+		}
 	}
 
 	fmt.Printf("seed: wrote test db to %s\n", *dbPath)

@@ -2,6 +2,13 @@
 
 MaintainerD - input data (List of Projects and associated Maintainers) 
 
+## Web build-time env
+The web image build reads `NEXT_PUBLIC_BFF_BASE_URL` from
+`deploy/secrets/maintainerd-web-env.yaml` if it is not already set in the
+environment. This ensures production builds bake the correct base URL. To
+override, export `NEXT_PUBLIC_BFF_BASE_URL` before running `make web-image-build`
+or `make web-image-push`.
+
 ## Kubernetes resources overview
 ```mermaid
 graph RL
@@ -108,37 +115,38 @@ TEXT name
         DATETIME registered_at
     }
 
-    service_teams {
+    remote_teams {
         INTEGER id PK
         DATETIME created_at
         DATETIME updated_at
         DATETIME deleted_at
-        INTEGER project_id      "FK to projects.id"
-        INTEGER service_id      "FK to services.id"
-        TEXT service_team_name
+        INTEGER project_id       "FK to projects.id"
+        INTEGER service_id       "FK to services.id"
+        INTEGER remote_team_id
+        TEXT remote_team_name
         TEXT project_name
     }
 
-    service_users {
+    remote_users {
         INTEGER id PK
         DATETIME created_at
         DATETIME updated_at
         DATETIME deleted_at
         INTEGER service_id       "FK to services.id"
-        INTEGER service_user_id
+        INTEGER remote_user_id
         TEXT service_email
-        TEXT service_ref
+        TEXT remote_ref
         TEXT service_git_hub_name
     }
 
-    service_user_teams {
+    remote_team_users {
         INTEGER id PK
         DATETIME created_at
         DATETIME updated_at
         DATETIME deleted_at
         INTEGER service_id       "FK to services.id"
-        INTEGER service_user_id  "FK to service_users.id"
-        INTEGER service_team_id  "FK to service_teams.id"
+        INTEGER user_id          "FK to remote_users.id"
+        INTEGER team_id          "FK to remote_teams.id"
         INTEGER maintainer_id    "FK to maintainers.id"
         INTEGER collaborator_id  "FK to collaborators.id"
     }
@@ -149,8 +157,8 @@ TEXT name
     services              ||--o{ service_projects     : provides
     maintainers           ||--o{ maintainer_projects  : assigned_to
     projects              ||--o{ maintainer_projects  : hosts
-    service_teams         ||--o{ service_user_teams   : has
-    services              ||--o{ service_users        : has
+    remote_teams          ||--o{ remote_team_users    : has
+    services              ||--o{ remote_users         : has
 ```
 
 

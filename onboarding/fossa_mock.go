@@ -10,18 +10,18 @@ import (
 type MockFossaClient struct {
 	mu            sync.Mutex
 	teams         map[string]*fossa.Team
-	invitations   map[string]bool  // email -> pending
-	teamMembers   map[int][]string // teamID -> emails
-	userExists    map[string]bool  // email -> exists
-	userIDs       map[string]int   // email -> userID
-	nextTeamID    int
-	nextUserID    int
-	importedRepos map[int]fossa.ImportedProjects // teamID -> imported projects
+	invitations   map[string]bool   // email -> pending
+	teamMembers   map[uint][]string // teamID -> emails
+	userExists    map[string]bool   // email -> exists
+	userIDs       map[string]uint   // email -> userID
+	nextTeamID    uint
+	nextUserID    uint
+	importedRepos map[uint]fossa.ImportedProjects // teamID -> imported projects
 
 	// Capture calls for verification
 	invitationsSent []string
 	teamsCreated    []string
-	membersAdded    map[int][]string // teamID -> emails added
+	membersAdded    map[uint][]string // teamID -> emails added
 
 	createTeamErr error
 }
@@ -31,11 +31,11 @@ func NewMockFossaClient() *MockFossaClient {
 	return &MockFossaClient{
 		teams:         make(map[string]*fossa.Team),
 		invitations:   make(map[string]bool),
-		teamMembers:   make(map[int][]string),
+		teamMembers:   make(map[uint][]string),
 		userExists:    make(map[string]bool),
-		userIDs:       make(map[string]int),
-		membersAdded:  make(map[int][]string),
-		importedRepos: make(map[int]fossa.ImportedProjects),
+		userIDs:       make(map[string]uint),
+		membersAdded:  make(map[uint][]string),
+		importedRepos: make(map[uint]fossa.ImportedProjects),
 		nextTeamID:    1000,
 		nextUserID:    5000,
 	}
@@ -93,7 +93,7 @@ func (m *MockFossaClient) HasPendingInvitation(email string) (bool, error) {
 }
 
 // FetchTeamUserEmails returns all user emails for a team
-func (m *MockFossaClient) FetchTeamUserEmails(teamID int) ([]string, error) {
+func (m *MockFossaClient) FetchTeamUserEmails(teamID uint) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -105,7 +105,7 @@ func (m *MockFossaClient) FetchTeamUserEmails(teamID int) ([]string, error) {
 }
 
 // AddUserToTeamByEmail adds a user to a team
-func (m *MockFossaClient) AddUserToTeamByEmail(teamID int, email string, roleID int) error {
+func (m *MockFossaClient) AddUserToTeamByEmail(teamID uint, email string, roleID int) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -126,7 +126,7 @@ func (m *MockFossaClient) AddUserToTeamByEmail(teamID int, email string, roleID 
 }
 
 // FetchImportedRepos returns imported repos for a team
-func (m *MockFossaClient) FetchImportedRepos(teamID int) (int, fossa.ImportedProjects, error) {
+func (m *MockFossaClient) FetchImportedRepos(teamID uint) (int, fossa.ImportedProjects, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -204,7 +204,7 @@ func (m *MockFossaClient) AcceptInvitation(email string) {
 }
 
 // SetImportedRepos sets imported repos for a team
-func (m *MockFossaClient) SetImportedRepos(teamID int, repos fossa.ImportedProjects) {
+func (m *MockFossaClient) SetImportedRepos(teamID uint, repos fossa.ImportedProjects) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.importedRepos[teamID] = repos
@@ -225,7 +225,7 @@ func (m *MockFossaClient) GetTeamsCreated() []string {
 }
 
 // GetMembersAdded returns all emails added to a specific team
-func (m *MockFossaClient) GetMembersAdded(teamID int) []string {
+func (m *MockFossaClient) GetMembersAdded(teamID uint) []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return append([]string{}, m.membersAdded[teamID]...)
@@ -238,13 +238,13 @@ func (m *MockFossaClient) Reset() {
 
 	m.teams = make(map[string]*fossa.Team)
 	m.invitations = make(map[string]bool)
-	m.teamMembers = make(map[int][]string)
+	m.teamMembers = make(map[uint][]string)
 	m.userExists = make(map[string]bool)
-	m.userIDs = make(map[string]int)
+	m.userIDs = make(map[string]uint)
 	m.invitationsSent = nil
 	m.teamsCreated = nil
-	m.membersAdded = make(map[int][]string)
-	m.importedRepos = make(map[int]fossa.ImportedProjects)
+	m.membersAdded = make(map[uint][]string)
+	m.importedRepos = make(map[uint]fossa.ImportedProjects)
 	m.createTeamErr = nil
 }
 

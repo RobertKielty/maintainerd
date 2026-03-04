@@ -15,6 +15,8 @@ MIGRATE_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-migrate:$(TAG)
 MIGRATE_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-migrate:latest
 ONBOARDING_BACKFILL_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-onboarding-backfill:$(TAG)
 ONBOARDING_BACKFILL_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-onboarding-backfill:latest
+FOSSA_POLLER_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-fossa-poller:$(TAG)
+FOSSA_POLLER_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-fossa-poller:latest
 WEB_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-web:$(TAG)
 WEB_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-web:latest
 WEB_BFF_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-web-bff:$(TAG)
@@ -92,16 +94,38 @@ onboarding-backfill-image-build:
 	@echo "Building onboarding backfill image: $(ONBOARDING_BACKFILL_IMAGE)"
 	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(ONBOARDING_BACKFILL_IMAGE) -f Dockerfile --target onboarding-backfill .
 
+.PHONY: fossa-poller-image-build
+fossa-poller-image-build:
+	@echo "Building fossa poller image: $(FOSSA_POLLER_IMAGE)"
+	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(FOSSA_POLLER_IMAGE) -f Dockerfile --target fossa-poller .
+
 .PHONY: web-image-build
 web-image-build:
 	@echo "Building web image: $(WEB_IMAGE)"
-	@if [ -z "$(NEXT_PUBLIC_BFF_BASE_URL)" ]; then \
-		echo "NEXT_PUBLIC_BFF_BASE_URL not set; default /api will be used by the web build."; \
-	fi
-	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(WEB_IMAGE) -f Dockerfile.web \
-		$(if $(NEXT_PUBLIC_BFF_BASE_URL),--build-arg NEXT_PUBLIC_BFF_BASE_URL=$(NEXT_PUBLIC_BFF_BASE_URL),) \
-		$(if $(NPM_CONFIG_LOGLEVEL),--build-arg NPM_CONFIG_LOGLEVEL=$(NPM_CONFIG_LOGLEVEL),) \
-		$(if $(NPM_CONFIG_REGISTRY),--build-arg NPM_CONFIG_REGISTRY=$(NPM_CONFIG_REGISTRY),) .
+	@bash -c 'set -euo pipefail; \
+	if ! command -v $(SOPS_CMD) >/dev/null 2>&1; then \
+		echo "Missing $(SOPS_CMD); cannot read deploy/secrets/maintainerd-web-env.yaml for build-time NEXT_PUBLIC_BFF_BASE_URL."; \
+		exit 1; \
+	fi; \
+	if [ ! -f deploy/secrets/maintainerd-web-env.yaml ]; then \
+		echo "Missing deploy/secrets/maintainerd-web-env.yaml; cannot read NEXT_PUBLIC_BFF_BASE_URL for web build."; \
+		exit 1; \
+	fi; \
+	bff="$$( $(SOPS_CMD) -d deploy/secrets/maintainerd-web-env.yaml | sed -n '\'' \
+		/^stringData:/,/^[^[:space:]]/{ \
+			s/^[[:space:]]*NEXT_PUBLIC_BFF_BASE_URL:[[:space:]]*//p; \
+		} \
+	'\'' | head -n 1 )"; \
+	if [ -z "$$bff" ]; then \
+		echo "NEXT_PUBLIC_BFF_BASE_URL missing in deploy/secrets/maintainerd-web-env.yaml; aborting web build."; \
+		exit 1; \
+	fi; \
+	echo "Using NEXT_PUBLIC_BFF_BASE_URL=$$bff for web build."; \
+	build_args="--build-arg NEXT_PUBLIC_BFF_BASE_URL=$$bff"; \
+	[ -n "$(NPM_CONFIG_LOGLEVEL)" ] && build_args="$$build_args --build-arg NPM_CONFIG_LOGLEVEL=$(NPM_CONFIG_LOGLEVEL)"; \
+	[ -n "$(NPM_CONFIG_REGISTRY)" ] && build_args="$$build_args --build-arg NPM_CONFIG_REGISTRY=$(NPM_CONFIG_REGISTRY)"; \
+	$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(WEB_IMAGE) -f Dockerfile.web $$build_args .; \
+	'
 
 .PHONY: web-bff-image-build
 web-bff-image-build:
@@ -129,7 +153,7 @@ mntrd-image-deploy: mntrd-image-push
 	@CTX_FLAG="$(if $(KUBECONTEXT),--context $(KUBECONTEXT))" ; \
 	if kubectl $$CTX_FLAG config current-context >/dev/null 2>&1; then \
 		echo "Updating Deployment/maintainerd image to $(IMAGE) [ctx=$(CTX_STR)]"; \
-		kubectl -n $(NAMESPACE) $$CTX_FLAG set image deploy/maintainerd server=$(IMAGE) bootstrap=$(IMAGE); \
+		kubectl -n $(NAMESPACE) $$CTX_FLAG set image deploy/maintainerd '*=$(IMAGE)'; \
 		echo "Rolling restart Deployment/maintainerd [ctx=$(CTX_STR)]"; \
 		kubectl -n $(NAMESPACE) $$CTX_FLAG rollout restart deploy/maintainerd; \
 		echo "Waiting for rollout to complete [ctx=$(CTX_STR)]"; \
@@ -137,6 +161,15 @@ mntrd-image-deploy: mntrd-image-push
 	else \
 		echo "kubectl context $(CTX_STR) unavailable; skipping rollout"; \
 	fi
+
+.PHONY: mntrd-image-set
+mntrd-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make mntrd-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd image to $(IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image deploy/maintainerd '*=$(IMAGE)'
 
 .PHONY: sync-image-push
 sync-image-push: sync-image-build
@@ -197,6 +230,21 @@ onboarding-backfill-image-push: onboarding-backfill-image-build
 	@echo "Tagging and pushing latest: $(ONBOARDING_BACKFILL_IMAGE_LATEST)"
 	@$(CONTAINER_TOOL) tag $(ONBOARDING_BACKFILL_IMAGE) $(ONBOARDING_BACKFILL_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(ONBOARDING_BACKFILL_IMAGE_LATEST)
+
+.PHONY: fossa-poller-image-push
+fossa-poller-image-push: fossa-poller-image-build
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(FOSSA_POLLER_IMAGE)"
+	@$(CONTAINER_TOOL) push $(FOSSA_POLLER_IMAGE)
+	@echo "Tagging and pushing latest: $(FOSSA_POLLER_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(FOSSA_POLLER_IMAGE) $(FOSSA_POLLER_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(FOSSA_POLLER_IMAGE_LATEST)
 
 .PHONY: web-image-push
 web-image-push: web-image-build
@@ -303,6 +351,11 @@ onboarding-backfill-job:
 	@echo "Running onboarding backfill job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/maintainerd-onboarding-backfill-job.yaml
 
+.PHONY: fossa-poller-cronjob
+fossa-poller-cronjob:
+	@echo "Applying fossa poller cronjob in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/cronjob-fossa-poller.yaml
+
 .PHONY: migrate-schema-safe
 migrate-schema-safe:
 	@bash -c 'set -euo pipefail; \
@@ -311,7 +364,7 @@ migrate-schema-safe:
 	echo "Resolving PVC attachment node for maintainerd-db [ctx=$(CTX_STR)]"; \
 	pv="$$(kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) get pvc maintainerd-db -o jsonpath="{.spec.volumeName}")"; \
 	node="$$(kubectl get volumeattachment -o jsonpath="{range .items[?(@.spec.source.persistentVolumeName==\"$${pv}\")]}{.spec.nodeName}{end}")"; \
-	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete job maintainerd-migrate --ignore-not-found; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete job maintainerd-migrate-schema --ignore-not-found; \
 	if [ -n "$${node}" ]; then \
 		echo "Running schema migration job pinned to node $${node} [ctx=$(CTX_STR)]"; \
 		kubectl create -f deploy/manifests/maintainerd-migrate-schema-job.yaml --dry-run=client -o json | \
@@ -321,7 +374,7 @@ migrate-schema-safe:
 		echo "No attachment node found; running migration job without pinning [ctx=$(CTX_STR)]"; \
 		kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/maintainerd-migrate-schema-job.yaml; \
 	fi; \
-	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/maintainerd-migrate --timeout=300s; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/maintainerd-migrate-schema --timeout=300s; \
 	echo "Scaling Deployment/maintainerd back to 1 [ctx=$(CTX_STR)]"; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) scale deploy/maintainerd --replicas=1; \
 	'
@@ -498,7 +551,7 @@ test-web:
 		exit 1; \
 	fi; \
 	go run ./cmd/web-bff-seed -db "$$TESTDATA_DIR/maintainerd_test.db"; \
-	BFF_ADDR=:9001 BFF_TEST_MODE=true SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
+	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
 	MD_DB_DRIVER=sqlite MD_DB_DSN= MD_DB_PATH="$$TESTDATA_DIR/maintainerd_test.db" \
 	WEB_APP_BASE_URL=http://localhost:4001 GITHUB_OAUTH_REDIRECT_URL=http://localhost:9001/auth/callback \
 	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test \
@@ -516,6 +569,81 @@ test-web:
 	WEB_BASE_URL=http://localhost:4001 BFF_BASE_URL=http://localhost:9001 TEST_STAFF_LOGIN=staff-tester \
 	TEST_MAINTAINER_LOGIN=antonio-example TEST_OTHER_MAINTAINER_LOGIN=renee-sample \
 	NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false WEB_TEST_ARTIFACTS_DIR="$$TESTDATA_DIR/web-artifacts" npm --prefix web run test:bdd; \
+	'
+
+.PHONY: test-web-license-checker
+test-web-license-checker:
+	@bash -c 'set -euo pipefail; \
+	TESTDATA_DIR="$${TESTDATA_DIR:-$$(pwd)/testdata}"; \
+	HOST_LOG_DIR="$${HOST_LOG_DIR:-$$(pwd)/testdata}"; \
+	mkdir -p "$$TESTDATA_DIR"; \
+	bff_pid=""; web_pid=""; \
+	cleanup() { \
+		status=$$?; \
+		if [ -n "$$web_pid" ] || [ -n "$$bff_pid" ]; then \
+			kill $$web_pid $$bff_pid >/dev/null 2>&1 || true; \
+		fi; \
+		if command -v lsof >/dev/null 2>&1; then \
+			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill >/dev/null 2>&1 || true; \
+		fi; \
+		if [ "$$TESTDATA_DIR" != "$$HOST_LOG_DIR" ]; then \
+			mkdir -p "$$HOST_LOG_DIR"; \
+			cp -f "$$TESTDATA_DIR"/web-*-test.log "$$HOST_LOG_DIR" 2>/dev/null || true; \
+			cp -f "$$TESTDATA_DIR"/maintainerd_test.db "$$HOST_LOG_DIR" 2>/dev/null || true; \
+			cp -f "$$TESTDATA_DIR"/web-bdd-report.json "$$HOST_LOG_DIR" 2>/dev/null || true; \
+			cp -f "$$TESTDATA_DIR"/web-bdd-results.xml "$$HOST_LOG_DIR" 2>/dev/null || true; \
+		fi; \
+		if [ $$status -ne 0 ]; then \
+			echo "test-web-license-checker failed; grepping logs from $$TESTDATA_DIR"; \
+			if [ -f "$$TESTDATA_DIR/web-bff-test.log" ]; then \
+				echo "--- web-bff-test.log (errors) ---"; \
+				{ grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-bff-test.log" || true; } ; \
+			fi; \
+			if [ -f "$$TESTDATA_DIR/web-app-test.log" ]; then \
+				echo "--- web-app-test.log (errors) ---"; \
+				{ grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-app-test.log" || true; } ; \
+			fi; \
+			if [ -f "$$TESTDATA_DIR/web-build-test.log" ]; then \
+				echo "--- web-build-test.log (errors) ---"; \
+				{ grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-build-test.log" || true; } ; \
+			fi; \
+		fi; \
+		exit $$status; \
+	}; \
+	trap cleanup EXIT; \
+	if command -v lsof >/dev/null 2>&1; then \
+		pids="$$(lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null || true)"; \
+		if [ -n "$$pids" ]; then \
+			echo "Ports 9001/4001 are in use (PIDs: $$pids). Stopping them..."; \
+			kill $$pids 2>/dev/null || true; \
+			sleep 1; \
+		fi; \
+	fi; \
+	rm -f "$$TESTDATA_DIR/maintainerd_test.db" || true; \
+	if [ -f "$$TESTDATA_DIR/maintainerd_test.db" ]; then \
+		echo "Failed to remove $$TESTDATA_DIR/maintainerd_test.db (check ownership/permissions)."; \
+		exit 1; \
+	fi; \
+	go run ./cmd/web-bff-seed -db "$$TESTDATA_DIR/maintainerd_test.db"; \
+	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
+	MD_DB_DRIVER=sqlite MD_DB_DSN= MD_DB_PATH="$$TESTDATA_DIR/maintainerd_test.db" \
+	WEB_APP_BASE_URL=http://localhost:4001 GITHUB_OAUTH_REDIRECT_URL=http://localhost:9001/auth/callback \
+	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test \
+	go run ./cmd/web-bff > >(tee "$$TESTDATA_DIR/web-bff-test.log") 2>&1 & \
+	bff_pid=$$!; \
+	mkdir -p "$$TESTDATA_DIR/tmp" web/tmp || true; \
+	NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
+	NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false TURBOPACK_ROOT="$$(pwd)/web" OUTPUT_FILE_TRACING_ROOT="$$(pwd)/web" \
+	npm --prefix web run build > "$$TESTDATA_DIR/web-build-test.log" 2>&1; \
+	PORT=4001 NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
+	NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false TURBOPACK_ROOT="$$(pwd)/web" OUTPUT_FILE_TRACING_ROOT="$$(pwd)/web" \
+	npm --prefix web run start > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
+	web_pid=$$!; \
+	npx --prefix web wait-on http://localhost:9001/healthz http://localhost:4001 > /dev/null 2>&1; \
+	cd web && WEB_BASE_URL=http://localhost:4001 BFF_BASE_URL=http://localhost:9001 TEST_STAFF_LOGIN=staff-tester \
+	TEST_MAINTAINER_LOGIN=antonio-example TEST_OTHER_MAINTAINER_LOGIN=renee-sample \
+	NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false WEB_TEST_ARTIFACTS_DIR="$$TESTDATA_DIR/web-artifacts" \
+	npx cucumber-js --config ./cucumber.js ../features/web/license_checker.feature; \
 	'
 
 .PHONY: web-bdd
@@ -857,6 +985,46 @@ web-release:
 	@$(MAKE) web-image-set TAG=$(TAG)
 	@$(MAKE) web-bff-image-set TAG=$(TAG)
 
+.PHONY: fossa-poller-image-set
+fossa-poller-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make fossa-poller-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-fossa-poller image to $(FOSSA_POLLER_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/maintainerd-fossa-poller fossa-poller=$(FOSSA_POLLER_IMAGE)
+
+.PHONY: sync-image-set
+sync-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make sync-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-sync image to $(SYNC_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/maintainer-sync '*=$(SYNC_IMAGE)'
+
+.PHONY: sanitize-image-set
+sanitize-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make sanitize-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-sanitize image to $(SANITIZE_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/maintainer-sanitize '*=$(SANITIZE_IMAGE)'
+
+.PHONY: onboarding-backfill-image-set
+onboarding-backfill-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make onboarding-backfill-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-onboarding-backfill image to $(ONBOARDING_BACKFILL_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/maintainerd-onboarding-backfill '*=$(ONBOARDING_BACKFILL_IMAGE)'
+
+.PHONY: image-set
+image-set: mntrd-image-set web-image-set web-bff-image-set fossa-poller-image-set sync-image-set sanitize-image-set onboarding-backfill-image-set
+	@true
+
 # Convenience combo target
 .PHONY: secrets
 secrets: env apply-env apply-creds
@@ -879,7 +1047,7 @@ images-show:
 	@echo "  maintainerd-web-bff  $(WEB_BFF_IMAGE)"
 
 .PHONY: images-build
-images-build: mntrd-image-build sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build web-image-build web-bff-image-build
+images-build: mntrd-image-build sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build fossa-poller-image-build web-image-build web-bff-image-build
 	@echo "All images built."
 
 .PHONY: mntrd-image-push-only
@@ -957,6 +1125,21 @@ onboarding-backfill-image-push-only:
 	@$(CONTAINER_TOOL) tag $(ONBOARDING_BACKFILL_IMAGE) $(ONBOARDING_BACKFILL_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(ONBOARDING_BACKFILL_IMAGE_LATEST)
 
+.PHONY: fossa-poller-image-push-only
+fossa-poller-image-push-only:
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(FOSSA_POLLER_IMAGE)"
+	@$(CONTAINER_TOOL) push $(FOSSA_POLLER_IMAGE)
+	@echo "Tagging and pushing latest: $(FOSSA_POLLER_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(FOSSA_POLLER_IMAGE) $(FOSSA_POLLER_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(FOSSA_POLLER_IMAGE_LATEST)
+
 .PHONY: web-image-push-only
 web-image-push-only:
 	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
@@ -988,7 +1171,7 @@ web-bff-image-push-only:
 	@$(CONTAINER_TOOL) push $(WEB_BFF_IMAGE_LATEST)
 
 .PHONY: images-push
-images-push: mntrd-image-push-only sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only web-image-push-only web-bff-image-push-only
+images-push: mntrd-image-push-only sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only fossa-poller-image-push-only web-image-push-only web-bff-image-push-only
 	@echo "All images pushed (no build)."
 
 .PHONY: clean-env
@@ -1141,6 +1324,21 @@ test-package:
 .PHONY: ci-local
 ci-local:
 	@echo "Running local CI checks..."
+	@echo "→ Tool versions..."
+	@bash -c 'set -euo pipefail; \
+	echo "go: $$(go version)"; \
+	if command -v staticcheck >/dev/null 2>&1; then echo "staticcheck: $$(staticcheck -version)"; else echo "staticcheck: not installed"; fi; \
+	if command -v golangci-lint >/dev/null 2>&1; then echo "golangci-lint: $$(golangci-lint --version | head -n 1)"; else echo "golangci-lint: not installed"; fi; \
+	if command -v node >/dev/null 2>&1; then echo "node: $$(node --version)"; else echo "node: not installed"; fi; \
+	if command -v npm >/dev/null 2>&1; then echo "npm: $$(npm --version)"; else echo "npm: not installed"; fi; \
+	if command -v npx >/dev/null 2>&1; then \
+		( cd web && npx eslint --version 2>/dev/null | awk '\''{print "eslint: " $$1}'\'' ) || echo "eslint: not installed"; \
+		( cd web && npx tsc --version 2>/dev/null | awk '\''{print "tsc: " $$2}'\'' ) || echo "tsc: not installed"; \
+		( cd web && npx cucumber-js --version 2>/dev/null | awk '\''{print "cucumber-js: " $$1}'\'' ) || echo "cucumber-js: not installed"; \
+	else \
+		echo "npx: not installed"; \
+	fi; \
+	'
 	@echo "→ Verifying dependencies..."
 	@go mod verify
 	@echo "→ Running go fmt..."

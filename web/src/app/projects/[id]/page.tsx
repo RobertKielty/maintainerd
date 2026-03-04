@@ -42,6 +42,27 @@ type ProjectDetail = {
   mailingList?: string;
   maintainers: MaintainerSummary[];
   services: ServiceSummary[];
+  fossaTeamId?: number | null;
+  fossaTeamName?: string | null;
+  fossaTeamMembers?: {
+    id: number;
+    name: string;
+    github: string;
+    email: string;
+  }[];
+  fossaInviteIneligible?: {
+    id: number;
+    name: string;
+    github: string;
+    email: string;
+    reason: string;
+  }[];
+  fossaInviteCandidates?: {
+    id: number;
+    name: string;
+    github: string;
+    email: string;
+  }[];
   createdAt: string;
   updatedAt: string;
   deletedAt?: string | null;
@@ -69,6 +90,11 @@ const projectDataHasChanged = (
     current.refOnlyGitHub.length !== next.refOnlyGitHub.length ||
     current.onboardingIssue !== next.onboardingIssue ||
     current.mailingList !== next.mailingList ||
+    current.fossaTeamId !== next.fossaTeamId ||
+    current.fossaTeamName !== next.fossaTeamName ||
+    (current.fossaTeamMembers?.length || 0) !== (next.fossaTeamMembers?.length || 0) ||
+    (current.fossaInviteIneligible?.length || 0) !== (next.fossaInviteIneligible?.length || 0) ||
+    (current.fossaInviteCandidates?.length || 0) !== (next.fossaInviteCandidates?.length || 0) ||
     current.createdAt !== next.createdAt ||
     current.updatedAt !== next.updatedAt ||
     current.deletedAt !== next.deletedAt ||
@@ -292,6 +318,7 @@ export default function ProjectPage() {
           {error && <div className={styles.banner}>{error}</div>}
           {project && (
             <ProjectReconciliationCard
+              projectId={project.id}
               name={project.name}
               maturity={project.maturity}
               maintainerRef={project.legacyMaintainerRef}
@@ -303,6 +330,11 @@ export default function ProjectPage() {
               mailingList={project.mailingList}
               maintainers={project.maintainers}
               services={project.services}
+              fossaTeamId={project.fossaTeamId}
+              fossaTeamName={project.fossaTeamName}
+              fossaTeamMembers={project.fossaTeamMembers}
+              fossaInviteIneligible={project.fossaInviteIneligible}
+              fossaInviteCandidates={project.fossaInviteCandidates}
               createdAt={project.createdAt}
               updatedAt={project.updatedAt}
               updatedBy={project.updatedBy}

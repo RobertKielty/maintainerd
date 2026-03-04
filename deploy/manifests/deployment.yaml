@@ -32,8 +32,6 @@ spec:
               containerPort: 2525
           envFrom:
             - secretRef:
-                name: maintainerd-bootstrap-env
-            - secretRef:
                 name: maintainerd-db-env
             - secretRef:
                 name: maintainerd-server-env

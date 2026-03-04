@@ -33,7 +33,7 @@ func newE2EClient(t *testing.T) (*fossa.Client, string) {
 	return client, team
 }
 
-func lookupTeamID(t *testing.T, client *fossa.Client, teamName string) int {
+func lookupTeamID(t *testing.T, client *fossa.Client, teamName string) uint {
 	t.Helper()
 
 	teams, err := client.FetchTeams()

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -25,6 +26,7 @@ var (
 	ErrTeamAlreadyExists   = errors.New("fossa: team already exists")
 	ErrInviteAlreadyExists = errors.New("fossa: invitation already exists")
 	ErrUserAlreadyMember   = errors.New("fossa: user is already a member")
+	ErrUserNotFound        = errors.New("fossa: user not found")
 )
 
 type Client struct {
@@ -33,10 +35,14 @@ type Client struct {
 }
 
 func NewClient(token string) *Client {
-	return &Client{
+	client := &Client{
 		APIKey:  token,
 		APIBase: apiBase,
 	}
+	if base := strings.TrimSpace(os.Getenv("FOSSA_API_BASE")); base != "" {
+		client.APIBase = base
+	}
+	return client
 }
 
 // FetchFirstPageOfUsers returns an array of User or an error
@@ -143,13 +149,10 @@ func (c *Client) FetchUserInvitations() (string, error) {
 // It relies on FetchUserInvitations and searches for the email within the response body to avoid
 // coupling to an unstable API schema.
 func (c *Client) HasPendingInvitation(email string) (bool, error) {
-	log.Printf("HasPendingInvitation: email=%q", email)
 	body, err := c.FetchUserInvitations()
 	if err != nil {
-		log.Printf("HasPendingInvitation: err=%q", err)
 		return false, err
 	}
-	log.Printf("HasPendingInvitation: body=%q", body)
 	// Case-insensitive substring search; avoids schema assumptions.
 	return strings.Contains(strings.ToLower(body), strings.ToLower(email)), nil
 }
@@ -202,6 +205,52 @@ func (c *Client) SendUserInvitation(email string) error {
 	return nil
 }
 
+// DeleteUserInvitation attempts to delete a pending invitation for the given email.
+func (c *Client) DeleteUserInvitation(email string) error {
+	if strings.TrimSpace(email) == "" {
+		return fmt.Errorf("DeleteUserInvitation: email is required")
+	}
+	escaped := url.PathEscape(email)
+	req, err := http.NewRequest("DELETE", c.APIBase+"/user-invitations/"+escaped, nil)
+	if err != nil {
+		return fmt.Errorf("DeleteUserInvitation: failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("DeleteUserInvitation: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("DeleteUserInvitation failed for %s: %s – %s", email, resp.Status, string(body))
+	}
+	return nil
+}
+
+// FetchUserInvitationEmails returns a set of pending invitation emails discovered from FOSSA.
+// It intentionally uses a regex over the response body to avoid coupling to unstable schemas.
+func (c *Client) FetchUserInvitationEmails() (map[string]struct{}, error) {
+	body, err := c.FetchUserInvitations()
+	if err != nil {
+		return nil, err
+	}
+	emailSet := make(map[string]struct{})
+	for _, email := range extractEmails(body) {
+		emailSet[strings.ToLower(email)] = struct{}{}
+	}
+	return emailSet, nil
+}
+
+var emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[A-Za-z]{2,}`)
+
+func extractEmails(body string) []string {
+	return emailRegex.FindAllString(body, -1)
+}
+
 // FetchTeam retrieves a team by its name from the list of all teams or returns an error if the team is not found.
 func (c *Client) FetchTeam(name string) (*Team, error) {
 	teams, err := c.FetchTeams()
@@ -246,8 +295,9 @@ func (c *Client) FetchTeams() ([]Team, error) {
 }
 
 // FetchTeamUserEmails calls GET /api/teams/{id}/members
-func (c *Client) FetchTeamUserEmails(teamID int) ([]string, error) {
+func (c *Client) FetchTeamUserEmails(teamID uint) ([]string, error) {
 	var teamMemberEndpoint = fmt.Sprintf("%s/teams/%d/members", c.APIBase, teamID)
+	log.Printf("fossa: FetchTeamUserEmails request teamID=%d url=%s", teamID, teamMemberEndpoint)
 	req, _ := http.NewRequest("GET", teamMemberEndpoint, nil)
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	req.Header.Set("Accept", "application/json")
@@ -272,6 +322,7 @@ func (c *Client) FetchTeamUserEmails(teamID int) ([]string, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
 		return nil, fmt.Errorf("list team users failed json.NewDecoder returned: %s\nwhen trying to decode %s", err, resp.Body)
 	}
+	log.Printf("fossa: FetchTeamUserEmails response teamID=%d status=%s total=%d", teamID, resp.Status, members.TotalCount)
 	if members.TotalCount > 0 {
 		for _, result := range members.Results {
 			emails = append(emails, result.Email)
@@ -280,10 +331,52 @@ func (c *Client) FetchTeamUserEmails(teamID int) ([]string, error) {
 	return emails, nil
 }
 
+// FetchTeamMembers returns all members for a team, paginating through results.
+func (c *Client) FetchTeamMembers(teamID uint) ([]TeamMember, error) {
+	var allMembers []TeamMember
+	page := 0
+	count := 100
+	log.Printf("fossa: FetchTeamMembers start teamID=%d", teamID)
+	for {
+		endpoint := fmt.Sprintf("%s/teams/%d/members?count=%d&page=%d", c.APIBase, teamID, count, page)
+		req, err := http.NewRequest("GET", endpoint, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+		req.Header.Set("Accept", "application/json")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read response body: %w", err)
+		}
+		if resp.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("list team users failed: %s – %s", resp.Status, string(body))
+		}
+		var members TeamMembers
+		if err := json.Unmarshal(body, &members); err != nil {
+			return nil, fmt.Errorf("list team users failed json.Unmarshal returned: %w", err)
+		}
+		log.Printf("fossa: FetchTeamMembers page=%d teamID=%d status=%s count=%d total=%d", page, teamID, resp.Status, len(members.Results), members.TotalCount)
+		allMembers = append(allMembers, members.Results...)
+		if len(members.Results) < count {
+			break
+		}
+		page++
+	}
+	log.Printf("fossa: FetchTeamMembers complete teamID=%d total=%d", teamID, len(allMembers))
+	return allMembers, nil
+}
+
 // AddUserToTeamByEmail attempts to add a user to a FOSSA team by email.
 // If roleID is not 0, it will be included; otherwise the server default role is used.
 // Returns ErrUserAlreadyMember for idempotent behavior when applicable.
-func (c *Client) AddUserToTeamByEmail(teamID int, email string, roleID int) error {
+func (c *Client) AddUserToTeamByEmail(teamID uint, email string, roleID int) error {
 	fmt.Printf("AddUserToTeamByEmail: teamID %d email %s, roleID %d\n", teamID, email, roleID)
 
 	// The FOSSA API expects a bulk users payload to /teams/{id}/users with action=add.
@@ -302,10 +395,9 @@ func (c *Client) AddUserToTeamByEmail(teamID int, email string, roleID int) erro
 		},
 		"action": "add",
 	}
-	// Let's try defaulting the role
-	// if roleID != 0 {
-	//	bodyPayload["users"].([]map[string]interface{})[0]["roleId"] = roleID
-	//}
+	if roleID != 0 {
+		bodyPayload["users"].([]map[string]interface{})[0]["roleId"] = roleID
+	}
 	jsonBody, err := json.Marshal(bodyPayload)
 	if err != nil {
 		return fmt.Errorf("failed to encode body: %w", err)
@@ -345,8 +437,13 @@ func (c *Client) AddUserToTeamByEmail(teamID int, email string, roleID int) erro
 	return fmt.Errorf("AddUserToTeamByEmail failed: %s – %s", resp.Status, string(body))
 }
 
+// FindUserIDByEmail resolves a FOSSA user ID by email.
+func (c *Client) FindUserIDByEmail(email string) (uint, error) {
+	return c.findUserIDByEmail(email)
+}
+
 // findUserIDByEmail searches the user list for a matching email and returns the user ID.
-func (c *Client) findUserIDByEmail(email string) (int, error) {
+func (c *Client) findUserIDByEmail(email string) (uint, error) {
 	log.Printf("findUserIDByEmail: email=%q", email)
 	users, err := c.FetchUsers()
 	if err != nil {
@@ -354,7 +451,7 @@ func (c *Client) findUserIDByEmail(email string) (int, error) {
 	}
 	target := normalizeEmail(email)
 	if target == "" {
-		return 0, fmt.Errorf("user not found by email: %s", email)
+		return 0, ErrUserNotFound
 	}
 
 	for _, u := range users {
@@ -368,7 +465,7 @@ func (c *Client) findUserIDByEmail(email string) (int, error) {
 			return u.ID, nil
 		}
 	}
-	return 0, fmt.Errorf("user not found by email: %s", email)
+	return 0, ErrUserNotFound
 }
 
 func normalizeEmail(value string) string {
@@ -377,7 +474,7 @@ func normalizeEmail(value string) string {
 
 // GetTeamId searches a slice of Team objects by name.
 // Returns the team’s ID if found, or an error “team not found” if not.
-func (c *Client) GetTeamId(teams []Team, name string) (int, error) {
+func (c *Client) GetTeamId(teams []Team, name string) (uint, error) {
 	for _, t := range teams {
 		if t.Name == name {
 			return t.ID, nil
@@ -403,9 +500,9 @@ func (c *Client) FetchTeamsMap() (map[string]Team, error) {
 
 // GetTeam returns a *@Team object for the team called @name if it can be retrieved and exists on FOSSA or
 // a nil Team and an error if FOSSA cannot find the team.
-func (c *Client) GetTeam(teamID int) (*Team, error) {
+func (c *Client) GetTeam(teamID uint) (*Team, error) {
 
-	req, err := http.NewRequest("GET", c.APIBase+"/teams/"+strconv.Itoa(teamID), nil)
+	req, err := http.NewRequest("GET", c.APIBase+"/teams/"+strconv.FormatUint(uint64(teamID), 10), nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
@@ -489,7 +586,7 @@ func (c *Client) CreateTeam(name string) (*Team, error) {
 
 // FetchImportedRepos is a function that returns an ImportedProjects struct for the FOSSA Team associated with teamID.
 // returns the number of repos imported and the only first page of imported project records.
-func (c *Client) FetchImportedRepos(teamID int) (int, ImportedProjects, error) {
+func (c *Client) FetchImportedRepos(teamID uint) (int, ImportedProjects, error) {
 	team, err := c.GetTeam(teamID)
 	repoCount := 0
 	if err != nil {
@@ -498,7 +595,7 @@ func (c *Client) FetchImportedRepos(teamID int) (int, ImportedProjects, error) {
 	if team == nil {
 		return 0, ImportedProjects{}, fmt.Errorf("team not found %d", teamID)
 	}
-	req, err := http.NewRequest("GET", c.APIBase+"/teams/"+strconv.Itoa(teamID)+"/projects", nil)
+	req, err := http.NewRequest("GET", c.APIBase+"/teams/"+strconv.FormatUint(uint64(teamID), 10)+"/projects", nil)
 
 	if err != nil {
 		return 0, ImportedProjects{}, fmt.Errorf("failed to create request: %w", err)
@@ -530,22 +627,24 @@ func (c *Client) FetchImportedRepos(teamID int) (int, ImportedProjects, error) {
 	return repoCount, repos, nil
 }
 
+type TeamMember struct {
+	UserID   uint   `json:"userId"`
+	RoleID   int    `json:"roleId"`
+	Username string `json:"username"`
+	Email    string `json:"email"`
+}
+
 type TeamMembers struct {
-	Results []struct {
-		UserID   int    `json:"userId"`
-		RoleID   int    `json:"roleId"`
-		Username string `json:"username"`
-		Email    string `json:"email"`
-	} `json:"results"`
-	PageSize   int `json:"pageSize"`
-	Page       int `json:"page"`
-	TotalCount int `json:"totalCount"`
+	Results    []TeamMember `json:"results"`
+	PageSize   int          `json:"pageSize"`
+	Page       int          `json:"page"`
+	TotalCount int          `json:"totalCount"`
 }
 
 // Team models a single team object from GET /api/teams
 type Team struct {
-	ID               int       `json:"id"`
-	OrganizationID   int       `json:"organizationId"`
+	ID               uint      `json:"id"`
+	OrganizationID   uint      `json:"organizationId"`
 	Name             string    `json:"name"`
 	DefaultRoleID    int       `json:"defaultRoleId"`
 	AutoAddUsers     bool      `json:"autoAddUsers"`
@@ -553,8 +652,8 @@ type Team struct {
 	CreatedAt        time.Time `json:"createdAt"`
 	UpdatedAt        time.Time `json:"updatedAt"`
 	TeamUsers        []struct {
-		UserID int `json:"userId"`
-		RoleID int `json:"roleId"`
+		UserID uint `json:"userId"`
+		RoleID int  `json:"roleId"`
 	} `json:"teamUsers"`
 	TeamReleaseGroupsCount int `json:"teamReleaseGroupsCount"`
 	TeamProjectsCount      int `json:"teamProjectsCount"`
@@ -562,7 +661,7 @@ type Team struct {
 
 // User models the JSON returned by GET /api/users/{id}
 type User struct {
-	ID             int         `json:"id"`
+	ID             uint        `json:"id"`
 	Username       string      `json:"username"`
 	Email          string      `json:"email"`
 	EmailVerified  bool        `json:"email_verified"`
@@ -574,7 +673,7 @@ type User struct {
 	FullName       string      `json:"full_name"`
 	Phone          string      `json:"phone"`
 	Role           string      `json:"role"`
-	OrganizationID int         `json:"organizationId"`
+	OrganizationID uint        `json:"organizationId"`
 	SSOOnly        bool        `json:"sso_only"`
 	Enabled        bool        `json:"enabled"`
 	HasSetPassword *bool       `json:"has_set_password"`
@@ -583,7 +682,7 @@ type User struct {
 	UpdatedAt      time.Time   `json:"updatedAt"`
 	UserRole       interface{} `json:"userRole"`
 	Tokens         []struct {
-		ID         int       `json:"id"`
+		ID         uint      `json:"id"`
 		Name       string    `json:"name"`
 		IsDisabled bool      `json:"isDisabled"`
 		UpdatedAt  time.Time `json:"updatedAt"`
@@ -605,12 +704,12 @@ type User struct {
 	TeamUsers []struct {
 		RoleID int `json:"roleId"`
 		Team   struct {
-			ID   int    `json:"id"`
+			ID   uint   `json:"id"`
 			Name string `json:"name"`
 		} `json:"team"`
 	} `json:"teamUsers"`
 	Organization struct {
-		ID          int    `json:"id"`
+		ID          uint   `json:"id"`
 		Title       string `json:"title"`
 		AccessLevel string `json:"access_level"`
 	} `json:"organization"`
