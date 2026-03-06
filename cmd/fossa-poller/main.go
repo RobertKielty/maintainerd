@@ -79,6 +79,7 @@ type fossaAPI interface {
 	HasPendingInvitation(email string) (bool, error)
 	SendUserInvitation(email string) error
 	AddUserToTeamByEmail(teamID uint, email string, roleID int) error
+	FetchTeamUserEmails(teamID uint) ([]string, error)
 	FindUserIDByEmail(email string) (uint, error)
 }
 
@@ -88,7 +89,7 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 	if err != nil {
 		return err
 	}
-	dbInvites, err := store.ListServiceInvitationsByStatus(serviceID, []string{"pending", "expired"})
+	dbInvites, err := store.ListServiceInvitationsByStatus(serviceID, []string{"pending", "expired", "accepted"})
 	if err != nil {
 		return err
 	}
@@ -158,6 +159,35 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 
 		if pending {
 			invite.Status = "pending"
+			invite.TeamAssignmentStatus = nil
+			invite.LastCheckedAt = &now
+			if _, upsertErr := store.UpsertServiceInvitation(&invite); upsertErr != nil {
+				logger.Printf("upsert invite failed %s err=%v", formatInviteSummary(store, invite), upsertErr)
+			}
+			continue
+		}
+
+		if invite.TeamAssignmentStatus != nil && *invite.TeamAssignmentStatus == "done" {
+			invite.Status = "accepted"
+			invite.LastError = nil
+			invite.LastCheckedAt = &now
+			if _, upsertErr := store.UpsertServiceInvitation(&invite); upsertErr != nil {
+				logger.Printf("upsert invite failed %s err=%v", formatInviteSummary(store, invite), upsertErr)
+			}
+			continue
+		}
+
+		if invite.TeamAssignmentStatus != nil && *invite.TeamAssignmentStatus == "error" {
+			invite.Status = "accepted"
+			invite.LastCheckedAt = &now
+			if _, upsertErr := store.UpsertServiceInvitation(&invite); upsertErr != nil {
+				logger.Printf("upsert invite failed %s err=%v", formatInviteSummary(store, invite), upsertErr)
+			}
+			continue
+		}
+
+		if invite.NextTeamAddAt != nil && now.Before(*invite.NextTeamAddAt) {
+			invite.Status = "accepted"
 			invite.LastCheckedAt = &now
 			if _, upsertErr := store.UpsertServiceInvitation(&invite); upsertErr != nil {
 				logger.Printf("upsert invite failed %s err=%v", formatInviteSummary(store, invite), upsertErr)
@@ -169,6 +199,10 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 		if err := client.AddUserToTeamByEmail(invite.RemoteTeamID, email, fossaTeamAdminRoleID); err != nil {
 			if errors.Is(err, fossa.ErrUserAlreadyMember) {
 				invite.Status = "accepted"
+				done := "done"
+				invite.TeamAssignmentStatus = &done
+				invite.TeamAddAttempts = 0
+				invite.NextTeamAddAt = nil
 				invite.LastError = nil
 				invite.LastCheckedAt = &now
 				if _, upsertErr := store.UpsertServiceInvitation(&invite); upsertErr != nil {
@@ -202,6 +236,8 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 			msg := err.Error()
 			invite.Status = "error"
 			invite.LastError = &msg
+			errorStatus := "error"
+			invite.TeamAssignmentStatus = &errorStatus
 			invite.LastCheckedAt = &now
 			if _, upsertErr := store.UpsertServiceInvitation(&invite); upsertErr != nil {
 				logger.Printf("upsert invite failed %s err=%v", formatInviteSummary(store, invite), upsertErr)
@@ -209,7 +245,39 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 			continue
 		}
 
+		emails, fetchErr := client.FetchTeamUserEmails(invite.RemoteTeamID)
+		if fetchErr != nil {
+			logger.Printf("verify FOSSA team membership failed %s err=%v", formatInviteSummary(store, invite), fetchErr)
+		}
+		if fetchErr == nil && !emailInList(email, emails) {
+			logger.Printf("verify FOSSA team membership missing %s err=not_found_on_team", formatInviteSummary(store, invite))
+			pendingStatus := "pending"
+			invite.TeamAssignmentStatus = &pendingStatus
+			invite.TeamAddAttempts++
+			invite.NextTeamAddAt = nextTeamAddAt(now, invite.TeamAddAttempts)
+			if invite.TeamAddAttempts >= 3 {
+				errorStatus := "error"
+				msg := "team assignment failed after 3 attempts"
+				invite.TeamAssignmentStatus = &errorStatus
+				invite.LastError = &msg
+				invite.NextTeamAddAt = nil
+			}
+			invite.Status = "accepted"
+			invite.LastCheckedAt = &now
+			if _, upsertErr := store.UpsertServiceInvitation(&invite); upsertErr != nil {
+				logger.Printf("upsert invite failed %s err=%v", formatInviteSummary(store, invite), upsertErr)
+			}
+			continue
+		}
+		if fetchErr == nil {
+			logger.Printf("verify FOSSA team membership ok %s", formatInviteSummary(store, invite))
+		}
+
 		invite.Status = "accepted"
+		done := "done"
+		invite.TeamAssignmentStatus = &done
+		invite.TeamAddAttempts = 0
+		invite.NextTeamAddAt = nil
 		invite.LastError = nil
 		invite.LastCheckedAt = &now
 		if _, upsertErr := store.UpsertServiceInvitation(&invite); upsertErr != nil {
@@ -221,6 +289,32 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 		logger.Printf("added %s to remoteTeamID=%d (%s)", email, invite.RemoteTeamID, formatInviteSummary(store, invite))
 	}
 	return nil
+}
+
+func emailInList(target string, emails []string) bool {
+	target = normalizeEmail(target)
+	if target == "" {
+		return false
+	}
+	for _, email := range emails {
+		if normalizeEmail(email) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeEmail(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func nextTeamAddAt(now time.Time, attempts int) *time.Time {
+	if attempts <= 0 {
+		return nil
+	}
+	backoff := 20 * time.Second
+	next := now.Add(backoff)
+	return &next
 }
 
 func envOr(key, fallback string) string {

@@ -34,6 +34,9 @@ type FossaInviteSummary = {
   fossaTeamId: number;
   fossaTeamName: string;
   status: string;
+  teamAssignmentStatus?: string | null;
+  teamAddAttempts?: number | null;
+  nextTeamAddAt?: string | null;
   lastError?: string | null;
   sentAt?: string | null;
   lastCheckedAt?: string | null;
@@ -459,8 +462,27 @@ export default function ProjectReconciliationCard({
     });
     return map;
   }, [fossaInvites]);
+  const inviteStatusLabel = useCallback((invite: FossaInviteSummary) => {
+    if (invite.status === "accepted") {
+      if (invite.teamAssignmentStatus === "pending") {
+        return "accepted (team assignment pending)";
+      }
+      if (invite.teamAssignmentStatus === "error") {
+        return "accepted (team assignment error)";
+      }
+    }
+    return invite.status;
+  }, []);
   const pendingInvites = useMemo(() => {
-    return fossaInvites.filter((invite) => invite.status === "pending");
+    return fossaInvites.filter((invite) => {
+      if (invite.status === "pending") {
+        return true;
+      }
+      if (invite.status === "accepted" && invite.teamAssignmentStatus && invite.teamAssignmentStatus !== "done") {
+        return true;
+      }
+      return false;
+    });
   }, [fossaInvites]);
 
   const onboardedMaintainerIds = useMemo(() => {
@@ -1272,7 +1294,7 @@ export default function ProjectReconciliationCard({
                               <tr key={invite.id}>
                                 <td>{invite.email}</td>
                                 <td>{invite.fossaTeamName || "FOSSA"}</td>
-                                <td>{invite.status}</td>
+                                <td>{inviteStatusLabel(invite)}</td>
                                 <td>{formatDateTime(sentAt)}</td>
                                 <td>{formatDateTime(expiry)}</td>
                                 <td>{formatDateTime(invite.lastCheckedAt || null)}</td>

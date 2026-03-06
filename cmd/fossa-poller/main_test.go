@@ -19,6 +19,7 @@ import (
 type fakeFossaClient struct {
 	hasPending bool
 	userID     uint
+	teamEmails []string
 }
 
 func (f *fakeFossaClient) HasPendingInvitation(string) (bool, error) { return f.hasPending, nil }
@@ -26,7 +27,8 @@ func (f *fakeFossaClient) SendUserInvitation(string) error           { return ni
 func (f *fakeFossaClient) AddUserToTeamByEmail(uint, string, int) error {
 	return nil
 }
-func (f *fakeFossaClient) FindUserIDByEmail(string) (uint, error) { return f.userID, nil }
+func (f *fakeFossaClient) FetchTeamUserEmails(uint) ([]string, error) { return f.teamEmails, nil }
+func (f *fakeFossaClient) FindUserIDByEmail(string) (uint, error)     { return f.userID, nil }
 
 func setupPollerTestDB(t *testing.T) *gorm.DB {
 	dbConn, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{
@@ -80,7 +82,7 @@ func TestPollerRecordsRemoteTeamMembership(t *testing.T) {
 	}
 	require.NoError(t, dbConn.Create(&invite).Error)
 
-	client := &fakeFossaClient{hasPending: false, userID: 777}
+	client := &fakeFossaClient{hasPending: false, userID: 777, teamEmails: []string{maintainer.Email}}
 	logger := log.New(io.Discard, "", 0)
 
 	err := pollFossaInvites(context.Background(), logger, store, client)
@@ -89,6 +91,9 @@ func TestPollerRecordsRemoteTeamMembership(t *testing.T) {
 	var updated model.ServiceInvitation
 	require.NoError(t, dbConn.First(&updated, invite.ID).Error)
 	require.Equal(t, "accepted", updated.Status)
+	require.NotNil(t, updated.TeamAssignmentStatus)
+	require.Equal(t, "done", *updated.TeamAssignmentStatus)
+	require.Equal(t, 0, updated.TeamAddAttempts)
 
 	var user model.RemoteUser
 	require.NoError(t, dbConn.Where("service_id = ? AND remote_user_id = ?", service.ID, 777).First(&user).Error)

@@ -2193,16 +2193,19 @@ type fossaChooseRequest struct {
 }
 
 type fossaInviteSummary struct {
-	ID            uint       `json:"id"`
-	ProjectID     uint       `json:"projectId"`
-	MaintainerID  *uint      `json:"maintainerId,omitempty"`
-	Email         string     `json:"email"`
-	FossaTeamID   uint       `json:"fossaTeamId"`
-	FossaTeamName string     `json:"fossaTeamName"`
-	Status        string     `json:"status"`
-	LastError     *string    `json:"lastError,omitempty"`
-	SentAt        *time.Time `json:"sentAt,omitempty"`
-	LastCheckedAt *time.Time `json:"lastCheckedAt,omitempty"`
+	ID                   uint       `json:"id"`
+	ProjectID            uint       `json:"projectId"`
+	MaintainerID         *uint      `json:"maintainerId,omitempty"`
+	Email                string     `json:"email"`
+	FossaTeamID          uint       `json:"fossaTeamId"`
+	FossaTeamName        string     `json:"fossaTeamName"`
+	Status               string     `json:"status"`
+	TeamAssignmentStatus *string    `json:"teamAssignmentStatus,omitempty"`
+	TeamAddAttempts      int        `json:"teamAddAttempts"`
+	NextTeamAddAt        *time.Time `json:"nextTeamAddAt,omitempty"`
+	LastError            *string    `json:"lastError,omitempty"`
+	SentAt               *time.Time `json:"sentAt,omitempty"`
+	LastCheckedAt        *time.Time `json:"lastCheckedAt,omitempty"`
 }
 
 type fossaInviteResponse struct {
@@ -3543,16 +3546,19 @@ func (s *server) handleFossaInvites(w http.ResponseWriter, r *http.Request) {
 	resp := make([]fossaInviteSummary, 0, len(invites))
 	for _, invite := range invites {
 		resp = append(resp, fossaInviteSummary{
-			ID:            invite.ID,
-			ProjectID:     invite.ProjectID,
-			MaintainerID:  invite.MaintainerID,
-			Email:         invite.ServiceEmail,
-			FossaTeamID:   invite.RemoteTeamID,
-			FossaTeamName: fossaTeamName,
-			Status:        invite.Status,
-			LastError:     invite.LastError,
-			SentAt:        invite.SentAt,
-			LastCheckedAt: invite.LastCheckedAt,
+			ID:                   invite.ID,
+			ProjectID:            invite.ProjectID,
+			MaintainerID:         invite.MaintainerID,
+			Email:                invite.ServiceEmail,
+			FossaTeamID:          invite.RemoteTeamID,
+			FossaTeamName:        fossaTeamName,
+			Status:               invite.Status,
+			TeamAssignmentStatus: invite.TeamAssignmentStatus,
+			TeamAddAttempts:      invite.TeamAddAttempts,
+			NextTeamAddAt:        invite.NextTeamAddAt,
+			LastError:            invite.LastError,
+			SentAt:               invite.SentAt,
+			LastCheckedAt:        invite.LastCheckedAt,
 		})
 	}
 	w.Header().Set(headerContentType, contentTypeJSON)
@@ -3677,6 +3683,9 @@ func (s *server) handleFossaInviteRefresh(w http.ResponseWriter, r *http.Request
 
 	for _, invite := range invites {
 		if invite.RemoteTeamID != serviceTeam.RemoteTeamID {
+			continue
+		}
+		if invite.Status == "accepted" && invite.TeamAssignmentStatus != nil && *invite.TeamAssignmentStatus != "done" {
 			continue
 		}
 		email := strings.ToLower(strings.TrimSpace(invite.ServiceEmail))
