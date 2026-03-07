@@ -4695,6 +4695,7 @@ func fetchMaintainerRef(ctx context.Context, refURL string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("invalid maintainer ref url")
 	}
+	// #nosec G704 -- URL is validated and allowlisted in rewriteMaintainerRefURL.
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rewritten, nil)
 	if err != nil {
 		return "", err

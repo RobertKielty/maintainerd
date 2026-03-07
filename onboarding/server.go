@@ -238,7 +238,8 @@ func (s *EventListener) handleWebhook(w http.ResponseWriter, r *http.Request) {
 func (s *EventListener) fossaChosen(projectName string, e *github.IssuesEvent) {
 	project, ok := s.Projects[projectName]
 	if !ok {
-		log.Printf("fossaChosen: WRN project not found for issue=%d", e.GetIssue().GetNumber())
+		// #nosec G706 -- safeLogf sanitizes control characters before logging.
+		log.Print(safeLogf("fossaChosen: WRN project not found for issue=%d", e.GetIssue().GetNumber()))
 		return
 	}
 	// #nosec G706 -- safeLogf sanitizes control characters before logging.
@@ -308,7 +309,8 @@ func (s *EventListener) handleLabelCommand(r *http.Request, e *github.IssueComme
 
 	project, ok := s.Projects[projectName]
 	if !ok {
-		log.Printf("handleLabelCommand: WRN, project %q not found in cache", projectName)
+		// #nosec G706 -- safeLogf sanitizes control characters before logging.
+		log.Print(safeLogf("handleLabelCommand: WRN, project %q not found in cache", projectName))
 		comment := fmt.Sprintf("Project `%s` not found in maintainer-d database.", projectName)
 		if err := s.updateIssue(e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetIssue().GetNumber(), comment); err != nil {
 			log.Printf("handleLabelCommand: WRN, failed to post error comment: %v", err)
@@ -333,14 +335,16 @@ func (s *EventListener) handleLabelCommand(r *http.Request, e *github.IssueComme
 	// CNCF/LF staff may also execute onboarding commands.
 	if !isAuthorized {
 		if ok, err := s.Store.IsStaffGitHubAccount(actor); err != nil {
-			log.Printf("handleLabelCommand: WRN, failed to check staff authorization for @%s: %v", actor, err)
+			// #nosec G706 -- safeLogf sanitizes control characters before logging.
+			log.Print(safeLogf("handleLabelCommand: WRN, failed to check staff authorization for @%s: %v", actor, err))
 		} else if ok {
 			isAuthorized = true
 		}
 	}
 
 	if !isAuthorized {
-		log.Printf("handleLabelCommand: WRN, @%s is not authorized for project %q", actor, projectName)
+		// #nosec G706 -- safeLogf sanitizes control characters before logging.
+		log.Print(safeLogf("handleLabelCommand: WRN, @%s is not authorized for project %q", actor, projectName))
 		comment := fmt.Sprintf("@%s, looks like you have not yet been registered in maintainer-d. A CNCF Projects Team member will be in touch to assist you further.", actor)
 		if err := s.updateIssue(e.GetRepo().GetOwner().GetLogin(), e.GetRepo().GetName(), e.GetIssue().GetNumber(), comment); err != nil {
 			log.Printf("handleLabelCommand: WRN, failed to post error comment: %v", err)
@@ -355,7 +359,8 @@ func (s *EventListener) handleLabelCommand(r *http.Request, e *github.IssueComme
 
 	_, _, err = s.GitHubClient.Issues.AddLabelsToIssue(r.Context(), owner, repo, issueNumber, []string{labelName})
 	if err != nil {
-		log.Printf("handleLabelCommand: ERR, failed to add label %q to issue: %v", labelName, err)
+		// #nosec G706 -- safeLogf sanitizes control characters before logging.
+		log.Print(safeLogf("handleLabelCommand: ERR, failed to add label %q to issue: %v", labelName, err))
 		comment := fmt.Sprintf("Failed to add label `%s` to the issue. Please contact CNCF staff.", labelName)
 		if err := s.updateIssue(owner, repo, issueNumber, comment); err != nil {
 			log.Printf("handleLabelCommand: WRN, failed to post error comment: %v", err)
@@ -363,7 +368,8 @@ func (s *EventListener) handleLabelCommand(r *http.Request, e *github.IssueComme
 		return
 	}
 
-	log.Printf("handleLabelCommand: INF, @%s added label %q to issue #%d for project %q", actor, labelName, issueNumber, projectName)
+	// #nosec G706 -- safeLogf sanitizes control characters before logging.
+	log.Print(safeLogf("handleLabelCommand: INF, @%s added label %q to issue #%d for project %q", actor, labelName, issueNumber, projectName))
 
 	// Post confirmation comment
 	var comment string
