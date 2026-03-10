@@ -40,21 +40,27 @@ Before(async function () {
 
 After(async function (scenario) {
   const failed = scenario?.result?.status === "FAILED";
-  if (failed) {
-    const safeName = scenario.pickle.name.replace(/[^a-z0-9-_]+/gi, "_").slice(0, 80);
-    await this.page.screenshot({
-      path: path.join(this.artifactsDir, `${safeName}.png`),
-      fullPage: true,
-    });
-  }
-  if (failed && keepOpen) {
-    keepOpenOnFailure = true;
-    return;
-  }
-  if (this.page) {
-    await this.page.close();
-  }
-  if (this.context) {
-    await this.context.close();
+  try {
+    if (failed && this.page && !this.page.isClosed()) {
+      const safeName = scenario.pickle.name.replace(/[^a-z0-9-_]+/gi, "_").slice(0, 80);
+      const screenshot = await this.page.screenshot({
+        path: path.join(this.artifactsDir, `${safeName}.png`),
+        fullPage: true,
+      });
+      if (this.attach) {
+        await this.attach(screenshot, "image/png");
+      }
+    }
+  } finally {
+    if (failed && keepOpen) {
+      keepOpenOnFailure = true;
+      return;
+    }
+    if (this.page && !this.page.isClosed()) {
+      await this.page.close();
+    }
+    if (this.context) {
+      await this.context.close();
+    }
   }
 });
