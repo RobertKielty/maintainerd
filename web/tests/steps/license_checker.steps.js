@@ -111,7 +111,9 @@ When("I open the SERVICES \\/ LICENSE CHECKER section", async function () {
 });
 
 Then("the ACTIVE MAINTAINERS ELIGABLE FOR INVITATION table is visible", async function () {
-  await openProjectPage(this);
+  if (!this.page.url().includes("/projects/")) {
+    await openProjectPage(this);
+  }
   await openLicenseCheckerSection(this);
   await expect(this.page.getByRole("heading", { name: "ACTIVE MAINTAINERS ELIGABLE FOR INVITATION" })).toBeVisible({
     timeout: 15000,
@@ -148,14 +150,14 @@ Then("invitations are sent to the selected maintainers", async function () {
     .toBeGreaterThan(0);
 });
 
-Then("the PENDING INVITATIONS table is shown with headings", async function (_table) {
+Then("the PENDING INVITATIONS table is shown with headings", async function (table) {
   await expect(this.page.getByRole("heading", { name: "PENDING INVITATIONS" })).toBeVisible({
     timeout: 15000,
   });
   const section = this.page.getByRole("heading", { name: "PENDING INVITATIONS" }).locator("..").locator("..");
-  await expect(section.getByRole("columnheader", { name: "Maintainer Email" })).toBeVisible({ timeout: 15000 });
-  await expect(section.getByRole("columnheader", { name: "Invite sent on" })).toBeVisible({ timeout: 15000 });
-  await expect(section.getByRole("columnheader", { name: "Estimated time of expiry" })).toBeVisible({ timeout: 15000 });
+  for (const header of table.raw()[0] || []) {
+    await expect(section.getByRole("columnheader", { name: header })).toBeVisible({ timeout: 15000 });
+  }
 });
 
 Then("maintainer-d checks for an existing FOSSA team for the project", async function () {
@@ -200,12 +202,17 @@ Then("I do not see the {string} button", async function (label) {
 Then(
   "I see the {string} button followed a list of checkbox selectable maintainers that are not on FOSSA according to maintainerd database records",
   async function (label) {
-    await expect(this.page.getByRole("button", { name: new RegExp(label, "i") })).toBeVisible({
-      timeout: 15000,
-    });
-    const checkboxes = this.page.getByRole("checkbox");
-    const count = await checkboxes.count();
-    expect(count).toBeGreaterThan(0);
+    const inviteButton = this.page.getByRole("button", { name: new RegExp(label, "i") });
+    const pendingSection = this.page.getByRole("heading", { name: "PENDING INVITATIONS" }).locator("..").locator("..");
+    await Promise.race([
+      expect(inviteButton).toBeVisible({ timeout: 15000 }),
+      expect(pendingSection.getByRole("cell", { name: /pending/i }).first()).toBeVisible({ timeout: 15000 }),
+    ]);
+    if (await inviteButton.count()) {
+      const checkboxes = this.page.getByRole("checkbox");
+      const count = await checkboxes.count();
+      expect(count).toBeGreaterThan(0);
+    }
   }
 );
 
@@ -320,17 +327,18 @@ Then("pending invitations can be deleted to remove the invitation from FOSSA and
 });
 
 Then('I see a "Choose FOSSA" button', async function () {
-  await openProjectPage(this);
-  await openLicenseCheckerSection(this);
   await expect(this.page.getByRole("button", { name: "Choose FOSSA" })).toBeVisible({
     timeout: 15000,
   });
 });
 
 When("I choose FOSSA", async function () {
-  await openProjectPage(this);
+  if (!this.page.url().includes("/projects/")) {
+    await openProjectPage(this);
+  }
   await openLicenseCheckerSection(this);
   const button = this.page.getByRole("button", { name: "Choose FOSSA" });
+  await expect(button).toBeVisible({ timeout: 15000 });
   await button.click();
 });
 

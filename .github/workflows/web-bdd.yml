@@ -7,6 +7,20 @@ on:
 jobs:
   web-bdd:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: maintainerd_test
+          POSTGRES_USER: maintainerd
+          POSTGRES_PASSWORD: maintainerd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U maintainerd -d maintainerd_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -39,6 +53,9 @@ jobs:
           npx playwright install --with-deps
 
       - name: Run web BDD tests
+        env:
+          MD_DB_DRIVER: postgres
+          MD_DB_DSN: host=localhost port=5432 user=maintainerd password=maintainerd dbname=maintainerd_test sslmode=disable
         run: make web-bdd
 
       - name: Dump web-bdd logs
@@ -65,5 +82,5 @@ jobs:
           name: web-bdd-artifacts
           path: |
             testdata/web-bdd-report.json
-            testdata/web-bdd-report.html
+            testdata/web-bdd-report
             testdata/web-artifacts

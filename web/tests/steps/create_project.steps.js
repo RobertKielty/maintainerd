@@ -111,9 +111,13 @@ When(/I enter an onboarding issue URL outside cncf\/sandbox/, async function () 
   if (!this.page.url().includes("/create/project")) {
     await this.page.goto(`${this.baseUrl}/create/project`, { waitUntil: "domcontentloaded" });
   }
+  await expect(
+    this.page.getByRole("heading", { name: "Create New Project" })
+  ).toBeVisible({ timeout: 20000 });
   const input = this.page.getByPlaceholder("Search open onboarding issues or paste URL");
   await expect(input).toBeVisible({ timeout: 15000 });
   await input.fill("https://github.com/cncf/foundation/issues/1");
+  await input.blur();
 });
 
 Then(/I am prompted to use a cncf\/sandbox issue URL/, async function () {

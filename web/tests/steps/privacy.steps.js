@@ -138,8 +138,23 @@ When("I edit my maintainer profile with field {string} set to {string}", async f
 });
 
 When("I save my maintainer profile changes", async function () {
-  await this.page.getByRole("button", { name: "Save changes" }).click();
-  await this.page.getByText("Updated just now").waitFor({ timeout: 15000 });
+  const saveButton = this.page.getByRole("button", { name: "Save changes" });
+  await expect(saveButton).toBeEnabled({ timeout: 15000 });
+  const responsePromise = this.page.waitForResponse(
+    (response) =>
+      response.request().method() === "PATCH" &&
+      response.url().includes("/api/maintainers/"),
+    { timeout: 20000 }
+  );
+  await saveButton.click();
+  const response = await responsePromise;
+  if (!response.ok()) {
+    const body = await response.text();
+    throw new Error(`Update maintainer failed: ${response.status()} ${body}`);
+  }
+  await expect(this.page.getByRole("button", { name: "Edit" })).toBeVisible({
+    timeout: 15000,
+  });
 });
 
 Then("project {string} is visible", async function (label) {

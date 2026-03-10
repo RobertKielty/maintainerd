@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +17,7 @@ import (
 
 const (
 	apiBase                    = "https://app.fossa.com/api"
+	fossaOrgID                 = "162"
 	ErrCodeInviteAlreadyExists = 2011
 	ErrCodeUserAlreadyMember   = 2001
 )
@@ -66,7 +66,7 @@ func (c *Client) FetchFirstPageOfUsers() ([]User, error) {
 		return nil, fmt.Errorf("FetchUsers failed: called $s\n\t\t%s – %s", resp.Status, string(body))
 	}
 	var users []User
-	if err := json.NewDecoder(resp.Body).Decode(&users); err != nil {
+	if err := json.Unmarshal(body, &users); err != nil {
 		return nil, err
 	}
 	return users, nil
@@ -75,7 +75,6 @@ func (c *Client) FetchUsers() ([]User, error) {
 	var allUsers []User
 	page := 0
 	count := 100 // Adjust this value as per FOSSA API limits
-	fmt.Printf("")
 	for {
 		// Construct paginated URL
 		usersEndpoint := fmt.Sprintf("%s/users?count=%d&page=%d", c.APIBase, count, page)
@@ -91,10 +90,10 @@ func (c *Client) FetchUsers() ([]User, error) {
 		if err != nil {
 			return nil, fmt.Errorf("request failed: %w", err)
 		}
-		defer resp.Body.Close()
 
 		// Read body early for error handling/logging
 		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			return nil, fmt.Errorf("failed to read response body: %w", err)
 		}
@@ -116,7 +115,7 @@ func (c *Client) FetchUsers() ([]User, error) {
 		}
 		page++
 	}
-	fmt.Printf("FetchUsers page: %d Found %d FOSSA Users\n", page, len(allUsers))
+	log.Printf("fossa: FetchUsers complete pages=%d total=%d", page, len(allUsers))
 	return allUsers, nil
 }
 
@@ -126,6 +125,7 @@ func (c *Client) FetchUserInvitations() (string, error) {
 	req, _ := http.NewRequest("GET", c.APIBase+"/user-invitations", nil)
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	req.Header.Set("Accept", "application/json")
+	log.Printf("fossa: FetchUserInvitations request url=%s", req.URL.String())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -153,8 +153,17 @@ func (c *Client) HasPendingInvitation(email string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	// Case-insensitive substring search; avoids schema assumptions.
-	return strings.Contains(strings.ToLower(body), strings.ToLower(email)), nil
+	emails, _, parsed := extractInvitationEmails(body)
+	if !parsed {
+		return false, fmt.Errorf("HasPendingInvitation: failed to parse FOSSA user invitations")
+	}
+	target := normalizeEmail(email)
+	for _, candidate := range emails {
+		if normalizeEmail(candidate) == target {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // SendUserInvitation uses email to send an invitation to join this org of FOSSA
@@ -165,8 +174,7 @@ func (c *Client) SendUserInvitation(email string) error {
 		return fmt.Errorf("failed to encode body: %w", err)
 	}
 
-	// TODO - orgId hard coded write GetOrg
-	req, err := http.NewRequest("POST", c.APIBase+"/organizations/"+"162"+"/invite", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequest("POST", c.APIBase+"/organizations/"+fossaOrgID+"/invite", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -232,23 +240,54 @@ func (c *Client) DeleteUserInvitation(email string) error {
 }
 
 // FetchUserInvitationEmails returns a set of pending invitation emails discovered from FOSSA.
-// It intentionally uses a regex over the response body to avoid coupling to unstable schemas.
+// It relies on the structured JSON response from FOSSA.
 func (c *Client) FetchUserInvitationEmails() (map[string]struct{}, error) {
 	body, err := c.FetchUserInvitations()
 	if err != nil {
 		return nil, err
 	}
+	emails, invitesCount, parsed := extractInvitationEmails(body)
+	if parsed {
+		log.Printf("fossa: FetchUserInvitationEmails parsed_json=%d emails=%d", invitesCount, len(emails))
+	}
+	if parsed && len(emails) == 0 {
+		log.Printf("fossa: FetchUserInvitationEmails empty_emails_from_json invites=%d", invitesCount)
+	}
+	if len(emails) == 0 {
+		log.Printf("fossa: FetchUserInvitationEmails parsed=0")
+	} else {
+		log.Printf("fossa: FetchUserInvitationEmails parsed=%d", len(emails))
+	}
 	emailSet := make(map[string]struct{})
-	for _, email := range extractEmails(body) {
+	for _, email := range emails {
 		emailSet[strings.ToLower(email)] = struct{}{}
 	}
 	return emailSet, nil
 }
 
-var emailRegex = regexp.MustCompile(`[a-zA-Z0-9._%+\\-]+@[a-zA-Z0-9.\\-]+\\.[A-Za-z]{2,}`)
+type invitationEmail struct {
+	Email string `json:"email"`
+}
 
-func extractEmails(body string) []string {
-	return emailRegex.FindAllString(body, -1)
+func extractInvitationEmails(body string) ([]string, int, bool) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil, 0, false
+	}
+	var invites []invitationEmail
+	if err := json.Unmarshal([]byte(body), &invites); err != nil {
+		log.Printf("fossa: FetchUserInvitationEmails json_parse_failed err=%v", err)
+		return nil, 0, false
+	}
+	emails := make([]string, 0, len(invites))
+	for _, invite := range invites {
+		email := strings.TrimSpace(invite.Email)
+		if email == "" {
+			continue
+		}
+		emails = append(emails, email)
+	}
+	return emails, len(invites), true
 }
 
 // FetchTeam retrieves a team by its name from the list of all teams or returns an error if the team is not found.
@@ -296,7 +335,20 @@ func (c *Client) FetchTeams() ([]Team, error) {
 
 // FetchTeamUserEmails calls GET /api/teams/{id}/members
 func (c *Client) FetchTeamUserEmails(teamID uint) ([]string, error) {
-	var teamMemberEndpoint = fmt.Sprintf("%s/teams/%d/members", c.APIBase, teamID)
+	members, _, err := c.FetchTeamMembersRaw(teamID)
+	if err != nil {
+		return nil, err
+	}
+	emails := make([]string, 0, len(members.Results))
+	for _, result := range members.Results {
+		emails = append(emails, result.Email)
+	}
+	return emails, nil
+}
+
+// FetchTeamMembersRaw calls GET /api/teams/{id}/members and returns parsed members plus raw response body.
+func (c *Client) FetchTeamMembersRaw(teamID uint) (TeamMembers, []byte, error) {
+	teamMemberEndpoint := fmt.Sprintf("%s/teams/%d/members", c.APIBase, teamID)
 	log.Printf("fossa: FetchTeamUserEmails request teamID=%d url=%s", teamID, teamMemberEndpoint)
 	req, _ := http.NewRequest("GET", teamMemberEndpoint, nil)
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
@@ -304,31 +356,24 @@ func (c *Client) FetchTeamUserEmails(teamID uint) ([]string, error) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, err
+		return TeamMembers{}, nil, err
 	}
-
 	defer func(Body io.ReadCloser) {
 		if err := Body.Close(); err != nil {
 			fmt.Fprintf(os.Stderr, "error closing response body: %v\n", err)
 		}
 	}(resp.Body)
 
+	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("list team users failed: %s – %s", resp.Status, string(body))
+		return TeamMembers{}, body, fmt.Errorf("list team users failed: %s – %s", resp.Status, string(body))
 	}
-	var emails []string
 	var members TeamMembers
-	if err := json.NewDecoder(resp.Body).Decode(&members); err != nil {
-		return nil, fmt.Errorf("list team users failed json.NewDecoder returned: %s\nwhen trying to decode %s", err, resp.Body)
+	if err := json.Unmarshal(body, &members); err != nil {
+		return TeamMembers{}, body, fmt.Errorf("list team users failed json.Unmarshal: %w", err)
 	}
 	log.Printf("fossa: FetchTeamUserEmails response teamID=%d status=%s total=%d", teamID, resp.Status, members.TotalCount)
-	if members.TotalCount > 0 {
-		for _, result := range members.Results {
-			emails = append(emails, result.Email)
-		}
-	}
-	return emails, nil
+	return members, body, nil
 }
 
 // FetchTeamMembers returns all members for a team, paginating through results.
@@ -377,14 +422,27 @@ func (c *Client) FetchTeamMembers(teamID uint) ([]TeamMember, error) {
 // If roleID is not 0, it will be included; otherwise the server default role is used.
 // Returns ErrUserAlreadyMember for idempotent behavior when applicable.
 func (c *Client) AddUserToTeamByEmail(teamID uint, email string, roleID int) error {
-	fmt.Printf("AddUserToTeamByEmail: teamID %d email %s, roleID %d\n", teamID, email, roleID)
+	_, err := c.AddUserToTeamByEmailWithResponse(teamID, email, roleID)
+	return err
+}
+
+type TeamAddResponse struct {
+	Status string
+	Body   []byte
+	UserID uint
+	RoleID int
+}
+
+// AddUserToTeamByEmailWithResponse attempts to add a user to a FOSSA team by email and returns raw response data.
+func (c *Client) AddUserToTeamByEmailWithResponse(teamID uint, email string, roleID int) (*TeamAddResponse, error) {
+	log.Printf("AddUserToTeamByEmail: teamID=%d email=%s roleID=%d", teamID, email, roleID)
 
 	// The FOSSA API expects a bulk users payload to /teams/{id}/users with action=add.
 	// We must provide user IDs, so resolve the user by email first.
 	uid, err := c.findUserIDByEmail(email)
-	fmt.Printf("AddUserToTeamByEmail: uid=%q, err=%v\n", uid, err)
+	log.Printf("AddUserToTeamByEmailWithResponse: findUserIDByEmail returned userID=%d err=%v", uid, err)
 	if err != nil {
-		return fmt.Errorf("resolve user by email: %w", err)
+		return nil, fmt.Errorf("findUserIDByEmail: %w", err)
 	}
 
 	bodyPayload := map[string]interface{}{
@@ -400,13 +458,13 @@ func (c *Client) AddUserToTeamByEmail(teamID uint, email string, roleID int) err
 	}
 	jsonBody, err := json.Marshal(bodyPayload)
 	if err != nil {
-		return fmt.Errorf("failed to encode body: %w", err)
+		return nil, fmt.Errorf("failed to encode body: %w", err)
 	}
-	fmt.Printf("AddUserToTeamByEmail: %s\n", bodyPayload)
+	log.Printf("AddUserToTeamByEmailWithResponse: payload=%v", bodyPayload)
 	teamsUsersEndpoint := fmt.Sprintf("%s/teams/%d/users", c.APIBase, teamID)
 	req, err := http.NewRequest("PUT", teamsUsersEndpoint, bytes.NewBuffer(jsonBody))
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 	req.Header.Set("Accept", "application/json")
@@ -414,13 +472,14 @@ func (c *Client) AddUserToTeamByEmail(teamID uint, email string, roleID int) err
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated || resp.StatusCode == http.StatusNoContent {
-		return nil
+		log.Printf("AddUserToTeamByEmailWithResponse: added teamID=%d userID=%d status=%s", teamID, uid, resp.Status)
+		return &TeamAddResponse{Status: resp.Status, Body: body, UserID: uid, RoleID: roleID}, nil
 	}
 
 	// Attempt to decode known FOSSA error schema
@@ -428,13 +487,13 @@ func (c *Client) AddUserToTeamByEmail(teamID uint, email string, roleID int) err
 	if err := json.Unmarshal(body, &fossaErr); err == nil {
 		switch fossaErr.Code {
 		case ErrCodeUserAlreadyMember:
-			return fmt.Errorf("%w: %s", ErrUserAlreadyMember, fossaErr.Message)
+			return &TeamAddResponse{Status: resp.Status, Body: body, UserID: uid, RoleID: roleID}, fmt.Errorf("%w: %s", ErrUserAlreadyMember, fossaErr.Message)
 		default:
-			return fmt.Errorf("AddUserToTeamByEmail failed (code %d): %s – %s", fossaErr.Code, resp.Status, fossaErr.Message)
+			return &TeamAddResponse{Status: resp.Status, Body: body, UserID: uid, RoleID: roleID}, fmt.Errorf("AddUserToTeamByEmailWithResponse failed (code %d): %s – %s", fossaErr.Code, resp.Status, fossaErr.Message)
 		}
 	}
 	// Fallback: unknown error format
-	return fmt.Errorf("AddUserToTeamByEmail failed: %s – %s", resp.Status, string(body))
+	return &TeamAddResponse{Status: resp.Status, Body: body, UserID: uid, RoleID: roleID}, fmt.Errorf("AddUserToTeamByEmailWithResponse failed: %s – %s", resp.Status, string(body))
 }
 
 // FindUserIDByEmail resolves a FOSSA user ID by email.

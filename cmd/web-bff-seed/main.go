@@ -4,27 +4,42 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
+	"maintainerd/db"
 	"maintainerd/model"
 
-	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 func main() {
 	dbPath := flag.String("db", "testdata/maintainerd_test.db", "Path to SQLite database file")
+	dbDriver := flag.String("driver", "sqlite", "Database driver: sqlite or postgres")
+	dbDSN := flag.String("dsn", "", "Postgres DSN (required when driver=postgres)")
 	flag.Parse()
 
-	db, err := gorm.Open(sqlite.Open(*dbPath), &gorm.Config{
+	driver := strings.TrimSpace(*dbDriver)
+	dsn := strings.TrimSpace(*dbDSN)
+	if driver == "postgres" && dsn == "" {
+		log.Fatal("seed: driver=postgres requires -dsn")
+	}
+	if driver != "postgres" && strings.TrimSpace(*dbPath) == "" {
+		log.Fatal("seed: sqlite requires -db path")
+	}
+	if driver != "postgres" {
+		dsn = *dbPath
+	}
+
+	dbConn, err := db.OpenGorm(driver, dsn, &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	if err != nil {
 		log.Fatalf("seed: failed to open db: %v", err)
 	}
 
-	if err := db.AutoMigrate(
+	if err := dbConn.AutoMigrate(
 		&model.AuditLog{},
 		&model.Company{},
 		&model.Foundation{},
@@ -46,10 +61,10 @@ func main() {
 
 	company := model.Company{Name: "Example Labs"}
 	foundation := model.Foundation{Name: "CNCF"}
-	if err := db.FirstOrCreate(&company, model.Company{Name: company.Name}).Error; err != nil {
+	if err := dbConn.FirstOrCreate(&company, model.Company{Name: company.Name}).Error; err != nil {
 		log.Fatalf("seed: company insert failed: %v", err)
 	}
-	if err := db.FirstOrCreate(&foundation, model.Foundation{Name: foundation.Name}).Error; err != nil {
+	if err := dbConn.FirstOrCreate(&foundation, model.Foundation{Name: foundation.Name}).Error; err != nil {
 		log.Fatalf("seed: foundation insert failed: %v", err)
 	}
 
@@ -61,7 +76,7 @@ func main() {
 		FoundationID:  &foundation.ID,
 		RegisteredAt:  timePtr(time.Now()),
 	}
-	if err := db.FirstOrCreate(&staff, model.StaffMember{GitHubAccount: staff.GitHubAccount}).Error; err != nil {
+	if err := dbConn.FirstOrCreate(&staff, model.StaffMember{GitHubAccount: staff.GitHubAccount}).Error; err != nil {
 		log.Fatalf("seed: staff insert failed: %v", err)
 	}
 
@@ -132,7 +147,7 @@ func main() {
 	}
 
 	for i := range maintainers {
-		if err := db.FirstOrCreate(&maintainers[i], model.Maintainer{GitHubAccount: maintainers[i].GitHubAccount}).Error; err != nil {
+		if err := dbConn.FirstOrCreate(&maintainers[i], model.Maintainer{GitHubAccount: maintainers[i].GitHubAccount}).Error; err != nil {
 			log.Fatalf("seed: maintainer insert failed: %v", err)
 		}
 	}
@@ -150,25 +165,25 @@ func main() {
 	}
 
 	for i := range projects {
-		if err := db.FirstOrCreate(&projects[i], model.Project{Name: projects[i].Name}).Error; err != nil {
+		if err := dbConn.FirstOrCreate(&projects[i], model.Project{Name: projects[i].Name}).Error; err != nil {
 			log.Fatalf("seed: project insert failed: %v", err)
 		}
 	}
 
-	if err := db.Model(&projects[0]).Association("Maintainers").Replace(
+	if err := dbConn.Model(&projects[0]).Association("Maintainers").Replace(
 		&maintainers[0],
 		&maintainers[1],
 		&maintainers[2],
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
 	}
-	if err := db.Model(&projects[1]).Association("Maintainers").Replace(
+	if err := dbConn.Model(&projects[1]).Association("Maintainers").Replace(
 		&maintainers[0],
 		&maintainers[3],
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
 	}
-	if err := db.Model(&projects[2]).Association("Maintainers").Replace(
+	if err := dbConn.Model(&projects[2]).Association("Maintainers").Replace(
 		&maintainers[0],
 		&maintainers[4],
 		&maintainers[5],
@@ -178,10 +193,10 @@ func main() {
 
 	fossa := model.Service{Name: "FOSSA", Description: "License compliance"}
 	snyk := model.Service{Name: "Snyk", Description: "License compliance"}
-	if err := db.FirstOrCreate(&fossa, model.Service{Name: fossa.Name}).Error; err != nil {
+	if err := dbConn.FirstOrCreate(&fossa, model.Service{Name: fossa.Name}).Error; err != nil {
 		log.Fatalf("seed: service insert failed: %v", err)
 	}
-	if err := db.FirstOrCreate(&snyk, model.Service{Name: snyk.Name}).Error; err != nil {
+	if err := dbConn.FirstOrCreate(&snyk, model.Service{Name: snyk.Name}).Error; err != nil {
 		log.Fatalf("seed: service insert failed: %v", err)
 	}
 
@@ -189,53 +204,53 @@ func main() {
 	for i := range projects {
 		projectMap[projects[i].Name] = &projects[i]
 	}
-	if err := db.Model(projectMap["Project Fossa Full"]).Association("Maintainers").Replace(
+	if err := dbConn.Model(projectMap["Project Fossa Full"]).Association("Maintainers").Replace(
 		&maintainers[0],
 		&maintainers[1],
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
 	}
-	if err := db.Model(projectMap["Project Fossa Partial"]).Association("Maintainers").Replace(
+	if err := dbConn.Model(projectMap["Project Fossa Partial"]).Association("Maintainers").Replace(
 		&maintainers[2],
 		&maintainers[3],
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
 	}
-	if err := db.Model(projectMap["Project Fossa Invites"]).Association("Maintainers").Replace(
+	if err := dbConn.Model(projectMap["Project Fossa Invites"]).Association("Maintainers").Replace(
 		&maintainers[4],
 		&maintainers[5],
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
 	}
-	if err := db.Model(projectMap["Project Fossa Missing Email"]).Association("Maintainers").Replace(
+	if err := dbConn.Model(projectMap["Project Fossa Missing Email"]).Association("Maintainers").Replace(
 		&maintainers[6],
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
 	}
-	if err := db.Model(projectMap["Project Snyk"]).Association("Maintainers").Replace(
+	if err := dbConn.Model(projectMap["Project Snyk"]).Association("Maintainers").Replace(
 		&maintainers[0],
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
 	}
-	if err := db.Model(projectMap["Project No License"]).Association("Maintainers").Replace(
+	if err := dbConn.Model(projectMap["Project No License"]).Association("Maintainers").Replace(
 		&maintainers[1],
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
 	}
 
-	if err := db.Model(projectMap["Project Fossa Full"]).Association("Services").Append(&fossa); err != nil {
+	if err := dbConn.Model(projectMap["Project Fossa Full"]).Association("Services").Append(&fossa); err != nil {
 		log.Fatalf("seed: service association failed: %v", err)
 	}
-	if err := db.Model(projectMap["Project Fossa Partial"]).Association("Services").Append(&fossa); err != nil {
+	if err := dbConn.Model(projectMap["Project Fossa Partial"]).Association("Services").Append(&fossa); err != nil {
 		log.Fatalf("seed: service association failed: %v", err)
 	}
-	if err := db.Model(projectMap["Project Fossa Invites"]).Association("Services").Append(&fossa); err != nil {
+	if err := dbConn.Model(projectMap["Project Fossa Invites"]).Association("Services").Append(&fossa); err != nil {
 		log.Fatalf("seed: service association failed: %v", err)
 	}
-	if err := db.Model(projectMap["Project Fossa Missing Email"]).Association("Services").Append(&fossa); err != nil {
+	if err := dbConn.Model(projectMap["Project Fossa Missing Email"]).Association("Services").Append(&fossa); err != nil {
 		log.Fatalf("seed: service association failed: %v", err)
 	}
-	if err := db.Model(projectMap["Project Snyk"]).Association("Services").Append(&snyk); err != nil {
+	if err := dbConn.Model(projectMap["Project Snyk"]).Association("Services").Append(&snyk); err != nil {
 		log.Fatalf("seed: service association failed: %v", err)
 	}
 
@@ -251,7 +266,7 @@ func main() {
 		{ProjectID: projectMap[teamNameMissing].ID, ServiceID: fossa.ID, RemoteTeamID: 104, RemoteTeamName: &teamNameMissing, ProjectName: &teamNameMissing},
 	}
 	for i := range teams {
-		if err := db.Where("remote_team_id = ?", teams[i].RemoteTeamID).FirstOrCreate(&teams[i]).Error; err != nil {
+		if err := dbConn.Where("remote_team_id = ?", teams[i].RemoteTeamID).FirstOrCreate(&teams[i]).Error; err != nil {
 			log.Fatalf("seed: service team insert failed: %v", err)
 		}
 	}
@@ -263,7 +278,7 @@ func main() {
 		{ServiceID: fossa.ID, RemoteUserID: 4, ServiceEmail: maintainers[5].Email},
 	}
 	for i := range remoteUsers {
-		if err := db.Where("remote_user_id = ?", remoteUsers[i].RemoteUserID).FirstOrCreate(&remoteUsers[i]).Error; err != nil {
+		if err := dbConn.Where("remote_user_id = ?", remoteUsers[i].RemoteUserID).FirstOrCreate(&remoteUsers[i]).Error; err != nil {
 			log.Fatalf("seed: remote user insert failed: %v", err)
 		}
 	}
@@ -275,7 +290,7 @@ func main() {
 		{ServiceID: fossa.ID, TeamID: teams[2].ID, UserID: remoteUsers[3].ID, MaintainerID: &maintainers[5].ID},
 	}
 	for i := range serviceUserTeams {
-		if err := db.Where("team_id = ? AND maintainer_id = ?", serviceUserTeams[i].TeamID, serviceUserTeams[i].MaintainerID).
+		if err := dbConn.Where("team_id = ? AND maintainer_id = ?", serviceUserTeams[i].TeamID, serviceUserTeams[i].MaintainerID).
 			FirstOrCreate(&serviceUserTeams[i]).Error; err != nil {
 			log.Fatalf("seed: service user team insert failed: %v", err)
 		}
@@ -325,14 +340,18 @@ func main() {
 		},
 	}
 	for i := range invites {
-		if err := db.Where("project_id = ? AND service_id = ? AND service_email = ?",
+		if err := dbConn.Where("project_id = ? AND service_id = ? AND service_email = ?",
 			invites[i].ProjectID, invites[i].ServiceID, invites[i].ServiceEmail).
 			FirstOrCreate(&invites[i]).Error; err != nil {
 			log.Fatalf("seed: service invite insert failed: %v", err)
 		}
 	}
 
-	fmt.Printf("seed: wrote test db to %s\n", *dbPath)
+	if driver == "postgres" {
+		fmt.Printf("seed: wrote test data to postgres\n")
+	} else {
+		fmt.Printf("seed: wrote test db to %s\n", *dbPath)
+	}
 }
 
 func timePtr(t time.Time) *time.Time {

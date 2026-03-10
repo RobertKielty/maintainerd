@@ -13,10 +13,10 @@
   "dependencies": {
     "clo-ui": "github:cncf/clo-ui",
     "next": "16.1.1",
-    "react-markdown": "^10.0.0",
     "react": "19.2.3",
-    "react-syntax-highlighter": "^16.1.0",
     "react-dom": "19.2.3",
+    "react-markdown": "^10.0.0",
+    "react-syntax-highlighter": "^16.1.0",
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
@@ -33,6 +33,7 @@
     "cucumber-html-reporter": "^7.2.0",
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
+    "multiple-cucumber-html-reporter": "^3.10.0",
     "playwright": "^1.55.0",
     "typescript": "^5",
     "wait-on": "^8.0.5"

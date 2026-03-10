@@ -203,15 +203,19 @@ type RemoteUser struct {
 
 type ServiceInvitation struct {
 	gorm.Model
-	ServiceID     uint       `gorm:"index;uniqueIndex:idx_service_invite_project_email"` // FK to Service
-	RemoteTeamID  uint       `gorm:"not null"`                                           // ID on the remote service (e.g., FOSSA team ID)
-	ProjectID     uint       `gorm:"index;uniqueIndex:idx_service_invite_project_email"` // FK to project
-	MaintainerID  *uint      `gorm:"index"`
-	ServiceEmail  string     `gorm:"size:254;not null;uniqueIndex:idx_service_invite_project_email"`
-	Status        string     `gorm:"size:32;index"` // pending, accepted, expired, error
-	SentAt        *time.Time `gorm:"index"`
-	LastCheckedAt *time.Time `gorm:"index"`
-	LastError     *string    `gorm:"type:text"`
+	ServiceID    uint   `gorm:"index;uniqueIndex:idx_service_invite_project_email"` // FK to Service
+	RemoteTeamID uint   `gorm:"not null"`                                           // ID on the remote service (e.g., FOSSA team ID)
+	ProjectID    uint   `gorm:"index;uniqueIndex:idx_service_invite_project_email"` // FK to project
+	MaintainerID *uint  `gorm:"index"`
+	ServiceEmail string `gorm:"size:254;not null;uniqueIndex:idx_service_invite_project_email"`
+	Status       string `gorm:"size:32;index"` // pending, accepted, expired, error
+	// TeamAssignmentStatus tracks membership status after invite acceptance: pending, done, error.
+	TeamAssignmentStatus *string    `gorm:"size:32;index"`
+	TeamAddAttempts      int        `gorm:"default:0"`
+	NextTeamAddAt        *time.Time `gorm:"index"`
+	SentAt               *time.Time `gorm:"index"`
+	LastCheckedAt        *time.Time `gorm:"index"`
+	LastError            *string    `gorm:"type:text"`
 }
 
 // A FoundationOfficer is a person who has elevated access to

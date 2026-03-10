@@ -581,6 +581,9 @@ func TestFossaInviteEndpointsContract(t *testing.T) {
 		assert.Equal(t, invite.RemoteTeamID, response[0].FossaTeamID)
 		assert.Equal(t, serviceTeamName, response[0].FossaTeamName)
 		assert.Equal(t, invite.Status, response[0].Status)
+		assert.Nil(t, response[0].TeamAssignmentStatus)
+		assert.Equal(t, 0, response[0].TeamAddAttempts)
+		assert.Nil(t, response[0].NextTeamAddAt)
 	})
 
 	t.Run("invite requires project id", func(t *testing.T) {

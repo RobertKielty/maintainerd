@@ -523,15 +523,24 @@ test-web:
 			echo "test-web failed; grepping logs from $$TESTDATA_DIR"; \
 			if [ -f "$$TESTDATA_DIR/web-bff-test.log" ]; then \
 				echo "--- web-bff-test.log (errors) ---"; \
-				{ grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-bff-test.log" || true; } ; \
+				if ! grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-bff-test.log"; then \
+					echo "(no error matches; tailing last 200 lines)"; \
+					tail -n 200 "$$TESTDATA_DIR/web-bff-test.log" || true; \
+				fi; \
 			fi; \
 			if [ -f "$$TESTDATA_DIR/web-app-test.log" ]; then \
 				echo "--- web-app-test.log (errors) ---"; \
-				{ grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-app-test.log" || true; } ; \
+				if ! grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-app-test.log"; then \
+					echo "(no error matches; tailing last 200 lines)"; \
+					tail -n 200 "$$TESTDATA_DIR/web-app-test.log" || true; \
+				fi; \
 			fi; \
 			if [ -f "$$TESTDATA_DIR/web-build-test.log" ]; then \
 				echo "--- web-build-test.log (errors) ---"; \
-				{ grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-build-test.log" || true; } ; \
+				if ! grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-build-test.log"; then \
+					echo "(no error matches; tailing last 200 lines)"; \
+					tail -n 200 "$$TESTDATA_DIR/web-build-test.log" || true; \
+				fi; \
 			fi; \
 		fi; \
 		exit $$status; \
@@ -545,14 +554,23 @@ test-web:
 			sleep 1; \
 		fi; \
 	fi; \
-	rm -f "$$TESTDATA_DIR/maintainerd_test.db" || true; \
-	if [ -f "$$TESTDATA_DIR/maintainerd_test.db" ]; then \
-		echo "Failed to remove $$TESTDATA_DIR/maintainerd_test.db (check ownership/permissions)."; \
+	DB_DRIVER="$${MD_DB_DRIVER:-postgres}"; \
+	DB_DSN="$${MD_DB_DSN:-}"; \
+	if [ "$$DB_DRIVER" != "postgres" ]; then \
+		echo "test-web only supports Postgres. Set MD_DB_DRIVER=postgres and MD_DB_DSN."; \
 		exit 1; \
 	fi; \
-	go run ./cmd/web-bff-seed -db "$$TESTDATA_DIR/maintainerd_test.db"; \
+	if [ -z "$$DB_DSN" ]; then \
+		echo "MD_DB_DSN is required for test-web."; \
+		exit 1; \
+	fi; \
+	MD_DB_DRIVER=postgres MD_DB_DSN="$$DB_DSN" go run ./cmd/testdb-reset; \
+	MD_DB_DRIVER=postgres MD_DB_DSN="$$DB_DSN" go run ./cmd/migrate; \
+	go run ./cmd/web-bff-seed -driver postgres -dsn "$$DB_DSN"; \
+	export MD_DB_DRIVER=postgres; \
+	export MD_DB_DSN="$$DB_DSN"; \
+	unset MD_DB_PATH; \
 	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
-	MD_DB_DRIVER=sqlite MD_DB_DSN= MD_DB_PATH="$$TESTDATA_DIR/maintainerd_test.db" \
 	WEB_APP_BASE_URL=http://localhost:4001 GITHUB_OAUTH_REDIRECT_URL=http://localhost:9001/auth/callback \
 	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test \
 	go run ./cmd/web-bff > >(tee "$$TESTDATA_DIR/web-bff-test.log") 2>&1 & \
@@ -597,15 +615,24 @@ test-web-license-checker:
 			echo "test-web-license-checker failed; grepping logs from $$TESTDATA_DIR"; \
 			if [ -f "$$TESTDATA_DIR/web-bff-test.log" ]; then \
 				echo "--- web-bff-test.log (errors) ---"; \
-				{ grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-bff-test.log" || true; } ; \
+				if ! grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-bff-test.log"; then \
+					echo "(no error matches; tailing last 200 lines)"; \
+					tail -n 200 "$$TESTDATA_DIR/web-bff-test.log" || true; \
+				fi; \
 			fi; \
 			if [ -f "$$TESTDATA_DIR/web-app-test.log" ]; then \
 				echo "--- web-app-test.log (errors) ---"; \
-				{ grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-app-test.log" || true; } ; \
+				if ! grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-app-test.log"; then \
+					echo "(no error matches; tailing last 200 lines)"; \
+					tail -n 200 "$$TESTDATA_DIR/web-app-test.log" || true; \
+				fi; \
 			fi; \
 			if [ -f "$$TESTDATA_DIR/web-build-test.log" ]; then \
 				echo "--- web-build-test.log (errors) ---"; \
-				{ grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-build-test.log" || true; } ; \
+				if ! grep -nE "(error|failed|panic)" "$$TESTDATA_DIR/web-build-test.log"; then \
+					echo "(no error matches; tailing last 200 lines)"; \
+					tail -n 200 "$$TESTDATA_DIR/web-build-test.log" || true; \
+				fi; \
 			fi; \
 		fi; \
 		exit $$status; \
@@ -619,14 +646,23 @@ test-web-license-checker:
 			sleep 1; \
 		fi; \
 	fi; \
-	rm -f "$$TESTDATA_DIR/maintainerd_test.db" || true; \
-	if [ -f "$$TESTDATA_DIR/maintainerd_test.db" ]; then \
-		echo "Failed to remove $$TESTDATA_DIR/maintainerd_test.db (check ownership/permissions)."; \
+	DB_DRIVER="$${MD_DB_DRIVER:-postgres}"; \
+	DB_DSN="$${MD_DB_DSN:-}"; \
+	if [ "$$DB_DRIVER" != "postgres" ]; then \
+		echo "test-web-license-checker only supports Postgres. Set MD_DB_DRIVER=postgres and MD_DB_DSN."; \
 		exit 1; \
 	fi; \
-	go run ./cmd/web-bff-seed -db "$$TESTDATA_DIR/maintainerd_test.db"; \
+	if [ -z "$$DB_DSN" ]; then \
+		echo "MD_DB_DSN is required for test-web-license-checker."; \
+		exit 1; \
+	fi; \
+	MD_DB_DRIVER=postgres MD_DB_DSN="$$DB_DSN" go run ./cmd/testdb-reset; \
+	MD_DB_DRIVER=postgres MD_DB_DSN="$$DB_DSN" go run ./cmd/migrate; \
+	go run ./cmd/web-bff-seed -driver postgres -dsn "$$DB_DSN"; \
+	export MD_DB_DRIVER=postgres; \
+	export MD_DB_DSN="$$DB_DSN"; \
+	unset MD_DB_PATH; \
 	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
-	MD_DB_DRIVER=sqlite MD_DB_DSN= MD_DB_PATH="$$TESTDATA_DIR/maintainerd_test.db" \
 	WEB_APP_BASE_URL=http://localhost:4001 GITHUB_OAUTH_REDIRECT_URL=http://localhost:9001/auth/callback \
 	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test \
 	go run ./cmd/web-bff > >(tee "$$TESTDATA_DIR/web-bff-test.log") 2>&1 & \
@@ -647,7 +683,13 @@ test-web-license-checker:
 	'
 
 .PHONY: web-bdd
-web-bdd: test-web web-bdd-report
+web-bdd:
+	@bash -c 'set -euo pipefail; \
+	status=0; \
+	$(MAKE) test-web || status=$$?; \
+	$(MAKE) web-bdd-report || true; \
+	exit $$status; \
+	'
 
 .PHONY: web-bdd-report
 web-bdd-report:
@@ -655,11 +697,13 @@ web-bdd-report:
 	BASE_DIR="$${HOST_LOG_DIR:-testdata}"; \
 	BASE_DIR_ABS="$$(cd "$$BASE_DIR" && pwd)"; \
 	JSON_PATH="$$BASE_DIR_ABS/web-bdd-report.json"; \
-	HTML_PATH="$$BASE_DIR_ABS/web-bdd-report.html"; \
+	REPORT_DIR="$$BASE_DIR_ABS/web-bdd-report"; \
 	if [ -f "$$JSON_PATH" ]; then \
-		(cd web && node -e "require(\"cucumber-html-reporter\").generate({ jsonFile: \"$$JSON_PATH\", output: \"$$HTML_PATH\", theme: \"bootstrap\", reportSuiteAsScenarios: true, launchReport: false, metadata: { App: \"maintainer-d\", Platform: \"Web\" } });"); \
+		rm -rf "$$REPORT_DIR"; \
+		(cd web && node -e "require(\"multiple-cucumber-html-reporter\").generate({ jsonDir: \"$$BASE_DIR_ABS\", reportPath: \"$$REPORT_DIR\", reportName: \"Maintainer D Web BDD\", pageTitle: \"Maintainer D Web BDD\", openReportInBrowser: false, disableLog: true, customData: { title: \"Run info\", data: [{ label: \"App\", value: \"maintainer-d\" }, { label: \"Platform\", value: \"Web\" }] } });"); \
+		echo "BDD HTML report: $$REPORT_DIR/index.html"; \
 		if [ -z "$(NO_BDD_OPEN)" ] && [ -z "$$CI" ]; then \
-			if command -v xdg-open >/dev/null 2>&1; then xdg-open "$$HTML_PATH" >/dev/null 2>&1 || true; fi; \
+			if command -v xdg-open >/dev/null 2>&1; then xdg-open "$$REPORT_DIR/index.html" >/dev/null 2>&1 || true; fi; \
 		fi; \
 	else \
 		echo "Missing $$JSON_PATH; run test-web first."; \
@@ -674,11 +718,13 @@ test-web-report:
 	BASE_DIR="$${HOST_LOG_DIR:-testdata}"; \
 	BASE_DIR_ABS="$$(cd "$$BASE_DIR" && pwd)"; \
 	JSON_PATH="$$BASE_DIR_ABS/web-bdd-report.json"; \
-	HTML_PATH="$$BASE_DIR_ABS/web-bdd-report.html"; \
+	REPORT_DIR="$$BASE_DIR_ABS/web-bdd-report"; \
 	if [ -f "$$JSON_PATH" ]; then \
-		(cd web && node -e "require(\"cucumber-html-reporter\").generate({ jsonFile: \"$$JSON_PATH\", output: \"$$HTML_PATH\", theme: \"bootstrap\", reportSuiteAsScenarios: true, launchReport: false, metadata: { App: \"maintainer-d\", Platform: \"Web\" } });"); \
+		rm -rf "$$REPORT_DIR"; \
+		(cd web && node -e "require(\"multiple-cucumber-html-reporter\").generate({ jsonDir: \"$$BASE_DIR_ABS\", reportPath: \"$$REPORT_DIR\", reportName: \"Maintainer D Web BDD\", pageTitle: \"Maintainer D Web BDD\", openReportInBrowser: false, disableLog: true, customData: { title: \"Run info\", data: [{ label: \"App\", value: \"maintainer-d\" }, { label: \"Platform\", value: \"Web\" }] } });"); \
+		echo "BDD HTML report: $$REPORT_DIR/index.html"; \
 		if [ -z "$(NO_BDD_OPEN)" ] && [ -z "$$CI" ]; then \
-			if command -v xdg-open >/dev/null 2>&1; then xdg-open "$$HTML_PATH" >/dev/null 2>&1 || true; fi; \
+			if command -v xdg-open >/dev/null 2>&1; then xdg-open "$$REPORT_DIR/index.html" >/dev/null 2>&1 || true; fi; \
 		fi; \
 	else \
 		echo "Missing $$JSON_PATH; run test-web first."; \
@@ -1364,7 +1410,14 @@ ci-local:
 	@echo "→ Running web typecheck..."
 	@npm --prefix web run typecheck
 	@echo "→ Running web BDD..."
-	@$(MAKE) web-bdd
+	@bash -c 'set -euo pipefail; \
+	if [ -z "$${MD_DB_DSN:-}" ]; then \
+		echo "MD_DB_DSN is required for ci-local web BDD (Postgres only)."; \
+		echo "Example: MD_DB_DSN=\"host=localhost port=5432 user=maintainerd password=maintainerd dbname=maintainerd_test sslmode=disable\""; \
+		exit 1; \
+	fi; \
+	env MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" $(MAKE) web-bdd; \
+	'
 	@echo "→ Running tests with race detector..."
 	@go test -race -coverprofile=coverage.out -covermode=atomic ./...
 	@echo "→ Coverage report:"
