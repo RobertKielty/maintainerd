@@ -1,0 +1,42 @@
+name: PII Check
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pii-check:
+    name: Changed files PII check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan changed files for PII and obvious tokens
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x scripts/check-pii.sh
+
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            from_ref="${{ github.event.pull_request.base.sha }}"
+            to_ref="${{ github.event.pull_request.head.sha }}"
+          elif [[ -n "${{ github.event.before }}" && "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]]; then
+            from_ref="${{ github.event.before }}"
+            to_ref="${{ github.sha }}"
+          else
+            from_ref="$(git rev-list --max-parents=0 HEAD)"
+            to_ref="${{ github.sha }}"
+          fi
+
+          scripts/check-pii.sh --ref-range "${from_ref}" "${to_ref}"

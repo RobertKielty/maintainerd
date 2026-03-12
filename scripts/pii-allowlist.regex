@@ -1,0 +1,17 @@
+# Reserved/example fixture domains.
+^[A-Za-z0-9._%+-]+@(example\.com|example\.org|example\.net|example\.dev|example\.test|test\.dev|github\.example|github\.test|affiliated-company\.tld|users\.noreply\.github\.com|example\.invalid)$
+
+# Approved vendor/support addresses that may appear in checked-in API docs.
+^[A-Za-z0-9._%+-]+@fossa\.com$
+
+# Placeholder addresses present in vendor API documentation.
+^email@email\.com$
+^api-service@company\.com$
+^prod-api@company\.com$
+^automation@company\.com$
+^foo@bar\.com$
+
+# Common documentation placeholders.
+^Bearer[[:space:]]+REDACTED$
+^Bearer[[:space:]]+TOKEN$
+^Bearer[[:space:]]+\.\.\.$
