@@ -95,5 +95,10 @@ Notes:
 - `BFF_TEST_MODE=true` enables `/auth/test-login?login=<github>` for local sign-in.
 - `NEXT_PUBLIC_BFF_BASE_URL` should match the web-bff address.
 
+## Web BDD With Microcks
+
+For the web BDD test setup that mocks the FOSSA API with Microcks, see
+[web/tests/MICROCKS.MD](/home/rk/cncf/gh/maintainer-d/web/tests/MICROCKS.MD).
+
 ## License
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FRobertKielty%2Fmaintainerd.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FRobertKielty%2Fmaintainerd?ref=badge_large)

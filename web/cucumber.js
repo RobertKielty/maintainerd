@@ -9,7 +9,9 @@ const junitReportPath =
 
 module.exports = {
   default: {
-    paths: ["../features/web/**/*.feature"],
+    paths: process.env.WEB_BDD_FEATURE
+      ? [process.env.WEB_BDD_FEATURE]
+      : ["../features/web/**/*.feature"],
     require: ["tests/steps/**/*.js"],
     tags: "not @wip",
     format: [

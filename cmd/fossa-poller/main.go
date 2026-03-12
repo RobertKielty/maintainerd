@@ -87,6 +87,7 @@ type fossaAPI interface {
 	FetchTeamUserEmails(teamID uint) ([]string, error)
 	FetchTeamMembersRaw(teamID uint) (fossa.TeamMembers, []byte, error)
 	FindUserIDByEmail(email string) (uint, error)
+	ResolveTeamAdminRoleID() (int, error)
 }
 
 func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStore, client fossaAPI) error {
@@ -203,8 +204,18 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 			continue
 		}
 
-		const fossaTeamAdminRoleID = 3
-		addResp, err := client.AddUserToTeamByEmailWithResponse(invite.RemoteTeamID, email, fossaTeamAdminRoleID)
+		teamAdminRoleID, err := client.ResolveTeamAdminRoleID()
+		if err != nil {
+			msg := err.Error()
+			invite.Status = "error"
+			invite.LastError = &msg
+			invite.LastCheckedAt = &now
+			if _, upsertErr := store.UpsertServiceInvitation(&invite); upsertErr != nil {
+				logger.Printf("upsert invite failed %s err=%v", formatInviteSummary(store, invite), upsertErr)
+			}
+			continue
+		}
+		addResp, err := client.AddUserToTeamByEmailWithResponse(invite.RemoteTeamID, email, teamAdminRoleID)
 		if err != nil {
 			if errors.Is(err, fossa.ErrUserAlreadyMember) {
 				invite.Status = "accepted"

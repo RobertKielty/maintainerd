@@ -211,6 +211,8 @@ func main() {
 		log.Fatalf("seed: association failed: %v", err)
 	}
 	if err := dbConn.Model(projectMap["Project Fossa Partial"]).Association("Maintainers").Replace(
+		&maintainers[0],
+		&maintainers[1],
 		&maintainers[2],
 		&maintainers[3],
 	); err != nil {
@@ -273,7 +275,7 @@ func main() {
 
 	remoteUsers := []model.RemoteUser{
 		{ServiceID: fossa.ID, RemoteUserID: 1, ServiceEmail: maintainers[0].Email},
-		{ServiceID: fossa.ID, RemoteUserID: 2, ServiceEmail: maintainers[1].Email},
+		{ServiceID: fossa.ID, RemoteUserID: 2, ServiceEmail: maintainers[1].GitHubEmail},
 		{ServiceID: fossa.ID, RemoteUserID: 3, ServiceEmail: maintainers[2].Email},
 		{ServiceID: fossa.ID, RemoteUserID: 4, ServiceEmail: maintainers[5].Email},
 	}
@@ -286,7 +288,6 @@ func main() {
 	serviceUserTeams := []model.RemoteTeamUser{
 		{ServiceID: fossa.ID, TeamID: teams[0].ID, UserID: remoteUsers[0].ID, MaintainerID: &maintainers[0].ID},
 		{ServiceID: fossa.ID, TeamID: teams[0].ID, UserID: remoteUsers[1].ID, MaintainerID: &maintainers[1].ID},
-		{ServiceID: fossa.ID, TeamID: teams[1].ID, UserID: remoteUsers[2].ID, MaintainerID: &maintainers[2].ID},
 		{ServiceID: fossa.ID, TeamID: teams[2].ID, UserID: remoteUsers[3].ID, MaintainerID: &maintainers[5].ID},
 	}
 	for i := range serviceUserTeams {

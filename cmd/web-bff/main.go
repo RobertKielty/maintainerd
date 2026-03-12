@@ -1732,6 +1732,7 @@ type maintainerDetailResponse struct {
 	CompanyID   *uint                       `json:"companyId,omitempty"`
 	Company     string                      `json:"company,omitempty"`
 	Projects    []maintainerProjectResponse `json:"projects"`
+	Services    []maintainerServiceResponse `json:"services,omitempty"`
 	CreatedAt   time.Time                   `json:"createdAt"`
 	UpdatedAt   time.Time                   `json:"updatedAt"`
 	DeletedAt   *time.Time                  `json:"deletedAt,omitempty"`
@@ -1741,6 +1742,38 @@ type maintainerDetailResponse struct {
 type maintainerProjectResponse struct {
 	ID   uint   `json:"id"`
 	Name string `json:"name"`
+}
+
+type maintainerServiceResponse struct {
+	Kind    string                            `json:"kind"`
+	Label   string                            `json:"label"`
+	Account maintainerServiceAccountResponse  `json:"account"`
+	Targets []maintainerServiceTargetResponse `json:"targets"`
+}
+
+type maintainerServiceAccountResponse struct {
+	State               string     `json:"state"`
+	MatchedBy           string     `json:"matchedBy"`
+	RemoteUserID        *uint      `json:"remoteUserId,omitempty"`
+	RemoteRef           string     `json:"remoteRef,omitempty"`
+	EmailUsed           string     `json:"emailUsed,omitempty"`
+	LastCheckedAt       *time.Time `json:"lastCheckedAt,omitempty"`
+	PendingInvitations  int        `json:"pendingInvitations,omitempty"`
+	AcceptedInvitations int        `json:"acceptedInvitations,omitempty"`
+	Error               string     `json:"error,omitempty"`
+}
+
+type maintainerServiceTargetResponse struct {
+	ProjectID     uint       `json:"projectId"`
+	ProjectName   string     `json:"projectName"`
+	TargetKind    string     `json:"targetKind"`
+	TargetID      *uint      `json:"targetId,omitempty"`
+	TargetName    string     `json:"targetName"`
+	Required      bool       `json:"required"`
+	State         string     `json:"state"`
+	PendingInvite bool       `json:"pendingInvite,omitempty"`
+	LastCheckedAt *time.Time `json:"lastCheckedAt,omitempty"`
+	Error         string     `json:"error,omitempty"`
 }
 
 type auditLogResponse struct {
@@ -1765,6 +1798,10 @@ type auditListResponse struct {
 func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if maintainerID, serviceKind, action, ok := parseMaintainerServiceActionPath(r.URL.Path); ok {
+		s.handleMaintainerServiceAction(w, r, maintainerID, serviceKind, action)
 		return
 	}
 	id, err := parseIDParam(r.URL.Path, "/api/maintainers/")
@@ -1797,35 +1834,14 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 
 	switch r.Method {
 	case http.MethodGet:
-		var maintainer model.Maintainer
-		if err := s.store.DB().
-			Preload("Company").
-			Preload("Projects").
-			First(&maintainer, id).Error; err != nil {
+		maintainer, err := s.loadMaintainerWithRelations(id)
+		if err != nil {
 			s.logger.Printf("web-bff: maintainer not found id=%d path=%s user=%s role=%s err=%v", id, r.URL.Path, login, role, err)
 			http.Error(w, "maintainer not found", http.StatusNotFound)
 			return
 		}
 
-		projects := make([]maintainerProjectResponse, 0, len(maintainer.Projects))
-		for _, project := range maintainer.Projects {
-			projects = append(projects, maintainerProjectResponse{
-				ID:   project.ID,
-				Name: project.Name,
-			})
-		}
-
-		response := maintainerDetailResponse{
-			ID:          maintainer.ID,
-			Name:        maintainer.Name,
-			Email:       normalizeValue(maintainer.Email, "EMAIL_MISSING"),
-			GitHub:      normalizeValue(maintainer.GitHubAccount, "GITHUB_MISSING"),
-			GitHubEmail: normalizeValue(maintainer.GitHubEmail, "GITHUB_MISSING"),
-			Status:      string(maintainer.MaintainerStatus),
-			Projects:    projects,
-			CreatedAt:   maintainer.CreatedAt,
-			UpdatedAt:   maintainer.UpdatedAt,
-		}
+		response := s.buildMaintainerDetailResponse(*maintainer, session.Role == roleStaff)
 		if maintainer.DeletedAt.Valid {
 			deleted := maintainer.DeletedAt.Time
 			response.DeletedAt = &deleted
@@ -2051,6 +2067,817 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+}
+
+func (s *server) buildMaintainerServices(maintainer model.Maintainer) []maintainerServiceResponse {
+	services := make([]maintainerServiceResponse, 0, 1)
+
+	fossaService, ok := s.buildMaintainerFossaService(maintainer)
+	if ok {
+		services = append(services, fossaService)
+	}
+
+	return services
+}
+
+func (s *server) loadMaintainerWithRelations(id uint) (*model.Maintainer, error) {
+	var maintainer model.Maintainer
+	if err := s.store.DB().
+		Preload("Company").
+		Preload("Projects").
+		First(&maintainer, id).Error; err != nil {
+		return nil, err
+	}
+	return &maintainer, nil
+}
+
+func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, includeServices bool) maintainerDetailResponse {
+	projects := make([]maintainerProjectResponse, 0, len(maintainer.Projects))
+	for _, project := range maintainer.Projects {
+		projects = append(projects, maintainerProjectResponse{
+			ID:   project.ID,
+			Name: project.Name,
+		})
+	}
+
+	response := maintainerDetailResponse{
+		ID:          maintainer.ID,
+		Name:        maintainer.Name,
+		Email:       normalizeValue(maintainer.Email, "EMAIL_MISSING"),
+		GitHub:      normalizeValue(maintainer.GitHubAccount, "GITHUB_MISSING"),
+		GitHubEmail: normalizeValue(maintainer.GitHubEmail, "GITHUB_MISSING"),
+		Status:      string(maintainer.MaintainerStatus),
+		Projects:    projects,
+		CreatedAt:   maintainer.CreatedAt,
+		UpdatedAt:   maintainer.UpdatedAt,
+	}
+	if includeServices {
+		response.Services = s.buildMaintainerServices(maintainer)
+	}
+	if maintainer.DeletedAt.Valid {
+		deleted := maintainer.DeletedAt.Time
+		response.DeletedAt = &deleted
+	}
+	if maintainer.CompanyID != nil {
+		response.CompanyID = maintainer.CompanyID
+	}
+	if maintainer.Company.Name != "" {
+		response.Company = maintainer.Company.Name
+	}
+	return response
+}
+
+func (s *server) buildMaintainerFossaService(maintainer model.Maintainer) (maintainerServiceResponse, bool) {
+	serviceID, err := s.getFossaServiceID()
+	if err != nil {
+		return maintainerServiceResponse{}, false
+	}
+
+	projects, err := s.loadMaintainerServiceProjects(maintainer.ID, serviceID)
+	if err != nil || len(projects) == 0 {
+		return maintainerServiceResponse{}, false
+	}
+
+	projectIDs := make([]uint, 0, len(projects))
+	for _, project := range projects {
+		projectIDs = append(projectIDs, project.ID)
+	}
+
+	var remoteTeams []model.RemoteTeam
+	if err := s.store.DB().
+		Where("service_id = ? AND project_id IN ?", serviceID, projectIDs).
+		Find(&remoteTeams).Error; err != nil {
+		return maintainerServiceResponse{}, false
+	}
+
+	teamByProjectID := make(map[uint]model.RemoteTeam, len(remoteTeams))
+	teamIDs := make([]uint, 0, len(remoteTeams))
+	for _, team := range remoteTeams {
+		teamByProjectID[team.ProjectID] = team
+		teamIDs = append(teamIDs, team.ID)
+	}
+
+	candidateEmails := maintainerServiceCandidateEmails(maintainer)
+
+	remoteUsers := make([]model.RemoteUser, 0)
+	if len(candidateEmails) > 0 {
+		if err := s.store.DB().
+			Where("service_id = ? AND LOWER(service_email) IN ?", serviceID, candidateEmails).
+			Find(&remoteUsers).Error; err != nil {
+			return maintainerServiceResponse{}, false
+		}
+	}
+
+	var invites []model.ServiceInvitation
+	inviteQuery := s.store.DB().
+		Where("service_id = ? AND project_id IN ?", serviceID, projectIDs).
+		Where("maintainer_id = ?", maintainer.ID)
+	if len(candidateEmails) > 0 {
+		inviteQuery = inviteQuery.Or(
+			"service_id = ? AND project_id IN ? AND LOWER(service_email) IN ?",
+			serviceID,
+			projectIDs,
+			candidateEmails,
+		)
+	}
+	if err := inviteQuery.Order("created_at desc").Find(&invites).Error; err != nil {
+		return maintainerServiceResponse{}, false
+	}
+
+	membershipQuery := s.store.DB().Where("service_id = ?", serviceID)
+	if len(teamIDs) > 0 {
+		membershipQuery = membershipQuery.Where("team_id IN ?", teamIDs)
+	}
+
+	remoteUserIDs := make([]uint, 0, len(remoteUsers))
+	for _, user := range remoteUsers {
+		remoteUserIDs = append(remoteUserIDs, user.ID)
+	}
+	if len(remoteUserIDs) > 0 {
+		membershipQuery = membershipQuery.Where("maintainer_id = ? OR user_id IN ?", maintainer.ID, remoteUserIDs)
+	} else {
+		membershipQuery = membershipQuery.Where("maintainer_id = ?", maintainer.ID)
+	}
+
+	var memberships []model.RemoteTeamUser
+	if err := membershipQuery.Find(&memberships).Error; err != nil {
+		return maintainerServiceResponse{}, false
+	}
+
+	selectedRemoteUser, matchedBy := selectMaintainerRemoteUser(maintainer, remoteUsers)
+	account := buildMaintainerServiceAccount(selectedRemoteUser, matchedBy, invites)
+	targets := buildMaintainerServiceTargets(projects, teamByProjectID, memberships, invites, account.State)
+
+	return maintainerServiceResponse{
+		Kind:    "fossa",
+		Label:   "CNCF FOSSA",
+		Account: account,
+		Targets: targets,
+	}, true
+}
+
+func (s *server) loadMaintainerServiceProjects(maintainerID, serviceID uint) ([]model.Project, error) {
+	var projects []model.Project
+	err := s.store.DB().
+		Model(&model.Project{}).
+		Distinct("projects.*").
+		Joins("JOIN maintainer_projects mp ON mp.project_id = projects.id").
+		Joins("JOIN service_projects sp ON sp.project_id = projects.id").
+		Where("mp.maintainer_id = ? AND sp.service_id = ?", maintainerID, serviceID).
+		Order("projects.name asc").
+		Find(&projects).Error
+	return projects, err
+}
+
+func maintainerServiceCandidateEmails(maintainer model.Maintainer) []string {
+	values := []string{
+		strings.ToLower(strings.TrimSpace(maintainer.Email)),
+		strings.ToLower(strings.TrimSpace(maintainer.GitHubEmail)),
+	}
+	seen := make(map[string]struct{}, len(values))
+	candidateEmails := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || value == "email_missing" || value == "github_email_missing" || value == "github_missing" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		candidateEmails = append(candidateEmails, value)
+	}
+	return candidateEmails
+}
+
+func selectMaintainerRemoteUser(maintainer model.Maintainer, remoteUsers []model.RemoteUser) (*model.RemoteUser, string) {
+	maintainerEmail := strings.ToLower(strings.TrimSpace(maintainer.Email))
+	githubEmail := strings.ToLower(strings.TrimSpace(maintainer.GitHubEmail))
+
+	for i := range remoteUsers {
+		email := strings.ToLower(strings.TrimSpace(remoteUsers[i].ServiceEmail))
+		if maintainerEmail != "" && email == maintainerEmail {
+			return &remoteUsers[i], "maintainer_email"
+		}
+	}
+	for i := range remoteUsers {
+		email := strings.ToLower(strings.TrimSpace(remoteUsers[i].ServiceEmail))
+		if githubEmail != "" && email == githubEmail {
+			return &remoteUsers[i], "github_email"
+		}
+	}
+	if len(remoteUsers) > 0 {
+		return &remoteUsers[0], "unknown"
+	}
+	return nil, "none"
+}
+
+func buildMaintainerServiceAccount(selectedRemoteUser *model.RemoteUser, matchedBy string, invites []model.ServiceInvitation) maintainerServiceAccountResponse {
+	account := maintainerServiceAccountResponse{
+		State:     "unknown",
+		MatchedBy: matchedBy,
+	}
+
+	var latestCheckedAt *time.Time
+	pendingInvites := 0
+	acceptedInvites := 0
+	lastError := ""
+	for _, invite := range invites {
+		if invite.LastCheckedAt != nil && (latestCheckedAt == nil || invite.LastCheckedAt.After(*latestCheckedAt)) {
+			latestCheckedAt = invite.LastCheckedAt
+		}
+		switch strings.ToLower(strings.TrimSpace(invite.Status)) {
+		case "pending", "expired":
+			pendingInvites++
+		case "accepted":
+			acceptedInvites++
+		case "error":
+			if invite.LastError != nil && strings.TrimSpace(*invite.LastError) != "" {
+				lastError = strings.TrimSpace(*invite.LastError)
+			}
+		}
+	}
+	account.LastCheckedAt = latestCheckedAt
+	account.PendingInvitations = pendingInvites
+	account.AcceptedInvitations = acceptedInvites
+
+	if selectedRemoteUser != nil {
+		account.State = "registered"
+		account.RemoteUserID = &selectedRemoteUser.RemoteUserID
+		account.RemoteRef = strings.TrimSpace(selectedRemoteUser.RemoteRef)
+		account.EmailUsed = strings.TrimSpace(selectedRemoteUser.ServiceEmail)
+		return account
+	}
+	if pendingInvites > 0 {
+		account.State = "invited"
+		if len(invites) > 0 {
+			account.EmailUsed = strings.TrimSpace(invites[0].ServiceEmail)
+		}
+		return account
+	}
+	if acceptedInvites > 0 {
+		account.State = "registered"
+		if len(invites) > 0 {
+			account.EmailUsed = strings.TrimSpace(invites[0].ServiceEmail)
+		}
+		return account
+	}
+	if lastError != "" {
+		account.State = "error"
+		account.Error = lastError
+		return account
+	}
+
+	account.State = "not_registered"
+	return account
+}
+
+func buildMaintainerServiceTargets(
+	projects []model.Project,
+	teamByProjectID map[uint]model.RemoteTeam,
+	memberships []model.RemoteTeamUser,
+	invites []model.ServiceInvitation,
+	accountState string,
+) []maintainerServiceTargetResponse {
+	membershipByTeamID := make(map[uint]model.RemoteTeamUser, len(memberships))
+	for _, membership := range memberships {
+		if _, exists := membershipByTeamID[membership.TeamID]; !exists {
+			membershipByTeamID[membership.TeamID] = membership
+		}
+	}
+
+	inviteByProjectID := make(map[uint]model.ServiceInvitation, len(invites))
+	for _, invite := range invites {
+		if _, exists := inviteByProjectID[invite.ProjectID]; !exists {
+			inviteByProjectID[invite.ProjectID] = invite
+		}
+	}
+
+	targets := make([]maintainerServiceTargetResponse, 0, len(projects))
+	for _, project := range projects {
+		target := maintainerServiceTargetResponse{
+			ProjectID:   project.ID,
+			ProjectName: project.Name,
+			TargetKind:  "team",
+			Required:    true,
+			State:       "missing",
+		}
+
+		team, hasTeam := teamByProjectID[project.ID]
+		invite, hasInvite := inviteByProjectID[project.ID]
+		if hasInvite {
+			target.LastCheckedAt = invite.LastCheckedAt
+		}
+
+		if !hasTeam {
+			target.TargetName = "FOSSA team not assigned"
+			target.State = "error"
+			target.Error = "Project does not have a cached FOSSA team"
+			targets = append(targets, target)
+			continue
+		}
+
+		target.TargetID = &team.RemoteTeamID
+		if team.RemoteTeamName != nil && strings.TrimSpace(*team.RemoteTeamName) != "" {
+			target.TargetName = strings.TrimSpace(*team.RemoteTeamName)
+		} else {
+			target.TargetName = fmt.Sprintf("Team %d", team.RemoteTeamID)
+		}
+
+		if _, ok := membershipByTeamID[team.ID]; ok {
+			target.State = "member"
+			targets = append(targets, target)
+			continue
+		}
+
+		if hasInvite {
+			switch strings.ToLower(strings.TrimSpace(invite.Status)) {
+			case "pending", "expired":
+				target.State = "pending"
+				target.PendingInvite = true
+			case "error":
+				target.State = "error"
+				if invite.LastError != nil {
+					target.Error = strings.TrimSpace(*invite.LastError)
+				}
+			case "accepted":
+				if invite.TeamAssignmentStatus != nil && strings.EqualFold(strings.TrimSpace(*invite.TeamAssignmentStatus), "error") {
+					target.State = "error"
+					if invite.LastError != nil {
+						target.Error = strings.TrimSpace(*invite.LastError)
+					}
+				} else if invite.TeamAssignmentStatus != nil && strings.EqualFold(strings.TrimSpace(*invite.TeamAssignmentStatus), "done") {
+					target.State = "member"
+				} else {
+					target.State = "pending"
+				}
+			default:
+				if accountState == "registered" {
+					target.State = "missing"
+				}
+			}
+			targets = append(targets, target)
+			continue
+		}
+
+		switch accountState {
+		case "registered":
+			target.State = "missing"
+		case "invited":
+			target.State = "pending"
+			target.PendingInvite = true
+		case "not_registered":
+			target.State = "missing"
+		}
+
+		targets = append(targets, target)
+	}
+
+	return targets
+}
+
+func (s *server) handleMaintainerServiceAction(w http.ResponseWriter, r *http.Request, maintainerID uint, serviceKind, action string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	maintainer, err := s.loadMaintainerWithRelations(maintainerID)
+	if err != nil {
+		http.Error(w, "maintainer not found", http.StatusNotFound)
+		return
+	}
+
+	switch serviceKind {
+	case "fossa":
+		switch action {
+		case "refresh":
+			err = s.refreshMaintainerFossaState(*maintainer)
+		case "invite":
+			err = s.inviteMaintainerToFossa(*maintainer)
+		case "reconcile":
+			err = s.reconcileMaintainerFossaTeams(*maintainer)
+		default:
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+	default:
+		http.Error(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	if err != nil {
+		s.logger.Printf("web-bff: maintainer service action failed maintainer=%d service=%s action=%s err=%v", maintainerID, serviceKind, action, err)
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+
+	updatedMaintainer, err := s.loadMaintainerWithRelations(maintainerID)
+	if err != nil {
+		http.Error(w, "maintainer not found", http.StatusNotFound)
+		return
+	}
+	response := s.buildMaintainerDetailResponse(*updatedMaintainer, true)
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.logger.Printf("web-bff: handleMaintainerServiceAction encode error: %v", err)
+	}
+}
+
+func (s *server) refreshMaintainerFossaState(maintainer model.Maintainer) error {
+	serviceID, projects, serviceTeams, client, err := s.loadMaintainerFossaContext(maintainer, false)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	users, err := client.FetchUsers()
+	if err != nil {
+		return err
+	}
+	matchedUser, emailUsed := findFossaUserForMaintainer(users, maintainer)
+
+	var remoteUser *model.RemoteUser
+	if matchedUser != nil {
+		remoteUser, err = s.upsertFossaRemoteUser(serviceID, *matchedUser, emailUsed)
+		if err != nil {
+			return err
+		}
+		for _, serviceTeam := range serviceTeams {
+			if fossaUserHasTeam(*matchedUser, serviceTeam.RemoteTeamID) {
+				if err := s.upsertFossaMembership(serviceID, *serviceTeam, remoteUser, maintainer.ID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	pendingEmails, err := client.FetchUserInvitationEmails()
+	if err != nil {
+		return err
+	}
+	pendingByEmail := normalizeEmailSet(pendingEmails)
+
+	candidateEmails := maintainerServiceCandidateEmails(maintainer)
+	var invites []model.ServiceInvitation
+	if err := s.store.DB().
+		Where("service_id = ? AND maintainer_id = ? AND project_id IN ?", serviceID, maintainer.ID, projectIDsForProjects(projects)).
+		Order("created_at desc").
+		Find(&invites).Error; err != nil {
+		return err
+	}
+	inviteByProjectID := make(map[uint]model.ServiceInvitation, len(invites))
+	for _, invite := range invites {
+		if _, ok := inviteByProjectID[invite.ProjectID]; !ok {
+			inviteByProjectID[invite.ProjectID] = invite
+		}
+	}
+
+	for _, project := range projects {
+		serviceTeam := serviceTeams[project.ID]
+		invite, hasInvite := inviteByProjectID[project.ID]
+		pendingEmail := firstMatchingPendingEmail(candidateEmails, pendingByEmail)
+		hasMembership := matchedUser != nil && fossaUserHasTeam(*matchedUser, serviceTeam.RemoteTeamID)
+		switch {
+		case pendingEmail != "":
+			if !hasInvite {
+				invite = model.ServiceInvitation{
+					ProjectID:    project.ID,
+					MaintainerID: &maintainer.ID,
+					ServiceID:    serviceID,
+				}
+			}
+			invite.ServiceEmail = pendingEmail
+			invite.RemoteTeamID = serviceTeam.RemoteTeamID
+			invite.Status = "pending"
+			invite.LastError = nil
+			invite.LastCheckedAt = &now
+			if _, err := s.store.UpsertServiceInvitation(&invite); err != nil {
+				return err
+			}
+		case matchedUser != nil:
+			if hasInvite {
+				invite.ServiceEmail = firstNonEmpty(emailUsed, invite.ServiceEmail)
+				invite.RemoteTeamID = serviceTeam.RemoteTeamID
+				invite.Status = "accepted"
+				invite.LastError = nil
+				invite.LastCheckedAt = &now
+				if hasMembership {
+					done := "done"
+					invite.TeamAssignmentStatus = &done
+				} else {
+					pending := "pending"
+					invite.TeamAssignmentStatus = &pending
+				}
+				if _, err := s.store.UpsertServiceInvitation(&invite); err != nil {
+					return err
+				}
+			}
+		case hasInvite:
+			invite.Status = "expired"
+			invite.LastCheckedAt = &now
+			if _, err := s.store.UpsertServiceInvitation(&invite); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *server) inviteMaintainerToFossa(maintainer model.Maintainer) error {
+	serviceID, projects, serviceTeams, client, err := s.loadMaintainerFossaContext(maintainer, true)
+	if err != nil {
+		return err
+	}
+
+	email := preferredMaintainerServiceEmail(maintainer)
+	if email == "" {
+		return fmt.Errorf("maintainer is missing an email address")
+	}
+
+	now := time.Now().UTC()
+	err = client.SendUserInvitation(email)
+	if err == nil || errors.Is(err, fossa.ErrInviteAlreadyExists) {
+		for _, project := range projects {
+			serviceTeam := serviceTeams[project.ID]
+			invite := &model.ServiceInvitation{
+				ProjectID:     project.ID,
+				MaintainerID:  &maintainer.ID,
+				ServiceID:     serviceID,
+				ServiceEmail:  email,
+				RemoteTeamID:  serviceTeam.RemoteTeamID,
+				Status:        "pending",
+				SentAt:        &now,
+				LastCheckedAt: &now,
+				LastError:     nil,
+			}
+			if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr != nil {
+				return upsertErr
+			}
+		}
+		return nil
+	}
+	if errors.Is(err, fossa.ErrUserAlreadyMember) {
+		return s.reconcileMaintainerFossaTeams(maintainer)
+	}
+
+	msg := err.Error()
+	for _, project := range projects {
+		serviceTeam := serviceTeams[project.ID]
+		invite := &model.ServiceInvitation{
+			ProjectID:     project.ID,
+			MaintainerID:  &maintainer.ID,
+			ServiceID:     serviceID,
+			ServiceEmail:  email,
+			RemoteTeamID:  serviceTeam.RemoteTeamID,
+			Status:        "error",
+			LastCheckedAt: &now,
+			LastError:     &msg,
+		}
+		if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr != nil {
+			return upsertErr
+		}
+	}
+	return err
+}
+
+func (s *server) reconcileMaintainerFossaTeams(maintainer model.Maintainer) error {
+	serviceID, projects, serviceTeams, client, err := s.loadMaintainerFossaContext(maintainer, true)
+	if err != nil {
+		return err
+	}
+
+	users, err := client.FetchUsers()
+	if err != nil {
+		return err
+	}
+	matchedUser, emailUsed := findFossaUserForMaintainer(users, maintainer)
+	if matchedUser == nil {
+		return fmt.Errorf("maintainer is not registered with CNCF FOSSA")
+	}
+
+	remoteUser, err := s.upsertFossaRemoteUser(serviceID, *matchedUser, emailUsed)
+	if err != nil {
+		return err
+	}
+
+	now := time.Now().UTC()
+	for _, project := range projects {
+		serviceTeam := serviceTeams[project.ID]
+		if !fossaUserHasTeam(*matchedUser, serviceTeam.RemoteTeamID) {
+			teamAdminRoleID, err := client.ResolveTeamAdminRoleID()
+			if err != nil {
+				return err
+			}
+			if err := client.AddUserToTeamByEmail(serviceTeam.RemoteTeamID, emailUsed, teamAdminRoleID); err != nil && !errors.Is(err, fossa.ErrUserAlreadyMember) {
+				msg := err.Error()
+				invite := &model.ServiceInvitation{
+					ProjectID:     project.ID,
+					MaintainerID:  &maintainer.ID,
+					ServiceID:     serviceID,
+					ServiceEmail:  emailUsed,
+					RemoteTeamID:  serviceTeam.RemoteTeamID,
+					Status:        "error",
+					LastCheckedAt: &now,
+					LastError:     &msg,
+				}
+				if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr != nil {
+					return upsertErr
+				}
+				return err
+			}
+		}
+		if err := s.upsertFossaMembership(serviceID, *serviceTeam, remoteUser, maintainer.ID); err != nil {
+			return err
+		}
+		done := "done"
+		invite := &model.ServiceInvitation{
+			ProjectID:            project.ID,
+			MaintainerID:         &maintainer.ID,
+			ServiceID:            serviceID,
+			ServiceEmail:         emailUsed,
+			RemoteTeamID:         serviceTeam.RemoteTeamID,
+			Status:               "accepted",
+			TeamAssignmentStatus: &done,
+			TeamAddAttempts:      1,
+			LastCheckedAt:        &now,
+			LastError:            nil,
+		}
+		if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr != nil {
+			return upsertErr
+		}
+	}
+
+	return nil
+}
+
+func (s *server) loadMaintainerFossaContext(maintainer model.Maintainer, ensureTeams bool) (uint, []model.Project, map[uint]*model.RemoteTeam, *fossa.Client, error) {
+	serviceID, err := s.getFossaServiceID()
+	if err != nil {
+		return 0, nil, nil, nil, err
+	}
+
+	projects, err := s.loadMaintainerServiceProjects(maintainer.ID, serviceID)
+	if err != nil {
+		return 0, nil, nil, nil, err
+	}
+	if len(projects) == 0 {
+		return 0, nil, nil, nil, fmt.Errorf("maintainer has no FOSSA-enabled projects")
+	}
+
+	client, err := s.fossaClient()
+	if err != nil {
+		return 0, nil, nil, nil, err
+	}
+
+	serviceTeams := make(map[uint]*model.RemoteTeam, len(projects))
+	for _, project := range projects {
+		serviceTeam, err := s.store.GetRemoteTeamByProject(project.ID, serviceID)
+		if err != nil {
+			return 0, nil, nil, nil, err
+		}
+		if serviceTeam == nil && ensureTeams {
+			serviceTeam, _, err = s.ensureFossaTeam(project, client)
+			if err != nil {
+				return 0, nil, nil, nil, err
+			}
+		}
+		if serviceTeam == nil {
+			return 0, nil, nil, nil, fmt.Errorf("project %s does not have a cached FOSSA team", project.Name)
+		}
+		serviceTeams[project.ID] = serviceTeam
+	}
+
+	return serviceID, projects, serviceTeams, client, nil
+}
+
+func (s *server) upsertFossaRemoteUser(serviceID uint, user fossa.User, emailUsed string) (*model.RemoteUser, error) {
+	serviceEmail := strings.TrimSpace(user.Email)
+	if serviceEmail == "" {
+		serviceEmail = emailUsed
+	}
+	var githubName *string
+	if user.GitHub.Name != nil && strings.TrimSpace(*user.GitHub.Name) != "" {
+		value := strings.TrimSpace(*user.GitHub.Name)
+		githubName = &value
+	}
+	return s.store.UpsertRemoteUser(&model.RemoteUser{
+		ServiceID:         serviceID,
+		RemoteUserID:      user.ID,
+		ServiceEmail:      serviceEmail,
+		RemoteRef:         strings.TrimSpace(user.Username),
+		ServiceGitHubName: githubName,
+	})
+}
+
+func (s *server) upsertFossaMembership(serviceID uint, serviceTeam model.RemoteTeam, remoteUser *model.RemoteUser, maintainerID uint) error {
+	if remoteUser == nil {
+		return fmt.Errorf("missing remote user")
+	}
+	link := &model.RemoteTeamUser{
+		ServiceID:    serviceID,
+		TeamID:       serviceTeam.ID,
+		UserID:       remoteUser.ID,
+		MaintainerID: &maintainerID,
+	}
+	_, err := s.store.UpsertRemoteUserTeam(link)
+	return err
+}
+
+func normalizeEmailSet(values map[string]struct{}) map[string]struct{} {
+	normalized := make(map[string]struct{}, len(values))
+	for value := range values {
+		email := strings.ToLower(strings.TrimSpace(value))
+		if email == "" {
+			continue
+		}
+		normalized[email] = struct{}{}
+	}
+	return normalized
+}
+
+func firstMatchingPendingEmail(candidateEmails []string, pendingByEmail map[string]struct{}) string {
+	for _, email := range candidateEmails {
+		if _, ok := pendingByEmail[email]; ok {
+			return email
+		}
+	}
+	return ""
+}
+
+func preferredMaintainerServiceEmail(maintainer model.Maintainer) string {
+	if email := strings.TrimSpace(normalizeValue(maintainer.Email, "EMAIL_MISSING")); email != "" {
+		return email
+	}
+	if email := strings.TrimSpace(normalizeValue(maintainer.GitHubEmail, "GITHUB_MISSING")); email != "" {
+		return email
+	}
+	return ""
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func projectIDsForProjects(projects []model.Project) []uint {
+	projectIDs := make([]uint, 0, len(projects))
+	for _, project := range projects {
+		projectIDs = append(projectIDs, project.ID)
+	}
+	return projectIDs
+}
+
+func findFossaUserForMaintainer(users []fossa.User, maintainer model.Maintainer) (*fossa.User, string) {
+	candidateEmails := maintainerServiceCandidateEmails(maintainer)
+	if len(candidateEmails) == 0 {
+		return nil, ""
+	}
+
+	for _, candidate := range candidateEmails {
+		for i := range users {
+			if fossaUserMatchesEmail(users[i], candidate) {
+				return &users[i], candidate
+			}
+		}
+	}
+
+	return nil, ""
+}
+
+func fossaUserMatchesEmail(user fossa.User, email string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(email))
+	if normalized == "" {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(user.Email), normalized) {
+		return true
+	}
+	if user.GitHub.Email != nil && strings.EqualFold(strings.TrimSpace(*user.GitHub.Email), normalized) {
+		return true
+	}
+	if user.Bitbucket.Email != nil && strings.EqualFold(strings.TrimSpace(*user.Bitbucket.Email), normalized) {
+		return true
+	}
+	return false
+}
+
+func fossaUserHasTeam(user fossa.User, remoteTeamID uint) bool {
+	for _, membership := range user.TeamUsers {
+		if membership.Team.ID == remoteTeamID {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *server) handleAudit(w http.ResponseWriter, r *http.Request) {
@@ -3447,8 +4274,27 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if errors.Is(err, fossa.ErrUserAlreadyMember) {
-			const fossaTeamAdminRoleID = 3
-			if addErr := client.AddUserToTeamByEmail(serviceTeam.RemoteTeamID, email, fossaTeamAdminRoleID); addErr == nil {
+			teamAdminRoleID, resolveErr := client.ResolveTeamAdminRoleID()
+			if resolveErr != nil {
+				msg := resolveErr.Error()
+				inviteStatus := &model.ServiceInvitation{
+					ProjectID:     project.ID,
+					MaintainerID:  &maintainer.ID,
+					ServiceID:     serviceID,
+					ServiceEmail:  email,
+					RemoteTeamID:  serviceTeam.RemoteTeamID,
+					Status:        "error",
+					LastError:     &msg,
+					LastCheckedAt: &now,
+				}
+				if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
+					resp.Errors[email] = "failed to store invite status"
+				} else {
+					resp.Errors[email] = msg
+				}
+				continue
+			}
+			if addErr := client.AddUserToTeamByEmail(serviceTeam.RemoteTeamID, email, teamAdminRoleID); addErr == nil {
 				inviteStatus := &model.ServiceInvitation{
 					ProjectID:     project.ID,
 					MaintainerID:  &maintainer.ID,
@@ -3912,8 +4758,19 @@ func (s *server) handleFossaInviteAction(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if errors.Is(err, fossa.ErrUserAlreadyMember) {
-		const fossaTeamAdminRoleID = 3
-		if addErr := client.AddUserToTeamByEmail(invite.RemoteTeamID, email, fossaTeamAdminRoleID); addErr == nil {
+		teamAdminRoleID, resolveErr := client.ResolveTeamAdminRoleID()
+		if resolveErr != nil {
+			msg := resolveErr.Error()
+			invite.Status = "error"
+			invite.LastError = &msg
+			invite.LastCheckedAt = &now
+			if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr != nil {
+				s.logger.Printf("web-bff: handleFossaInviteAction upsert error: %v", upsertErr)
+			}
+			http.Error(w, msg, http.StatusBadGateway)
+			return
+		}
+		if addErr := client.AddUserToTeamByEmail(invite.RemoteTeamID, email, teamAdminRoleID); addErr == nil {
 			invite.Status = "accepted"
 			invite.LastError = nil
 			invite.LastCheckedAt = &now
@@ -4598,6 +5455,19 @@ func parseCSVParam(r *http.Request, key string) []string {
 		}
 	}
 	return out
+}
+
+func parseMaintainerServiceActionPath(path string) (uint, string, string, bool) {
+	trimmed := strings.Trim(strings.TrimPrefix(path, "/api/maintainers/"), "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) != 4 || parts[1] != "services" {
+		return 0, "", "", false
+	}
+	id, err := strconv.Atoi(parts[0])
+	if err != nil || id <= 0 {
+		return 0, "", "", false
+	}
+	return uint(id), parts[2], parts[3], true
 }
 
 func parseIDParam(path, prefix string) (uint, error) {

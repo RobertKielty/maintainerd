@@ -164,13 +164,13 @@ func TestUpsertMaintainer_FillsMissingFields(t *testing.T) {
 	// Existing maintainer with missing name and GitHub account.
 	existing := model.Maintainer{
 		Name:             "",
-		Email:            "accorell@amazon.com",
+		Email:            "adrian@example.com",
 		GitHubAccount:    "GITHUB_MISSING",
 		MaintainerStatus: model.ActiveMaintainer,
 	}
 	require.NoError(t, db.Create(&existing).Error)
 
-	maintainer, err := store.UpsertMaintainer(project.ID, "Adrian Palacios", "accorell@amazon.com", "adpaco-aws", "Amazon")
+	maintainer, err := store.UpsertMaintainer(project.ID, "Adrian Palacios", "adrian@example.com", "adpaco-aws", "Amazon")
 	require.NoError(t, err)
 	require.NotNil(t, maintainer)
 	assert.Equal(t, existing.ID, maintainer.ID)
@@ -179,7 +179,7 @@ func TestUpsertMaintainer_FillsMissingFields(t *testing.T) {
 	require.NoError(t, db.First(&refreshed, existing.ID).Error)
 	assert.Equal(t, "Adrian Palacios", refreshed.Name)
 	assert.Equal(t, "adpaco-aws", refreshed.GitHubAccount)
-	assert.Equal(t, "accorell@amazon.com", refreshed.Email)
+	assert.Equal(t, "adrian@example.com", refreshed.Email)
 	assert.NotNil(t, refreshed.CompanyID)
 	assert.NotEqual(t, uint(0), *refreshed.CompanyID)
 

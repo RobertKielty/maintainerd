@@ -503,11 +503,14 @@ test-web:
 	TESTDATA_DIR="$${TESTDATA_DIR:-$$(pwd)/testdata}"; \
 	HOST_LOG_DIR="$${HOST_LOG_DIR:-$$(pwd)/testdata}"; \
 	mkdir -p "$$TESTDATA_DIR"; \
-	bff_pid=""; web_pid=""; \
+	bff_pid=""; web_pid=""; microcks_started=""; \
 	cleanup() { \
 		status=$$?; \
 		if [ -n "$$web_pid" ] || [ -n "$$bff_pid" ]; then \
 			kill $$web_pid $$bff_pid >/dev/null 2>&1 || true; \
+		fi; \
+		if [ -n "$$microcks_started" ]; then \
+			CONTAINER_TOOL="$${CONTAINER_TOOL:-podman}" scripts/microcks-down.sh >/dev/null 2>&1 || true; \
 		fi; \
 		if command -v lsof >/dev/null 2>&1; then \
 			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill >/dev/null 2>&1 || true; \
@@ -564,15 +567,27 @@ test-web:
 		echo "MD_DB_DSN is required for test-web."; \
 		exit 1; \
 	fi; \
+	USE_MICROCKS="$${WEB_BDD_USE_MICROCKS:-false}"; \
+	if [ "$$USE_MICROCKS" = "true" ]; then \
+		if ! command -v "$${CONTAINER_TOOL:-podman}" >/dev/null 2>&1; then \
+			echo "WEB_BDD_USE_MICROCKS=true but container tool $${CONTAINER_TOOL:-podman} is not available."; \
+			exit 1; \
+		fi; \
+		microcks_env="$$(CONTAINER_TOOL="$${CONTAINER_TOOL:-podman}" scripts/microcks-up.sh)"; \
+		eval "$$microcks_env"; \
+		microcks_started=1; \
+		export FOSSA_API_BASE; \
+		export FOSSA_API_TOKEN="$${FOSSA_API_TOKEN:-dummy-token}"; \
+	fi; \
 	MD_DB_DRIVER=postgres MD_DB_DSN="$$DB_DSN" go run ./cmd/testdb-reset; \
 	MD_DB_DRIVER=postgres MD_DB_DSN="$$DB_DSN" go run ./cmd/migrate; \
 	go run ./cmd/web-bff-seed -driver postgres -dsn "$$DB_DSN"; \
 	export MD_DB_DRIVER=postgres; \
 	export MD_DB_DSN="$$DB_DSN"; \
 	unset MD_DB_PATH; \
-	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
+	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_ALLOW_LIVE_FOSSA="$$USE_MICROCKS" BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
 	WEB_APP_BASE_URL=http://localhost:4001 GITHUB_OAUTH_REDIRECT_URL=http://localhost:9001/auth/callback \
-	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test \
+	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test FOSSA_API_BASE="$${FOSSA_API_BASE:-}" FOSSA_API_TOKEN="$${FOSSA_API_TOKEN:-}" \
 	go run ./cmd/web-bff > >(tee "$$TESTDATA_DIR/web-bff-test.log") 2>&1 & \
 	bff_pid=$$!; \
 	mkdir -p "$$TESTDATA_DIR/tmp" web/tmp || true; \
@@ -584,9 +599,12 @@ test-web:
 	npm --prefix web run start > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
 	web_pid=$$!; \
 	npx --prefix web wait-on http://localhost:9001/healthz http://localhost:4001 > /dev/null 2>&1; \
-	WEB_BASE_URL=http://localhost:4001 BFF_BASE_URL=http://localhost:9001 TEST_STAFF_LOGIN=staff-tester \
-	TEST_MAINTAINER_LOGIN=antonio-example TEST_OTHER_MAINTAINER_LOGIN=renee-sample \
-	NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false WEB_TEST_ARTIFACTS_DIR="$$TESTDATA_DIR/web-artifacts" npm --prefix web run test:bdd; \
+	BDD_FEATURE_PATH="$${BDD_FEATURE:-}"; \
+	if [ -n "$$BDD_FEATURE_PATH" ]; then \
+		cd web && WEB_BDD_FEATURE="$$BDD_FEATURE_PATH" WEB_BASE_URL=http://localhost:4001 BFF_BASE_URL=http://localhost:9001 TEST_STAFF_LOGIN=staff-tester TEST_MAINTAINER_LOGIN=antonio-example TEST_OTHER_MAINTAINER_LOGIN=renee-sample NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false WEB_TEST_ARTIFACTS_DIR="$$TESTDATA_DIR/web-artifacts" npx cucumber-js --config ./cucumber.js; \
+	else \
+		WEB_BASE_URL=http://localhost:4001 BFF_BASE_URL=http://localhost:9001 TEST_STAFF_LOGIN=staff-tester TEST_MAINTAINER_LOGIN=antonio-example TEST_OTHER_MAINTAINER_LOGIN=renee-sample NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false WEB_TEST_ARTIFACTS_DIR="$$TESTDATA_DIR/web-artifacts" npm --prefix web run test:bdd; \
+	fi; \
 	'
 
 .PHONY: test-web-license-checker
@@ -687,6 +705,15 @@ web-bdd:
 	@bash -c 'set -euo pipefail; \
 	status=0; \
 	$(MAKE) test-web || status=$$?; \
+	$(MAKE) web-bdd-report || true; \
+	exit $$status; \
+	'
+
+.PHONY: web-bdd-maintainer-profile
+web-bdd-maintainer-profile:
+	@bash -c 'set -euo pipefail; \
+	status=0; \
+	WEB_BDD_USE_MICROCKS=true BDD_FEATURE=../features/web/maintainer_profile.feature $(MAKE) test-web || status=$$?; \
 	$(MAKE) web-bdd-report || true; \
 	exit $$status; \
 	'
@@ -1089,6 +1116,7 @@ images-show:
 	@echo "  maintainerd-sync   $(SYNC_IMAGE)"
 	@echo "  maintainerd-sanitize $(SANITIZE_IMAGE)"
 	@echo "  maintainerd-migrate  $(MIGRATE_IMAGE)"
+	@echo "  maintainerd-fossa-poller $(FOSSA_POLLER_IMAGE)"
 	@echo "  maintainerd-web      $(WEB_IMAGE)"
 	@echo "  maintainerd-web-bff  $(WEB_BFF_IMAGE)"
 
