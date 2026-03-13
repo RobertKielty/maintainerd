@@ -19,7 +19,7 @@ Those flows are more reliable under test when the FOSSA API is mocked.
 
 The mock contract lives at:
 
-- [`testdata/microcks/fossa-api-mock.yaml`](/home/rk/cncf/gh/maintainer-d/testdata/microcks/fossa-api-mock.yaml)
+- [`microcks/fossa-api-mock.yaml`](/home/rk/cncf/gh/maintainer-d/microcks/fossa-api-mock.yaml)
 
 The supporting scripts are:
 

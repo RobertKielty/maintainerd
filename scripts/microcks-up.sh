@@ -6,7 +6,7 @@ CONTAINER_TOOL=${CONTAINER_TOOL:-podman}
 MICROCKS_CONTAINER_NAME=${MICROCKS_CONTAINER_NAME:-maintainerd-microcks}
 MICROCKS_PORT=${MICROCKS_PORT:-8585}
 MICROCKS_IMAGE=${MICROCKS_IMAGE:-quay.io/microcks/microcks-uber:latest-native}
-MICROCKS_ARTIFACT=${MICROCKS_ARTIFACT:-$ROOT_DIR/testdata/microcks/fossa-api-mock.yaml}
+MICROCKS_ARTIFACT=${MICROCKS_ARTIFACT:-$ROOT_DIR/microcks/fossa-api-mock.yaml}
 
 if [ ! -r "${MICROCKS_ARTIFACT}" ]; then
   echo "Microcks artifact is not readable: ${MICROCKS_ARTIFACT}" >&2
