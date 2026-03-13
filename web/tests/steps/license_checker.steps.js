@@ -303,16 +303,21 @@ Then("I see a note that the project may have an organization on Snyk", async fun
 Then(
   "the invite action shows Send CNCF FOSSA Invites to {int} Selected Maintainers",
   async function (count) {
-    const label = new RegExp(`Send CNCF FOSSA Invites to ${count} Selected Maintainers`, "i");
-    await expect(activeInvitationSection(this).getByRole("button", { name: label })).toBeVisible({
-      timeout: 15000,
-    });
+    const button = this.page.getByRole("button", { name: /Send CNCF FOSSA Invites to/i });
+    await expect(button).toBeVisible({ timeout: 15000 });
+    await expect(button).toHaveText(
+      new RegExp(`Send CNCF FOSSA Invites to ${count} Selected Maintainers`, "i"),
+      { timeout: 15000 }
+    );
   }
 );
 
 Then("the invite action is disabled when {int} is {int}", async function (_count, selected) {
-  const label = new RegExp(`Send CNCF FOSSA Invites to ${selected} Selected Maintainers`, "i");
-  const button = activeInvitationSection(this).getByRole("button", { name: label });
+  const button = this.page.getByRole("button", { name: /Send CNCF FOSSA Invites to/i });
+  await expect(button).toHaveText(
+    new RegExp(`Send CNCF FOSSA Invites to ${selected} Selected Maintainers`, "i"),
+    { timeout: 15000 }
+  );
   await expect(button).toBeDisabled({ timeout: 15000 });
 });
 
