@@ -98,7 +98,7 @@ Notes:
 ## Web BDD With Microcks
 
 For the web BDD test setup that mocks the FOSSA API with Microcks, see
-[web/tests/MICROCKS.MD](/home/rk/cncf/gh/maintainer-d/web/tests/MICROCKS.MD).
+[web/tests/MICROCKS.MD](https://github.com/cncf/maintainer-d/blob/main/web/tests/MICROCKS.MD).
 
 ## License
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FRobertKielty%2Fmaintainerd.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FRobertKielty%2Fmaintainerd?ref=badge_large)
