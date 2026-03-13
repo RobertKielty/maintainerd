@@ -1,39 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Prevent committing unencrypted secrets in deploy/secrets.
-changed_files=$(git diff --cached --name-only --diff-filter=ACMR | rg '^deploy/secrets/.*\.ya?ml$' || true)
+ROOT_DIR=$(git rev-parse --show-toplevel)
 
-if [[ -z "${changed_files}" ]]; then
-  exit 0
-fi
-
-fail=0
-for file in ${changed_files}; do
-  if ! rg -q '^sops:' "${file}"; then
-    echo "ERROR: ${file} is missing sops metadata." >&2
-    fail=1
-    continue
-  fi
-
-  # Require encrypted values for secret-like keys.
-  while IFS= read -r line; do
-    # Skip comments and empty lines.
-    [[ "${line}" =~ ^[[:space:]]*# ]] && continue
-    [[ "${line}" =~ ^[[:space:]]*$ ]] && continue
-
-    # Match KEY: value for secret-like keys.
-    if [[ "${line}" =~ ^[[:space:]]*([A-Za-z0-9_]*(TOKEN|SECRET|PASSWORD|KEY)[A-Za-z0-9_]*)[[:space:]]*:[[:space:]]*(.+)$ ]]; then
-      value="${BASH_REMATCH[3]}"
-      if [[ "${value}" != ENC[* ]]; then
-        echo "ERROR: ${file} contains unencrypted value for ${BASH_REMATCH[1]}." >&2
-        fail=1
-      fi
-    fi
-  done < "${file}"
-done
-
-if [[ "${fail}" -ne 0 ]]; then
-  echo "Commit blocked. Encrypt secrets with SOPS before committing." >&2
-  exit 1
-fi
+"${ROOT_DIR}/scripts/check-sops-secrets.sh" --staged
+"${ROOT_DIR}/scripts/check-pii.sh" --staged

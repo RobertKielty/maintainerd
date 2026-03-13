@@ -104,6 +104,16 @@ func performMaintainerGet(t *testing.T, s *server, maintainerID uint, sessionID 
 	return rec
 }
 
+func performMaintainerAction(t *testing.T, s *server, maintainerID uint, action string, sessionID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/maintainers/%d/services/fossa/%s", maintainerID, action), nil)
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: sessionID})
+	rec := httptest.NewRecorder()
+	handler := s.requireSession(http.HandlerFunc(s.handleMaintainer))
+	handler.ServeHTTP(rec, req)
+	return rec
+}
+
 func TestMaintainerEmailRedaction(t *testing.T) {
 	dbConn := setupPostgresTestDB(t)
 	store := db.NewSQLStore(dbConn)
@@ -269,6 +279,458 @@ func TestMaintainerCanAccessAllProjectsAndMaintainers(t *testing.T) {
 		rec := performMaintainerGet(t, s, bob.ID, maintainerSessionID)
 		require.Equal(t, http.StatusOK, rec.Code)
 	})
+}
+
+func TestMaintainerServiceAssociationsForStaff(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now()
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	fossa := model.Service{Name: "FOSSA", Description: "License compliance"}
+	require.NoError(t, dbConn.Create(&fossa).Error)
+
+	maintainer := model.Maintainer{
+		Name:             "Alice Example",
+		Email:            "alice@example.org",
+		GitHubAccount:    "alice-example",
+		GitHubEmail:      "alice@github.example",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&maintainer).Error)
+
+	projectA := model.Project{Name: "Project A", Maturity: model.Sandbox}
+	projectB := model.Project{Name: "Project B", Maturity: model.Graduated}
+	require.NoError(t, dbConn.Create(&projectA).Error)
+	require.NoError(t, dbConn.Create(&projectB).Error)
+	require.NoError(t, dbConn.Model(&projectA).Association("Maintainers").Append(&maintainer))
+	require.NoError(t, dbConn.Model(&projectB).Association("Maintainers").Append(&maintainer))
+	require.NoError(t, dbConn.Model(&projectA).Association("Services").Append(&fossa))
+	require.NoError(t, dbConn.Model(&projectB).Association("Services").Append(&fossa))
+
+	teamAName := "Project A Team"
+	teamBName := "Project B Team"
+	teamA := model.RemoteTeam{
+		ProjectID:      projectA.ID,
+		ServiceID:      fossa.ID,
+		RemoteTeamID:   101,
+		RemoteTeamName: &teamAName,
+		ProjectName:    &projectA.Name,
+	}
+	teamB := model.RemoteTeam{
+		ProjectID:      projectB.ID,
+		ServiceID:      fossa.ID,
+		RemoteTeamID:   102,
+		RemoteTeamName: &teamBName,
+		ProjectName:    &projectB.Name,
+	}
+	require.NoError(t, dbConn.Create(&teamA).Error)
+	require.NoError(t, dbConn.Create(&teamB).Error)
+
+	remoteUser := model.RemoteUser{
+		ServiceID:    fossa.ID,
+		RemoteUserID: 9001,
+		ServiceEmail: maintainer.Email,
+		RemoteRef:    "alice-fossa",
+	}
+	require.NoError(t, dbConn.Create(&remoteUser).Error)
+
+	link := model.RemoteTeamUser{
+		ServiceID:    fossa.ID,
+		TeamID:       teamA.ID,
+		UserID:       remoteUser.ID,
+		MaintainerID: &maintainer.ID,
+	}
+	require.NoError(t, dbConn.Create(&link).Error)
+
+	invite := model.ServiceInvitation{
+		ServiceID:            fossa.ID,
+		RemoteTeamID:         teamB.RemoteTeamID,
+		ProjectID:            projectB.ID,
+		MaintainerID:         &maintainer.ID,
+		ServiceEmail:         maintainer.Email,
+		Status:               "pending",
+		TeamAssignmentStatus: nil,
+		SentAt:               &now,
+		LastCheckedAt:        &now,
+	}
+	require.NoError(t, dbConn.Create(&invite).Error)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+	}
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	rec := performMaintainerGet(t, s, maintainer.ID, staffSessionID)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var response maintainerDetailResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Services, 1)
+
+	service := response.Services[0]
+	assert.Equal(t, "fossa", service.Kind)
+	assert.Equal(t, "CNCF FOSSA", service.Label)
+	assert.Equal(t, "registered", service.Account.State)
+	assert.Equal(t, "maintainer_email", service.Account.MatchedBy)
+	if assert.NotNil(t, service.Account.RemoteUserID) {
+		assert.Equal(t, uint(9001), *service.Account.RemoteUserID)
+	}
+	assert.Equal(t, "alice-fossa", service.Account.RemoteRef)
+	assert.Equal(t, maintainer.Email, service.Account.EmailUsed)
+	require.Len(t, service.Targets, 2)
+
+	targetsByProject := map[uint]maintainerServiceTargetResponse{}
+	for _, target := range service.Targets {
+		targetsByProject[target.ProjectID] = target
+	}
+
+	assert.Equal(t, "member", targetsByProject[projectA.ID].State)
+	assert.Equal(t, "pending", targetsByProject[projectB.ID].State)
+	assert.True(t, targetsByProject[projectB.ID].PendingInvite)
+}
+
+func TestMaintainerFossaRefreshAction(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now()
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	maintainer := model.Maintainer{
+		Name:             "Alice Example",
+		Email:            "alice@example.org",
+		GitHubAccount:    "alice-example",
+		GitHubEmail:      "alice@github.example",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&maintainer).Error)
+
+	project := model.Project{Name: "Project Refresh", Maturity: model.Sandbox}
+	require.NoError(t, dbConn.Create(&project).Error)
+	require.NoError(t, dbConn.Model(&project).Association("Maintainers").Append(&maintainer))
+
+	fossaService := model.Service{Name: "FOSSA", Description: "License scanning"}
+	require.NoError(t, dbConn.Create(&fossaService).Error)
+	require.NoError(t, dbConn.Model(&project).Association("Services").Append(&fossaService))
+
+	teamName := "Project Refresh Team"
+	team := model.RemoteTeam{
+		ProjectID:      project.ID,
+		ServiceID:      fossaService.ID,
+		RemoteTeamID:   501,
+		RemoteTeamName: &teamName,
+		ProjectName:    &project.Name,
+	}
+	require.NoError(t, dbConn.Create(&team).Error)
+
+	invite := model.ServiceInvitation{
+		ServiceID:     fossaService.ID,
+		RemoteTeamID:  team.RemoteTeamID,
+		ProjectID:     project.ID,
+		MaintainerID:  &maintainer.ID,
+		ServiceEmail:  maintainer.Email,
+		Status:        "pending",
+		LastCheckedAt: &now,
+	}
+	require.NoError(t, dbConn.Create(&invite).Error)
+
+	fossaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/users"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":9001,"username":"alice-fossa","email":"alice@example.org","github":{"name":"alice-example","email":"alice@github.example"},"bitbucketCloud":{"name":null,"email":null},"teamUsers":[{"roleId":3,"team":{"id":501,"name":"Project Refresh Team"}}]}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/user-invitations":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"email":"alice@example.org"}]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fossaAPI.Close()
+	t.Setenv("FOSSA_API_BASE", fossaAPI.URL)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		fossaToken: "test-token",
+	}
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	rec := performMaintainerAction(t, s, maintainer.ID, "refresh", staffSessionID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var response maintainerDetailResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Services, 1)
+	assert.Equal(t, "registered", response.Services[0].Account.State)
+	assert.Equal(t, "member", response.Services[0].Targets[0].State)
+
+	var remoteUser model.RemoteUser
+	require.NoError(t, dbConn.Where("service_id = ? AND remote_user_id = ?", fossaService.ID, 9001).First(&remoteUser).Error)
+	assert.Equal(t, "alice-fossa", remoteUser.RemoteRef)
+
+	var link model.RemoteTeamUser
+	require.NoError(t, dbConn.Where("service_id = ? AND team_id = ? AND maintainer_id = ?", fossaService.ID, team.ID, maintainer.ID).First(&link).Error)
+
+	var updatedInvite model.ServiceInvitation
+	require.NoError(t, dbConn.First(&updatedInvite, invite.ID).Error)
+	assert.Equal(t, "pending", updatedInvite.Status)
+}
+
+func TestMaintainerFossaReconcileAction(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now()
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	maintainer := model.Maintainer{
+		Name:             "Alice Example",
+		Email:            "alice@example.org",
+		GitHubAccount:    "alice-example",
+		GitHubEmail:      "alice@github.example",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&maintainer).Error)
+
+	projectA := model.Project{Name: "Project A", Maturity: model.Sandbox}
+	projectB := model.Project{Name: "Project B", Maturity: model.Graduated}
+	require.NoError(t, dbConn.Create(&projectA).Error)
+	require.NoError(t, dbConn.Create(&projectB).Error)
+	require.NoError(t, dbConn.Model(&projectA).Association("Maintainers").Append(&maintainer))
+	require.NoError(t, dbConn.Model(&projectB).Association("Maintainers").Append(&maintainer))
+
+	fossaService := model.Service{Name: "FOSSA", Description: "License scanning"}
+	require.NoError(t, dbConn.Create(&fossaService).Error)
+	require.NoError(t, dbConn.Model(&projectA).Association("Services").Append(&fossaService))
+	require.NoError(t, dbConn.Model(&projectB).Association("Services").Append(&fossaService))
+
+	teamAName := "Project A Team"
+	teamBName := "Project B Team"
+	teamA := model.RemoteTeam{
+		ProjectID:      projectA.ID,
+		ServiceID:      fossaService.ID,
+		RemoteTeamID:   601,
+		RemoteTeamName: &teamAName,
+		ProjectName:    &projectA.Name,
+	}
+	teamB := model.RemoteTeam{
+		ProjectID:      projectB.ID,
+		ServiceID:      fossaService.ID,
+		RemoteTeamID:   602,
+		RemoteTeamName: &teamBName,
+		ProjectName:    &projectB.Name,
+	}
+	require.NoError(t, dbConn.Create(&teamA).Error)
+	require.NoError(t, dbConn.Create(&teamB).Error)
+
+	putBodies := make([]string, 0, 2)
+	fossaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/users"):
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":9001,"username":"alice-fossa","email":"alice@example.org","github":{"name":"alice-example","email":"alice@github.example"},"bitbucketCloud":{"name":null,"email":null},"teamUsers":[]}]`))
+		case r.Method == http.MethodGet && r.URL.Path == "/roles":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[{"id":4,"scope":"team","name":"Team Admin"}]`))
+		case r.Method == http.MethodPut && r.URL.Path == "/teams/601/users":
+			body, _ := io.ReadAll(r.Body)
+			putBodies = append(putBodies, string(body))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		case r.Method == http.MethodPut && r.URL.Path == "/teams/602/users":
+			body, _ := io.ReadAll(r.Body)
+			putBodies = append(putBodies, string(body))
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fossaAPI.Close()
+	t.Setenv("FOSSA_API_BASE", fossaAPI.URL)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		fossaToken: "test-token",
+	}
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	rec := performMaintainerAction(t, s, maintainer.ID, "reconcile", staffSessionID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var response maintainerDetailResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Services, 1)
+	for _, target := range response.Services[0].Targets {
+		assert.Equal(t, "member", target.State)
+	}
+
+	require.Len(t, putBodies, 2)
+	assert.Contains(t, putBodies[0], `"userId":9001`)
+	assert.Contains(t, putBodies[0], `"roleId":4`)
+	assert.Contains(t, putBodies[1], `"userId":9001`)
+	assert.Contains(t, putBodies[1], `"roleId":4`)
+
+	var links int64
+	require.NoError(t, dbConn.Model(&model.RemoteTeamUser{}).
+		Where("service_id = ? AND maintainer_id = ?", fossaService.ID, maintainer.ID).
+		Count(&links).Error)
+	assert.Equal(t, int64(2), links)
+
+	var invites []model.ServiceInvitation
+	require.NoError(t, dbConn.Where("service_id = ? AND maintainer_id = ?", fossaService.ID, maintainer.ID).Find(&invites).Error)
+	require.Len(t, invites, 2)
+	for _, invite := range invites {
+		assert.Equal(t, "accepted", invite.Status)
+		require.NotNil(t, invite.TeamAssignmentStatus)
+		assert.Equal(t, "done", *invite.TeamAssignmentStatus)
+	}
+}
+
+func TestMaintainerFossaInviteAction(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now()
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	maintainer := model.Maintainer{
+		Name:             "Alice Example",
+		Email:            "alice@example.org",
+		GitHubAccount:    "alice-example",
+		GitHubEmail:      "alice@github.example",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&maintainer).Error)
+
+	projectA := model.Project{Name: "Project A", Maturity: model.Sandbox}
+	projectB := model.Project{Name: "Project B", Maturity: model.Incubating}
+	require.NoError(t, dbConn.Create(&projectA).Error)
+	require.NoError(t, dbConn.Create(&projectB).Error)
+	require.NoError(t, dbConn.Model(&projectA).Association("Maintainers").Append(&maintainer))
+	require.NoError(t, dbConn.Model(&projectB).Association("Maintainers").Append(&maintainer))
+
+	fossaService := model.Service{Name: "FOSSA", Description: "License scanning"}
+	require.NoError(t, dbConn.Create(&fossaService).Error)
+	require.NoError(t, dbConn.Model(&projectA).Association("Services").Append(&fossaService))
+	require.NoError(t, dbConn.Model(&projectB).Association("Services").Append(&fossaService))
+
+	teamAName := "Project A Team"
+	teamBName := "Project B Team"
+	teamA := model.RemoteTeam{
+		ProjectID:      projectA.ID,
+		ServiceID:      fossaService.ID,
+		RemoteTeamID:   701,
+		RemoteTeamName: &teamAName,
+		ProjectName:    &projectA.Name,
+	}
+	teamB := model.RemoteTeam{
+		ProjectID:      projectB.ID,
+		ServiceID:      fossaService.ID,
+		RemoteTeamID:   702,
+		RemoteTeamName: &teamBName,
+		ProjectName:    &projectB.Name,
+	}
+	require.NoError(t, dbConn.Create(&teamA).Error)
+	require.NoError(t, dbConn.Create(&teamB).Error)
+
+	fossaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/organizations/162/invite":
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fossaAPI.Close()
+	t.Setenv("FOSSA_API_BASE", fossaAPI.URL)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		fossaToken: "test-token",
+	}
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	rec := performMaintainerAction(t, s, maintainer.ID, "invite", staffSessionID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var response maintainerDetailResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Len(t, response.Services, 1)
+	assert.Equal(t, "invited", response.Services[0].Account.State)
+
+	var invites []model.ServiceInvitation
+	require.NoError(t, dbConn.Where("service_id = ? AND maintainer_id = ?", fossaService.ID, maintainer.ID).Order("project_id asc").Find(&invites).Error)
+	require.Len(t, invites, 2)
+	assert.Equal(t, projectA.ID, invites[0].ProjectID)
+	assert.Equal(t, projectB.ID, invites[1].ProjectID)
+	for _, invite := range invites {
+		assert.Equal(t, "pending", invite.Status)
+		assert.Equal(t, maintainer.Email, invite.ServiceEmail)
+	}
 }
 
 func TestParseGitHubIssueURL(t *testing.T) {

@@ -8,6 +8,9 @@ import MaintainerEditCard, {
   CompanyOption,
   MaintainerEditDraft,
 } from "@/components/MaintainerEditCard";
+import MaintainerServicesPanel, {
+  MaintainerServiceView,
+} from "@/components/MaintainerServicesPanel";
 import CompanyCreateModal from "@/components/CompanyCreateModal";
 import styles from "./page.module.css";
 
@@ -21,6 +24,7 @@ type MaintainerDetail = {
   companyId?: number | null;
   company?: string;
   projects: { id: number; name: string }[];
+  services?: MaintainerServiceView[];
   createdAt: string;
   updatedAt: string;
   updatedBy?: string;
@@ -43,6 +47,7 @@ const maintainerDataHasChanged = (
     current.status !== next.status ||
     current.company !== next.company ||
     current.companyId !== next.companyId ||
+    JSON.stringify(current.services ?? []) !== JSON.stringify(next.services ?? []) ||
     current.createdAt !== next.createdAt ||
     current.updatedAt !== next.updatedAt ||
     current.updatedBy !== next.updatedBy ||
@@ -440,6 +445,20 @@ export default function MaintainerPage() {
               updatedNotice={saveNotice}
             />
           )}
+          {role === "staff" && maintainer?.services?.length ? (
+            <MaintainerServicesPanel
+              apiBaseUrl={apiBaseUrl}
+              disabled={saveStatus === "saving"}
+              maintainerId={maintainer.id}
+              onMaintainerUpdated={(next) => {
+                const data = next as MaintainerDetail;
+                setMaintainer((prev) =>
+                  prev ? (maintainerDataHasChanged(prev, data) ? data : prev) : data
+                );
+              }}
+              services={maintainer.services}
+            />
+          ) : null}
         </div>
       </div>
     </AppShell>

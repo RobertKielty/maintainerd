@@ -49,6 +49,14 @@ const openLicenseCheckerSection = async (world) => {
   });
 };
 
+const activeInvitationSection = (world) =>
+  world.page
+    .getByRole("heading", { name: "ACTIVE MAINTAINERS ELIGABLE FOR INVITATION" })
+    .locator("..")
+    .locator("..");
+
+const activeInvitationRows = (world) => activeInvitationSection(world).locator("tbody tr");
+
 Given("the project has selected FOSSA", function () {
   if (!this.projectName) {
     this.projectName = projectNames.fossaPartial;
@@ -121,12 +129,20 @@ Then("the ACTIVE MAINTAINERS ELIGABLE FOR INVITATION table is visible", async fu
 });
 
 When("I select maintainers in the table", async function () {
-  const checkbox = this.page.getByRole("checkbox").first();
+  const checkboxes = activeInvitationRows(this).getByRole("checkbox");
+  const count = await checkboxes.count();
+  for (let index = 0; index < count; index += 1) {
+    const checkbox = checkboxes.nth(index);
+    if (await checkbox.isChecked()) {
+      await checkbox.uncheck();
+    }
+  }
+  const checkbox = checkboxes.first();
   await checkbox.check();
 });
 
 When("I clear the maintainer selection", async function () {
-  const checkboxes = this.page.getByRole("checkbox");
+  const checkboxes = activeInvitationRows(this).getByRole("checkbox");
   const count = await checkboxes.count();
   for (let index = 0; index < count; index += 1) {
     const checkbox = checkboxes.nth(index);
@@ -287,14 +303,21 @@ Then("I see a note that the project may have an organization on Snyk", async fun
 Then(
   "the invite action shows Send CNCF FOSSA Invites to {int} Selected Maintainers",
   async function (count) {
-    const label = `Send CNCF FOSSA Invites to ${count} Selected Maintainers`;
-    await expect(this.page.getByRole("button", { name: label })).toBeVisible({ timeout: 15000 });
+    const button = this.page.getByRole("button", { name: /Send CNCF FOSSA Invites to/i });
+    await expect(button).toBeVisible({ timeout: 15000 });
+    await expect(button).toHaveText(
+      new RegExp(`Send CNCF FOSSA Invites to ${count} Selected Maintainers`, "i"),
+      { timeout: 15000 }
+    );
   }
 );
 
 Then("the invite action is disabled when {int} is {int}", async function (_count, selected) {
-  const label = new RegExp(`Send CNCF FOSSA Invites to ${selected} Selected Maintainers`, "i");
-  const button = this.page.getByRole("button", { name: label });
+  const button = this.page.getByRole("button", { name: /Send CNCF FOSSA Invites to/i });
+  await expect(button).toHaveText(
+    new RegExp(`Send CNCF FOSSA Invites to ${selected} Selected Maintainers`, "i"),
+    { timeout: 15000 }
+  );
   await expect(button).toBeDisabled({ timeout: 15000 });
 });
 

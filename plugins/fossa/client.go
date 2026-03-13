@@ -119,6 +119,55 @@ func (c *Client) FetchUsers() ([]User, error) {
 	return allUsers, nil
 }
 
+type Role struct {
+	ID    int    `json:"id"`
+	Scope string `json:"scope"`
+	Name  string `json:"name"`
+}
+
+func (c *Client) FetchRoles() ([]Role, error) {
+	req, err := http.NewRequest("GET", c.APIBase+"/roles", nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("FetchRoles failed: %s – %s", resp.Status, string(body))
+	}
+
+	var roles []Role
+	if err := json.Unmarshal(body, &roles); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	return roles, nil
+}
+
+func (c *Client) ResolveTeamAdminRoleID() (int, error) {
+	roles, err := c.FetchRoles()
+	if err != nil {
+		return 0, err
+	}
+	for _, role := range roles {
+		if strings.EqualFold(strings.TrimSpace(role.Scope), "team") &&
+			strings.EqualFold(strings.TrimSpace(role.Name), "Team Admin") {
+			return role.ID, nil
+		}
+	}
+	return 0, fmt.Errorf("ResolveTeamAdminRoleID: Team Admin role not found")
+}
+
 // FetchUserInvitations GETs /api/user-invitations - Retrieves all active (non-expired) user invitations for an
 // organization
 func (c *Client) FetchUserInvitations() (string, error) {
@@ -448,7 +497,8 @@ func (c *Client) AddUserToTeamByEmailWithResponse(teamID uint, email string, rol
 	bodyPayload := map[string]interface{}{
 		"users": []map[string]interface{}{
 			{
-				"id": uid,
+				"id":     uid,
+				"userId": uid,
 			},
 		},
 		"action": "add",

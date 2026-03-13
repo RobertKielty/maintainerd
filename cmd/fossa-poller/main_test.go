@@ -21,6 +21,7 @@ import (
 type fakeFossaClient struct {
 	hasPending bool
 	userID     uint
+	roleID     int
 	teamEmails []string
 	addResp    *fossa.TeamAddResponse
 	addErr     error
@@ -37,7 +38,7 @@ func (f *fakeFossaClient) AddUserToTeamByEmailWithResponse(uint, string, int) (*
 	if f.addResp != nil || f.addErr != nil {
 		return f.addResp, f.addErr
 	}
-	return &fossa.TeamAddResponse{Status: "200 OK", Body: []byte(`{"action":"add"}`), UserID: f.userID, RoleID: 3}, nil
+	return &fossa.TeamAddResponse{Status: "200 OK", Body: []byte(`{"action":"add"}`), UserID: f.userID, RoleID: f.roleID}, nil
 }
 func (f *fakeFossaClient) FetchTeamUserEmails(uint) ([]string, error) { return f.teamEmails, nil }
 func (f *fakeFossaClient) FetchTeamMembersRaw(uint) (fossa.TeamMembers, []byte, error) {
@@ -48,6 +49,12 @@ func (f *fakeFossaClient) FetchTeamMembersRaw(uint) (fossa.TeamMembers, []byte, 
 	return fossa.TeamMembers{Results: []fossa.TeamMember{{Email: "dana@example.com"}}, TotalCount: 1}, body, nil
 }
 func (f *fakeFossaClient) FindUserIDByEmail(string) (uint, error) { return f.userID, nil }
+func (f *fakeFossaClient) ResolveTeamAdminRoleID() (int, error) {
+	if f.roleID == 0 {
+		return 4, nil
+	}
+	return f.roleID, nil
+}
 
 func setupPollerTestDB(t *testing.T) *gorm.DB {
 	dbConn, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{

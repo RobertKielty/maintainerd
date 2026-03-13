@@ -87,9 +87,9 @@ func (m Maturity) IsValid() bool {
 type Maintainer struct {
 	gorm.Model
 	Name             string
-	Email            string           `gorm:"size:254;default:EMAIL_MISSING"`
+	Email            string           `gorm:"size:254;default:EMAIL_MISSING"` // Primary/Work Email
 	GitHubAccount    string           `gorm:"size:100;default:GITHUB_MISSING"`
-	GitHubEmail      string           `gorm:"size:100;default:GITHUB_MISSING"`
+	GitHubEmail      string           `gorm:"size:100;default:GITHUB_MISSING"` // Email used for Git Commits on GitHub
 	MaintainerStatus MaintainerStatus `gorm:"type:text"`
 	ImportWarnings   string
 	Projects         []Project `gorm:"many2many:maintainer_projects;joinForeignKey:MaintainerID;joinReferences:ProjectID"`
@@ -201,6 +201,7 @@ type RemoteUser struct {
 	ServiceGitHubName *string
 }
 
+// Orchestrates Inviations maintainer-d sends to Maintaienrs to join services
 type ServiceInvitation struct {
 	gorm.Model
 	ServiceID    uint   `gorm:"index;uniqueIndex:idx_service_invite_project_email"` // FK to Service
