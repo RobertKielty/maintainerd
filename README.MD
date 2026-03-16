@@ -59,7 +59,7 @@ We have CRDs for projects, maintainers and companies that are periodically synch
 
 ## Operations Guide
 
-Operational commands, deployment steps, and Make targets live in [OPS.MD](./OPS,MD).
+Operational commands, deployment steps, and Make targets live in [OPS.MD](./OPS.MD).
 
 ## Developer: Run the Web App Locally
 
@@ -98,7 +98,7 @@ Notes:
 ## Web BDD With Microcks
 
 For the web BDD test setup that mocks the FOSSA API with Microcks, see
-[web/tests/MICROCKS.MD](/home/rk/cncf/gh/maintainer-d/web/tests/MICROCKS.MD).
+[web/tests/MICROCKS.MD](./web/tests/MICROCKS.MD).
 
 ## License
 [![FOSSA Status](https://app.fossa.com/api/projects/git%2Bgithub.com%2FRobertKielty%2Fmaintainerd.svg?type=large)](https://app.fossa.com/projects/git%2Bgithub.com%2FRobertKielty%2Fmaintainerd?ref=badge_large)
