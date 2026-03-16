@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSelectedLayoutSegment } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import ProjectReconciliationCard, {
   AddMaintainerPayload,
@@ -72,7 +72,7 @@ type ProjectDetail = {
 };
 
 type ProjectRouteClientProps = {
-  section: ProjectSectionId;
+  children?: React.ReactNode;
 };
 
 const projectSectionRoutes: Array<{
@@ -179,7 +179,8 @@ const projectDataHasChanged = (current: ProjectDetail | null, next: ProjectDetai
   return false;
 };
 
-export default function ProjectRouteClient({ section }: ProjectRouteClientProps) {
+export default function ProjectRouteClient(_props: ProjectRouteClientProps) {
+  const segment = useSelectedLayoutSegment();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [error, setError] = useState<string | null>(null);
@@ -203,6 +204,10 @@ export default function ProjectRouteClient({ section }: ProjectRouteClientProps)
     }
     return `${bffBaseUrl}/api`;
   }, [bffBaseUrl]);
+  const section = useMemo<ProjectSectionId>(() => {
+    const matchedRoute = projectSectionRoutes.find((item) => item.segment === segment);
+    return matchedRoute?.id ?? "legacy";
+  }, [segment]);
 
   useEffect(() => {
     let alive = true;
