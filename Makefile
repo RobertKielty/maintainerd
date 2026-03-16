@@ -1444,7 +1444,7 @@ ci-local:
 		echo "Example: MD_DB_DSN=\"host=localhost port=5432 user=maintainerd password=maintainerd dbname=maintainerd_test sslmode=disable\""; \
 		exit 1; \
 	fi; \
-	env MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" $(MAKE) web-bdd; \
+	env MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" WEB_BDD_USE_MICROCKS=true $(MAKE) web-bdd; \
 	'
 	@echo "→ Running tests with race detector..."
 	@go test -race -coverprofile=coverage.out -covermode=atomic ./...

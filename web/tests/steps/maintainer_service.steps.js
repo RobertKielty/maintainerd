@@ -141,7 +141,9 @@ Given("the maintainer is not a member of that project's FOSSA team", async funct
   await selectSeededMaintainer(this, "alex");
 });
 Given("the maintainer is missing from one or more required FOSSA teams", async function () {
-  await selectSeededMaintainer(this, "renee");
+  if (!this.maintainerId) {
+    await selectSeededMaintainer(this, "renee");
+  }
 });
 Given("a CNCF FOSSA invitation is pending for the maintainer", async function () {
   await selectSeededMaintainer(this, "jun");
@@ -203,6 +205,7 @@ When("I refresh the maintainer's remote service associations", async function ()
   if (!response.ok()) {
     throw new Error(`Refresh remote service associations failed: ${response.status()} ${await response.text()}`);
   }
+  this.lastMaintainerServiceResponse = await response.json().catch(() => null);
 });
 
 When("I reconcile the maintainer's FOSSA access from the maintainer page", async function () {
@@ -220,6 +223,7 @@ When("I reconcile the maintainer's FOSSA access from the maintainer page", async
   if (!response.ok()) {
     throw new Error(`Reconcile FOSSA access failed: ${response.status()} ${await response.text()}`);
   }
+  this.lastMaintainerServiceResponse = await response.json().catch(() => null);
 });
 
 When("I send a CNCF FOSSA invite from the maintainer page", async function () {
@@ -237,6 +241,7 @@ When("I send a CNCF FOSSA invite from the maintainer page", async function () {
   if (!response.ok()) {
     throw new Error(`Send FOSSA invite failed: ${response.status()} ${await response.text()}`);
   }
+  this.lastMaintainerServiceResponse = await response.json().catch(() => null);
 });
 
 When("the FOSSA invitation is accepted", function () {
@@ -273,7 +278,12 @@ Then("maintainer-d checks whether the maintainer exists on the remote service us
   if (!email) {
     return;
   }
-  await expect(this.page.locator('[class*="stateEmail"]').getByText(email)).toBeVisible({
+  const services = Array.isArray(this.lastMaintainerServiceResponse?.services)
+    ? this.lastMaintainerServiceResponse.services
+    : [];
+  const matched = services.some((service) => service?.account?.emailUsed === email);
+  expect(matched).toBeTruthy();
+  await expect(this.page.locator('[class*="stateEmail"]').getByText(email, { exact: true }).first()).toBeVisible({
     timeout: 15000,
   });
 });

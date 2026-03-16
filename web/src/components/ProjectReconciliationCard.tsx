@@ -71,6 +71,22 @@ type SortState<Key extends string> = {
   direction: SortDirection;
 };
 
+export type ProjectSectionId =
+  | "legacy"
+  | "dot-project"
+  | "license-checker"
+  | "mailing-maintainers"
+  | "mailing-security"
+  | "docs"
+  | "slack"
+  | "discord";
+
+type ProjectSectionNavItem = {
+  id: ProjectSectionId;
+  label: string;
+  href?: string;
+};
+
 export type AddMaintainerPayload = {
   name: string;
   githubHandle: string;
@@ -114,6 +130,9 @@ type ProjectReconciliationCardProps = {
   onAddMaintainer?: (payload: AddMaintainerPayload) => Promise<void>;
   onUpdateMaintainerRef?: (ref: string) => Promise<void>;
   onBulkStatusChange?: (ids: number[], status: string) => Promise<void>;
+  activeSection?: ProjectSectionId;
+  sectionNavItems?: ProjectSectionNavItem[];
+  hideSectionMenu?: boolean;
 };
 
 const formatDate = (value?: string | null) => {
@@ -231,6 +250,9 @@ export default function ProjectReconciliationCard({
   onAddMaintainer,
   onUpdateMaintainerRef,
   onBulkStatusChange,
+  activeSection: controlledSection,
+  sectionNavItems,
+  hideSectionMenu = false,
 }: ProjectReconciliationCardProps) {
   const refStatus = maintainerRefStatus?.status || "missing";
   const refCheckedAt = maintainerRefStatus?.checkedAt || null;
@@ -402,7 +424,7 @@ export default function ProjectReconciliationCard({
   const [refInput, setRefInput] = useState("");
   const [refSaving, setRefSaving] = useState(false);
   const [refError, setRefError] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<string>("legacy");
+  const [activeSection, setActiveSection] = useState<ProjectSectionId>("legacy");
   const [refEditing, setRefEditing] = useState(false);
   const [maturityModalOpen, setMaturityModalOpen] = useState(false);
   const [maturitySaving, setMaturitySaving] = useState(false);
@@ -431,6 +453,7 @@ export default function ProjectReconciliationCard({
   });
   const [fossaChooseStatus, setFossaChooseStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [fossaChooseError, setFossaChooseError] = useState<string | null>(null);
+  const currentSection = controlledSection ?? activeSection;
 
   const toggleSort = useCallback(
     <Key extends string>(current: SortState<Key>, setter: (next: SortState<Key>) => void, key: Key) => {
@@ -598,30 +621,11 @@ export default function ProjectReconciliationCard({
   }, [apiBaseUrl, fossaTeamId, projectId]);
 
   useEffect(() => {
-    if (activeSection !== "license-checker" || !projectId || !fossaTeamId) {
+    if (currentSection !== "license-checker" || !projectId || !fossaTeamId) {
       return;
     }
     void loadFossaInvites();
-  }, [activeSection, fossaTeamId, loadFossaInvites, projectId]);
-  useEffect(() => {
-    if (eligibleInviteRows.length === 0) {
-      setSelectedMaintainers((prev) => (prev.size === 0 ? prev : new Set()));
-      return;
-    }
-    const next = new Set(eligibleInviteRows.map((row) => row.maintainer.id));
-    setSelectedMaintainers((prev) => {
-      if (prev.size !== next.size) {
-        return next;
-      }
-      for (const id of next) {
-        if (!prev.has(id)) {
-          return next;
-        }
-      }
-      return prev;
-    });
-  }, [eligibleInviteRows]);
-
+  }, [currentSection, fossaTeamId, loadFossaInvites, projectId]);
   const sendFossaInvites = async () => {
     if (!projectId || !fossaTeamId || selectedMaintainers.size === 0) {
       return;
@@ -965,7 +969,7 @@ export default function ProjectReconciliationCard({
     </div>
   );
 
-  const menuItems = [
+  const defaultMenuItems: ProjectSectionNavItem[] = [
     { id: "legacy", label: "MAINTAINER ROLL CALL" },
     { id: "dot-project", label: "PROJECT RECORDS / DOT PROJECT YAML" },
     { id: "license-checker", label: "SERVICES / LICENSE CHECKER" },
@@ -975,9 +979,10 @@ export default function ProjectReconciliationCard({
     { id: "slack", label: "SERVICES / COLLABORATION / SLACK" },
     { id: "discord", label: "SERVICES / COLLABORATION / DISCORD" },
   ];
+  const menuItems = sectionNavItems ?? defaultMenuItems;
 
   const renderContent = () => {
-    switch (activeSection) {
+    switch (currentSection) {
       case "legacy":
         return (
           <>
@@ -1483,24 +1488,36 @@ export default function ProjectReconciliationCard({
         </div>
 
         <div className={styles.bottomRow}>
-          <div className={styles.menuColumn}>
-            <div className={styles.projectMenu}>
-              {menuItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`${styles.menuItem} ${activeSection === item.id ? styles.menuItemActive : ""}`}
-                  onClick={() => setActiveSection(item.id)}
-                >
-                  {item.label}
-                </button>
-              ))}
+          {!hideSectionMenu ? (
+            <div className={styles.menuColumn}>
+              <div className={styles.projectMenu}>
+                {menuItems.map((item) =>
+                  item.href ? (
+                    <Link
+                      key={item.id}
+                      href={item.href}
+                      className={`${styles.menuItem} ${currentSection === item.id ? styles.menuItemActive : ""}`}
+                    >
+                      {item.label}
+                    </Link>
+                  ) : (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`${styles.menuItem} ${currentSection === item.id ? styles.menuItemActive : ""}`}
+                      onClick={() => setActiveSection(item.id)}
+                    >
+                      {item.label}
+                    </button>
+                  )
+                )}
+              </div>
             </div>
-          </div>
+          ) : null}
           <div className={styles.contentColumn}>
             <div className={styles.nestedCard}>
               <div className={styles.collapsibleHeader}>
-                <h2 className={styles.sectionTitle}>{menuItems.find((m) => m.id === activeSection)?.label}</h2>
+                <h2 className={styles.sectionTitle}>{menuItems.find((m) => m.id === currentSection)?.label}</h2>
               </div>
               {renderContent()}
             </div>
