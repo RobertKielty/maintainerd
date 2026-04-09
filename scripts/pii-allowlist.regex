@@ -6,6 +6,7 @@
 
 # Placeholder addresses present in vendor API documentation.
 ^email@email\.com$
+^ALEX@EXAMPLE.DEV$
 ^api-service@company\.com$
 ^prod-api@company\.com$
 ^automation@company\.com$
