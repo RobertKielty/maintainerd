@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Pagination } from "clo-ui/components/Pagination";
 import AppShell from "@/components/AppShell";
+import { getAuthBaseUrl, redirectToAuthLogin } from "@/utils/auth";
 import styles from "./page.module.css";
 
 type SearchProject = {
@@ -41,6 +42,7 @@ type SearchResponse = {
 };
 
 export default function SearchClient() {
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const query = (searchParams.get("query") || "").trim();
   const [results, setResults] = useState<SearchResponse | null>(null);
@@ -55,6 +57,7 @@ export default function SearchClient() {
     const raw = process.env.NEXT_PUBLIC_BFF_BASE_URL || "/api";
     return raw.replace(/\/+$/, "");
   }, []);
+  const authBaseUrl = useMemo(() => getAuthBaseUrl(bffBaseUrl), [bffBaseUrl]);
   const apiBaseUrl = useMemo(() => {
     if (bffBaseUrl === "") {
       return "/api";
@@ -88,7 +91,11 @@ export default function SearchClient() {
           { credentials: "include" }
         );
         if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
+          if (response.status === 401) {
+            redirectToAuthLogin(authBaseUrl, pathname);
+            return;
+          }
+          if (response.status === 403) {
             setError("You do not have access to global search.");
             setStatus("ready");
             return;
@@ -114,7 +121,7 @@ export default function SearchClient() {
     return () => {
       alive = false;
     };
-  }, [apiBaseUrl, query, projectsPage, maintainersPage, companiesPage]);
+  }, [apiBaseUrl, authBaseUrl, companiesPage, maintainersPage, pathname, projectsPage, query]);
 
   const hasQuery = query.length > 0;
   const hasResults =
@@ -145,7 +152,7 @@ export default function SearchClient() {
         </header>
 
         {!hasQuery ? (
-          <div className={styles.empty}>Enter a search term in the top bar.</div>
+          <div className={styles.empty}>Enter a search term in the shared search bar to search the directory.</div>
         ) : status === "loading" ? (
           <div className={styles.empty}>Searching…</div>
         ) : error ? (

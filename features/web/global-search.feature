@@ -33,6 +33,21 @@ Feature: Global maintainer search
     When I search globally for maintainer email "alex@example.dev"
     Then the results include the projects associated with "Alex Example"
 
+  Scenario: Staff can start a search from the search page itself
+    Given the maintainer-d database contains staff, maintainers, and projects
+    When I open the global search page
+    And I search from the search page for "alex@example.dev"
+    Then the search page URL includes query "alex@example.dev"
+    And I see maintainer "Alex Example" in the results
+
+  Scenario: Staff can refine an existing search from the search page
+    Given the maintainer-d database contains staff, maintainers, and projects
+    When I search globally for maintainer email "alex@example.dev"
+    And I search from the search page for "example.dev"
+    Then the search page URL includes query "example.dev"
+    And I see maintainer "Alex Example" in the results
+    And I see maintainer "Renee Sample" in the results
+
   Scenario: Non-staff users cannot access global email search
     Given I am signed in as maintainer "self"
     When I try to access global maintainer search by email

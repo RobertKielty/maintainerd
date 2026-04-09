@@ -1398,6 +1398,7 @@ test-package:
 .PHONY: ci-local
 ci-local:
 	@echo "Running local CI checks..."
+	@mkdir -p $(GOCACHE_DIR) /tmp/golangci-lint
 	@echo "→ Tool versions..."
 	@bash -c 'set -euo pipefail; \
 	echo "go: $$(go version)"; \
@@ -1423,15 +1424,15 @@ ci-local:
 		exit 1; \
 	fi
 	@echo "→ Running go vet..."
-	@go vet # ./...
+	@GOCACHE=$(GOCACHE_DIR) go vet # ./...
 	@echo "→ Running staticcheck..."
 	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck not installed. Run: go install honnef.co/go/tools/cmd/staticcheck@latest"; exit 1; }
-	@staticcheck # ./...
+	@GOCACHE=$(GOCACHE_DIR) staticcheck # ./...
 	@echo "→ Running golangci-lint..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; exit 1; }
-	@golangci-lint run ./...
+	@GOLANGCI_LINT_CACHE=/tmp/golangci-lint GOCACHE=$(GOCACHE_DIR) golangci-lint run ./...
 	@echo "→ Running go tests..."
-	@go test ./...
+	@GOCACHE=$(GOCACHE_DIR) go test ./...
 	@echo "→ Running web eslint..."
 	@rm -rf web/work/testdata/next-dist web/testdata/next-dist web/tmp || true
 	@npm --prefix web run lint -- --max-warnings=$(ESLINT_MAX_WARNINGS)
@@ -1447,16 +1448,17 @@ ci-local:
 	env MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" WEB_BDD_USE_MICROCKS=true $(MAKE) web-bdd; \
 	'
 	@echo "→ Running tests with race detector..."
-	@go test -race -coverprofile=coverage.out -covermode=atomic ./...
+	@GOCACHE=$(GOCACHE_DIR) go test -race -coverprofile=coverage.out -covermode=atomic ./...
 	@echo "→ Coverage report:"
-	@go tool cover -func=coverage.out | tail -n 1
+	@GOCACHE=$(GOCACHE_DIR) go tool cover -func=coverage.out | tail -n 1
 	@echo "✅ All CI checks passed!"
 
 .PHONY: lint
 lint:
 	@echo "Running golangci-lint..."
+	@mkdir -p $(GOCACHE_DIR) /tmp/golangci-lint
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
+		GOLANGCI_LINT_CACHE=/tmp/golangci-lint GOCACHE=$(GOCACHE_DIR) golangci-lint run ./...; \
 	else \
 		echo "golangci-lint not installed."; \
 		echo "Install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \

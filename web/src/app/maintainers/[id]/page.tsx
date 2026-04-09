@@ -12,6 +12,7 @@ import MaintainerServicesPanel, {
   MaintainerServiceView,
 } from "@/components/MaintainerServicesPanel";
 import CompanyCreateModal from "@/components/CompanyCreateModal";
+import { getAuthBaseUrl, redirectToAuthLogin } from "@/utils/auth";
 import styles from "./page.module.css";
 
 type MaintainerDetail = {
@@ -106,6 +107,7 @@ export default function MaintainerPage() {
     }
     return `${bffBaseUrl}/api`;
   }, [bffBaseUrl]);
+  const authBaseUrl = useMemo(() => getAuthBaseUrl(bffBaseUrl), [bffBaseUrl]);
 
   const canEdit = role === "staff";
   const canEditSelf =
@@ -139,7 +141,7 @@ export default function MaintainerPage() {
         );
         if (!response.ok) {
           if (response.status === 401) {
-            router.push("/");
+            redirectToAuthLogin(authBaseUrl, `/maintainers/${maintainerId}`);
             return;
           }
           throw new Error(`unexpected status ${response.status}`);
@@ -171,7 +173,7 @@ export default function MaintainerPage() {
         window.clearInterval(intervalId);
       }
     };
-  }, [apiBaseUrl, error, isEditing, maintainer, maintainerId, pollIntervalMs, router]);
+  }, [apiBaseUrl, authBaseUrl, error, isEditing, maintainer, maintainerId, pollIntervalMs, router]);
 
   useEffect(() => {
     let alive = true;

@@ -7,6 +7,7 @@ import ProjectReconciliationCard, {
   AddMaintainerPayload,
   ProjectSectionId,
 } from "@/components/ProjectReconciliationCard";
+import { getAuthBaseUrl, redirectToAuthLogin } from "@/utils/auth";
 import styles from "./page.module.css";
 
 type MaintainerSummary = {
@@ -204,10 +205,17 @@ export default function ProjectRouteClient(_props: ProjectRouteClientProps) {
     }
     return `${bffBaseUrl}/api`;
   }, [bffBaseUrl]);
+  const authBaseUrl = useMemo(() => getAuthBaseUrl(bffBaseUrl), [bffBaseUrl]);
   const section = useMemo<ProjectSectionId>(() => {
     const matchedRoute = projectSectionRoutes.find((item) => item.segment === segment);
     return matchedRoute?.id ?? "legacy";
   }, [segment]);
+  const currentProjectPath = useMemo(() => {
+    if (!projectId) {
+      return "/projects";
+    }
+    return segment ? `/projects/${projectId}/${segment}` : `/projects/${projectId}`;
+  }, [projectId, segment]);
 
   useEffect(() => {
     let alive = true;
@@ -228,7 +236,7 @@ export default function ProjectRouteClient(_props: ProjectRouteClientProps) {
         });
         if (!response.ok) {
           if (response.status === 401) {
-            router.push("/");
+            redirectToAuthLogin(authBaseUrl, currentProjectPath);
             return;
           }
           throw new Error(`unexpected status ${response.status}`);
@@ -254,7 +262,7 @@ export default function ProjectRouteClient(_props: ProjectRouteClientProps) {
     return () => {
       alive = false;
     };
-  }, [apiBaseUrl, projectId, router]);
+  }, [apiBaseUrl, authBaseUrl, currentProjectPath, projectId, router]);
 
   useEffect(() => {
     let alive = true;
@@ -322,7 +330,7 @@ export default function ProjectRouteClient(_props: ProjectRouteClientProps) {
       });
       if (!response.ok) {
         if (response.status === 401) {
-          router.push("/");
+          redirectToAuthLogin(authBaseUrl, currentProjectPath);
           return;
         }
         throw new Error(`unexpected status ${response.status}`);
