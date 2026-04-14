@@ -1,0 +1,44 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: maintainerd-fossa-poller
+  namespace: maintainerd
+  labels:
+    app: maintainerd-fossa-poller
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: maintainerd-fossa-poller
+  template:
+    metadata:
+      labels:
+        app: maintainerd-fossa-poller
+    spec:
+      affinity:
+        podAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchLabels:
+                app: maintainerd
+            namespaces:
+            - maintainerd
+            topologyKey: kubernetes.io/hostname
+      imagePullSecrets:
+      - name: ghcr-secret
+      serviceAccountName: maintainer-sync
+      terminationGracePeriodSeconds: 30
+      containers:
+      - name: fossa-poller
+        image: ghcr.io/robertkielty/maintainerd-fossa-poller:latest
+        imagePullPolicy: Always
+        args:
+        - -interval=5m
+        envFrom:
+        - secretRef:
+            name: maintainerd-db-env
+        - secretRef:
+            name: maintainerd-server-env
+        resources: {}
