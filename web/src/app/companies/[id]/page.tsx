@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import AppShell from "@/components/AppShell";
+import { getAuthBaseUrl, redirectToAuthLogin } from "@/utils/auth";
 import styles from "./page.module.css";
 
 type CompanyProject = {
@@ -63,6 +64,7 @@ export default function CompanyPage() {
     }
     return `${bffBaseUrl}/api`;
   }, [bffBaseUrl]);
+  const authBaseUrl = useMemo(() => getAuthBaseUrl(bffBaseUrl), [bffBaseUrl]);
 
   useEffect(() => {
     if (!Number.isFinite(id)) {
@@ -79,7 +81,11 @@ export default function CompanyPage() {
           credentials: "include",
         });
         if (!response.ok) {
-          if (response.status === 401 || response.status === 403) {
+          if (response.status === 401) {
+            redirectToAuthLogin(authBaseUrl, `/companies/${id}`);
+            return;
+          }
+          if (response.status === 403) {
             setError("You do not have access to this company.");
             setStatus("ready");
             return;
@@ -110,7 +116,7 @@ export default function CompanyPage() {
     return () => {
       alive = false;
     };
-  }, [apiBaseUrl, id]);
+  }, [apiBaseUrl, authBaseUrl, id]);
 
   const rows = useMemo<TableRow[]>(() => {
     if (!company) return [];

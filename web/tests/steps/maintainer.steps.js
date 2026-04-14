@@ -2,7 +2,9 @@ const { When, Then } = require("@cucumber/cucumber");
 const { expect } = require("@playwright/test");
 
 When("I search for {string}", async function (query) {
-  const searchInput = this.page.getByPlaceholder("Search projects");
+  const searchInput = this.page.getByPlaceholder(
+    "Search projects, maintainers, companies, or roster URLs"
+  );
   await searchInput.fill(query);
   await searchInput.press("Enter");
   await this.page.screenshot({
