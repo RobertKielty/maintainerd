@@ -351,10 +351,25 @@ onboarding-backfill-job:
 	@echo "Running onboarding backfill job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/maintainerd-onboarding-backfill-job.yaml
 
+.PHONY: fossa-poller-deploy
+fossa-poller-deploy:
+	@bash -c 'set -euo pipefail; \
+	echo "Retiring legacy CronJob/maintainerd-fossa-poller in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete cronjob maintainerd-fossa-poller --ignore-not-found; \
+	jobs="$$(kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) get jobs -o name | grep "^job.batch/maintainerd-fossa-poller-" || true)"; \
+	if [ -n "$${jobs}" ]; then \
+		echo "Deleting legacy fossa poller Jobs [ctx=$(CTX_STR)]"; \
+		echo "$${jobs}" | xargs -r kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete --wait=true; \
+	fi; \
+	echo "Applying fossa poller deployment in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/maintainerd-fossa-poller-deployment.yaml; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) rollout status deployment/maintainerd-fossa-poller --timeout=180s; \
+	'
+
 .PHONY: fossa-poller-cronjob
 fossa-poller-cronjob:
-	@echo "Applying fossa poller cronjob in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
-	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/cronjob-fossa-poller.yaml
+	@echo "fossa-poller-cronjob is deprecated; applying the deployment-backed poller instead [ctx=$(CTX_STR)]"
+	@$(MAKE) fossa-poller-deploy
 
 .PHONY: migrate-schema-safe
 migrate-schema-safe:
@@ -460,6 +475,7 @@ help:
 	@echo "make mntrd-image-deploy -> build, push, and restart Deployment in $(NAMESPACE)"
 	@echo "make sync-apply      -> apply CronJob + RBAC for the sync job"
 	@echo "make sync-run        -> trigger a manual sync job and tail logs"
+	@echo "make fossa-poller-deploy -> apply Deployment for the long-running FOSSA poller"
 	@echo "make bootstrap-run   -> prod: recreate bootstrap job after applying SOPS bootstrap secrets"
 	@echo "make bootstrap-run-dev -> dev: recreate bootstrap job after applying .envrc secrets"
 	@echo "make migrate-schema  -> run one-off schema migration job"
@@ -1063,9 +1079,11 @@ fossa-poller-image-set:
 	@if [ -z "$(TAG)" ]; then \
 		echo "Usage: make fossa-poller-image-set TAG=<tag>"; exit 1; \
 	fi
-	@echo "Setting maintainerd-fossa-poller image to $(FOSSA_POLLER_IMAGE) [ns=$(NAMESPACE)]"
+	@echo "Setting Deployment/maintainerd-fossa-poller image to $(FOSSA_POLLER_IMAGE) [ns=$(NAMESPACE)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
-		set image cronjob/maintainerd-fossa-poller fossa-poller=$(FOSSA_POLLER_IMAGE)
+		set image deployment/maintainerd-fossa-poller fossa-poller=$(FOSSA_POLLER_IMAGE)
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		rollout status deployment/maintainerd-fossa-poller --timeout=180s
 
 .PHONY: sync-image-set
 sync-image-set:
