@@ -73,6 +73,10 @@
   border-radius: 4px;
 }
 
+.maintainerMatch a {
+  color: #fff;
+}
+
 @media (prefers-color-scheme: dark) {
   .card {
     border-color: rgba(148, 163, 184, 0.2);

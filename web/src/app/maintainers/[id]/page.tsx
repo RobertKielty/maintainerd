@@ -24,6 +24,9 @@ type MaintainerDetail = {
   status: string;
   companyId?: number | null;
   company?: string;
+  location?: string;
+  country?: string;
+  timezone?: string;
   projects: { id: number; name: string }[];
   services?: MaintainerServiceView[];
   createdAt: string;
@@ -48,6 +51,9 @@ const maintainerDataHasChanged = (
     current.status !== next.status ||
     current.company !== next.company ||
     current.companyId !== next.companyId ||
+    current.location !== next.location ||
+    current.country !== next.country ||
+    current.timezone !== next.timezone ||
     JSON.stringify(current.services ?? []) !== JSON.stringify(next.services ?? []) ||
     current.createdAt !== next.createdAt ||
     current.updatedAt !== next.updatedAt ||
@@ -440,6 +446,9 @@ export default function MaintainerPage() {
               githubEmail={maintainer.githubEmail}
               status={maintainer.status}
               company={maintainer.company}
+              location={maintainer.location}
+              country={maintainer.country}
+              timezone={maintainer.timezone}
               projects={maintainer.projects}
               createdAt={maintainer.createdAt}
               updatedAt={maintainer.updatedAt}

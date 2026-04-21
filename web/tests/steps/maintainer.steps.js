@@ -39,3 +39,7 @@ Then("I see the maintainer card for {string}", async function (name) {
     timeout: 15000,
   });
 });
+
+Then("I see the maintainer location {string}", async function (location) {
+  await expect(this.page.getByText(location)).toBeVisible({ timeout: 10000 });
+});

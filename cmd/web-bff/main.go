@@ -598,9 +598,12 @@ type projectCreateResponse struct {
 }
 
 type maintainerSummary struct {
-	ID     uint   `json:"id"`
-	Name   string `json:"name"`
-	GitHub string `json:"github"`
+	ID       uint   `json:"id"`
+	Name     string `json:"name"`
+	GitHub   string `json:"github"`
+	Country  string `json:"country,omitempty"`
+	Location string `json:"location,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
 }
 
 type projectMaintainerDetail struct {
@@ -733,8 +736,8 @@ func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			Joins("LEFT JOIN maintainers maint ON maint.id = mp.maintainer_id").
 			Joins("LEFT JOIN companies comp ON comp.id = maint.company_id").
 			Where(
-				"LOWER(projects.name) LIKE ? OR LOWER(projects.maintainer_ref) LIKE ? OR LOWER(maint.name) LIKE ? OR LOWER(maint.git_hub_account) LIKE ? OR LOWER(comp.name) LIKE ? OR REPLACE(REPLACE(REPLACE(LOWER(comp.name), ' ', ''), '-', ''), '_', '') LIKE ?",
-				like, like, like, like, like, compactLike,
+				"LOWER(projects.name) LIKE ? OR LOWER(projects.maintainer_ref) LIKE ? OR LOWER(maint.name) LIKE ? OR LOWER(maint.git_hub_account) LIKE ? OR LOWER(maint.location) LIKE ? OR LOWER(maint.country) LIKE ? OR LOWER(maint.timezone) LIKE ? OR LOWER(comp.name) LIKE ? OR REPLACE(REPLACE(REPLACE(LOWER(comp.name), ' ', ''), '-', ''), '_', '') LIKE ?",
+				like, like, like, like, like, like, like, like, compactLike,
 			)
 	}
 
@@ -868,7 +871,10 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 		base = base.
 			Joins("LEFT JOIN maintainer_projects mp ON mp.project_id = projects.id").
 			Joins("LEFT JOIN maintainers maint ON maint.id = mp.maintainer_id").
-			Where("LOWER(maint.name) LIKE ? OR LOWER(maint.git_hub_account) LIKE ?", like, like)
+			Where(
+				"LOWER(maint.name) LIKE ? OR LOWER(maint.git_hub_account) LIKE ? OR LOWER(maint.location) LIKE ? OR LOWER(maint.country) LIKE ? OR LOWER(maint.timezone) LIKE ?",
+				like, like, like, like, like,
+			)
 	}
 	var total int64
 	if err := base.Distinct("projects.id").Count(&total).Error; err != nil {
@@ -1731,6 +1737,9 @@ type maintainerDetailResponse struct {
 	Status      string                      `json:"status"`
 	CompanyID   *uint                       `json:"companyId,omitempty"`
 	Company     string                      `json:"company,omitempty"`
+	Location    string                      `json:"location,omitempty"`
+	Country     string                      `json:"country,omitempty"`
+	Timezone    string                      `json:"timezone,omitempty"`
 	Projects    []maintainerProjectResponse `json:"projects"`
 	Services    []maintainerServiceResponse `json:"services,omitempty"`
 	CreatedAt   time.Time                   `json:"createdAt"`
@@ -2123,6 +2132,15 @@ func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, incl
 	}
 	if maintainer.Company.Name != "" {
 		response.Company = maintainer.Company.Name
+	}
+	if maintainer.Location != nil {
+		response.Location = *maintainer.Location
+	}
+	if maintainer.Country != nil {
+		response.Country = *maintainer.Country
+	}
+	if maintainer.Timezone != nil {
+		response.Timezone = *maintainer.Timezone
 	}
 	return response
 }
@@ -5522,11 +5540,21 @@ func summarizeMaintainers(maintainers []model.Maintainer) []maintainerSummary {
 			continue
 		}
 		seen[key] = struct{}{}
-		result = append(result, maintainerSummary{
+		summary := maintainerSummary{
 			ID:     maintainer.ID,
 			Name:   name,
 			GitHub: github,
-		})
+		}
+		if maintainer.Country != nil {
+			summary.Country = *maintainer.Country
+		}
+		if maintainer.Location != nil {
+			summary.Location = *maintainer.Location
+		}
+		if maintainer.Timezone != nil {
+			summary.Timezone = *maintainer.Timezone
+		}
+		result = append(result, summary)
 	}
 	return result
 }

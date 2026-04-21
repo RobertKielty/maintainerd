@@ -12,7 +12,7 @@ type ProjectCardProps = {
   legacyMaintainerRef?: string;
   githubOrg?: string;
   dotProjectYamlRef?: string;
-  maintainers?: { id: number; name: string }[];
+  maintainers?: { id: number; name: string; country?: string; location?: string; timezone?: string }[];
   maintainerFilter?: string;
 };
 
@@ -131,14 +131,32 @@ export default function ProjectCard({
           <div>
             <dt>Maintainers</dt>
             <dd>
-              {maintainers.map((maintainer, index) => (
-                <span key={maintainer.id}>
-                  <Link className={styles.link} href={`/maintainers/${maintainer.id}`}>
-                    {highlightMatch(maintainer.name, maintainerFilter)}
-                  </Link>
-                  {index < maintainers.length - 1 ? ", " : ""}
-                </span>
-              ))}
+              {maintainers.map((maintainer, index) => {
+                const lower = maintainerFilter.toLowerCase();
+                const isMatch = Boolean(lower) && (
+                  maintainer.name.toLowerCase().includes(lower) ||
+                  (maintainer.country?.toLowerCase().includes(lower) ?? false) ||
+                  (maintainer.location?.toLowerCase().includes(lower) ?? false) ||
+                  (maintainer.timezone?.toLowerCase().includes(lower) ?? false)
+                );
+                const flag = isMatch && maintainer.country
+                  ? [...maintainer.country.toUpperCase()]
+                      .map((c) => String.fromCodePoint(c.charCodeAt(0) + 0x1f1a5))
+                      .join("")
+                  : "";
+                return (
+                  <span
+                    key={maintainer.id}
+                    className={isMatch ? styles.maintainerMatch : undefined}
+                  >
+                    <Link className={styles.link} href={`/maintainers/${maintainer.id}`}>
+                      {highlightMatch(maintainer.name, maintainerFilter)}
+                    </Link>
+                    {flag ? <span title={maintainer.country}> {flag}</span> : null}
+                    {index < maintainers.length - 1 ? ", " : ""}
+                  </span>
+                );
+              })}
             </dd>
           </div>
         ) : null}

@@ -9,6 +9,20 @@ Feature: Maintainer profile page
     And I click on maintainer "Antonio Example"
     Then I see the maintainer card for "Antonio Example"
 
+  Scenario: Maintainer card shows GitHub profile location
+    Given I am signed in as staff
+    When I search for "Antonio"
+    And I click on maintainer "Antonio Example"
+    Then I see the maintainer card for "Antonio Example"
+    And I see the maintainer location "Madrid, Spain"
+
+  Scenario: Maintainer card shows location for an Armenian maintainer
+    Given I am signed in as staff
+    When I search for "Sam"
+    And I click on maintainer "Sam NoEmail"
+    Then I see the maintainer card for "Sam NoEmail"
+    And I see the maintainer location "Yerevan, Armenia"
+
   Rule: Staff can inspect and repair maintainer service associations
     - The maintainer page shows what maintainer-d knows about a maintainer's association with remote services
     - The maintainer page shows which project service assignments imply that the maintainer should have remote service access

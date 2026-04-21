@@ -92,6 +92,9 @@ type Maintainer struct {
 	GitHubEmail      string           `gorm:"size:100;default:GITHUB_MISSING"` // Email used for Git Commits on GitHub
 	MaintainerStatus MaintainerStatus `gorm:"type:text"`
 	ImportWarnings   string
+	Location         *string   `gorm:"size:255"`
+	Country          *string   `gorm:"size:2"`
+	Timezone         *string   `gorm:"size:64"`
 	Projects         []Project `gorm:"many2many:maintainer_projects;joinForeignKey:MaintainerID;joinReferences:ProjectID"`
 	RegisteredAt     *time.Time
 	CompanyID        *uint
