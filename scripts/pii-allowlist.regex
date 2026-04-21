@@ -11,6 +11,8 @@
 ^prod-api@company\.com$
 ^automation@company\.com$
 ^foo@bar\.com$
+^git@github\.com$
+^projects@cncf.io$
 
 # Common documentation placeholders.
 ^Bearer[[:space:]]+REDACTED$

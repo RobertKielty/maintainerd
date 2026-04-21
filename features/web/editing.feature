@@ -16,7 +16,7 @@ Feature: Editing permissions and persistence
     Examples:
       | record_type | record_name | field_name  | new_value        |
       | project     | Alpha       | description | Core services    |
-      | maintainer  | alice       | email       | alice@alpha.dev  |
+      | maintainer  | alice       | email       | alice@example.dev  |
 
   Scenario Outline: Maintainer can edit their own data
     Given I am signed in as a maintainer for project "<project_name>"
@@ -26,7 +26,7 @@ Feature: Editing permissions and persistence
 
     Examples:
       | project_name | field_name | new_value       | maintainer_login |
-      | Alpha        | email      | alice@alpha.dev | alice            |
+      | Alpha        | email      | alice@example.dev | alice            |
 
   Scenario Outline: Maintainer can edit team data
     Given I am signed in as a maintainer for project "<project_name>"
@@ -36,7 +36,7 @@ Feature: Editing permissions and persistence
 
     Examples:
       | project_name | maintainer_login | field_name | new_value        |
-      | Alpha        | bob              | email      | bob@alpha.dev    |
+      | Alpha        | bob              | email      | bob@example.dev    |
 
   Scenario: Maintainer cannot edit other project data
     Given I am signed in as a maintainer for project "Alpha"
@@ -55,4 +55,4 @@ Feature: Editing permissions and persistence
     Examples:
       | role      | editor_login | record_type | record_name | field_name  | new_value       | action |
       | staff     | staff-alice  | project     | Alpha       | description | Core services   | update |
-      | maintainer| alice        | maintainer  | alice       | email       | alice@alpha.dev | update |
+      | maintainer| alice        | maintainer  | alice       | email       | alice@example.dev | update |
