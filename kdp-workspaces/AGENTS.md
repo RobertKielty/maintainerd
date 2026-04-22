@@ -256,7 +256,7 @@ metadata:
     kdp-workspaces.cncf.io/workspace-count: "247"
 spec:
   displayName: "Wojciech Barczynski"
-  primaryEmail: "wojciech.barczynski@kubermatic.com"
+  primaryEmail: "staff-one@example.test"
 ```
 
 ### Project Annotations (Service Cluster)
@@ -298,9 +298,9 @@ metadata:
     managed-by: kdp-ws-operator
 subjects:
   - kind: User
-    name: oidc:wojciech.barczynski@kubermatic.com
+    name: oidc:staff-one@example.test
   - kind: User
-    name: oidc:robert.kielty@cncf.io
+    name: oidc:staff-two@example.test
   # ... (more staff members)
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -324,7 +324,7 @@ metadata:
   namespace: maintainerd
 spec:
   displayName: "Test Staff"
-  primaryEmail: "test@cncf.io"
+  primaryEmail: "test-staff@example.test"
 EOF
 
 # 2. Wait for reconciliation (check logs)
@@ -337,7 +337,7 @@ kubectl get staffmember test-staff-cncf.io -n maintainerd -o yaml | grep -A5 ann
 # 4. Verify staff added to all workspace bindings on KDP Cluster
 export KUBECONFIG=$(git rev-parse --show-toplevel)/tmp/kdp-cluster-cncf/kubeconfig-admin
 
-kubectl get clusterrolebinding cncf-staff-access -o yaml | grep "test@cncf.io"
+kubectl get clusterrolebinding cncf-staff-access -o yaml | grep "test-staff@example.test"
 
 # 5. Verify staff-count annotation incremented
 kubectl get clusterrolebinding cncf-staff-access \
@@ -358,7 +358,7 @@ kubectl logs -n kdp-workspaces-system deployment/kdp-workspaces-controller-manag
 # 3. Verify staff removed from workspace bindings on KDP Cluster
 export KUBECONFIG=$(git rev-parse --show-toplevel)/tmp/kdp-cluster-cncf/kubeconfig-admin
 
-kubectl get clusterrolebinding cncf-staff-access -o yaml | grep "test@cncf.io"
+kubectl get clusterrolebinding cncf-staff-access -o yaml | grep "test-staff@example.test"
 # Should return no results
 
 # 4. Verify staff-count annotation decremented
@@ -536,4 +536,3 @@ The StaffMemberReconciler watches resources on both clusters:
 - Implementation Plan: `PLAN_STAFF_MEMBERS_SUPPORT.md`
 - Controller Pattern: Multi-controller architecture with independent reconciliation loops
 ```
-

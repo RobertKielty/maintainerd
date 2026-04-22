@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"maintainerd/db"
+	"maintainerd/geo"
 	"maintainerd/model"
 
 	"gorm.io/gorm"
@@ -81,7 +82,7 @@ func main() {
 	}
 
 	maintainers := []model.Maintainer{
-		{
+		withLocation("Madrid, Spain", model.Maintainer{
 			Name:             "Antonio Example",
 			Email:            "antonio.example@test.dev",
 			GitHubAccount:    "antonio-example",
@@ -89,8 +90,8 @@ func main() {
 			MaintainerStatus: model.ActiveMaintainer,
 			CompanyID:        &company.ID,
 			RegisteredAt:     timePtr(time.Now()),
-		},
-		{
+		}),
+		withLocation("Portland, Oregon, USA", model.Maintainer{
 			Name:             "Renee Sample",
 			Email:            "renee.sample@example.dev",
 			GitHubAccount:    "renee-sample",
@@ -98,8 +99,8 @@ func main() {
 			MaintainerStatus: model.ActiveMaintainer,
 			CompanyID:        &company.ID,
 			RegisteredAt:     timePtr(time.Now()),
-		},
-		{
+		}),
+		withLocation("London, UK", model.Maintainer{
 			Name:             "Alex Example",
 			Email:            "alex@example.dev",
 			GitHubAccount:    "alex-example",
@@ -107,8 +108,8 @@ func main() {
 			MaintainerStatus: model.ActiveMaintainer,
 			CompanyID:        &company.ID,
 			RegisteredAt:     timePtr(time.Now()),
-		},
-		{
+		}),
+		withLocation("São Paulo, Brazil", model.Maintainer{
 			Name:             "Diego Placeholder",
 			Email:            "diego.placeholder@test.dev",
 			GitHubAccount:    "diego-placeholder",
@@ -116,8 +117,8 @@ func main() {
 			MaintainerStatus: model.ActiveMaintainer,
 			CompanyID:        &company.ID,
 			RegisteredAt:     timePtr(time.Now()),
-		},
-		{
+		}),
+		withLocation("Tokyo, Japan", model.Maintainer{
 			Name:             "Jun Example",
 			Email:            "jun.example@test.dev",
 			GitHubAccount:    "jun-example",
@@ -125,8 +126,8 @@ func main() {
 			MaintainerStatus: model.ActiveMaintainer,
 			CompanyID:        &company.ID,
 			RegisteredAt:     timePtr(time.Now()),
-		},
-		{
+		}),
+		withLocation("Bengaluru, India", model.Maintainer{
 			Name:             "Priya Demo",
 			Email:            "priya.demo@test.dev",
 			GitHubAccount:    "priya-demo",
@@ -134,8 +135,8 @@ func main() {
 			MaintainerStatus: model.ActiveMaintainer,
 			CompanyID:        &company.ID,
 			RegisteredAt:     timePtr(time.Now()),
-		},
-		{
+		}),
+		withLocation("Yerevan, Armenia", model.Maintainer{
 			Name:             "Sam NoEmail",
 			Email:            "EMAIL_MISSING",
 			GitHubAccount:    "sam-noemail",
@@ -143,7 +144,7 @@ func main() {
 			MaintainerStatus: model.ActiveMaintainer,
 			CompanyID:        &company.ID,
 			RegisteredAt:     timePtr(time.Now()),
-		},
+		}),
 	}
 
 	for i := range maintainers {
@@ -357,4 +358,16 @@ func main() {
 
 func timePtr(t time.Time) *time.Time {
 	return &t
+}
+
+func strPtr(s string) *string { return &s }
+
+// withLocation sets Location, Country, and Timezone on m using the geo lookup.
+func withLocation(rawLocation string, m model.Maintainer) model.Maintainer {
+	m.Location = strPtr(rawLocation)
+	if country, tz, ok := geo.DeriveCountryAndTimezone(rawLocation); ok {
+		m.Country = strPtr(country)
+		m.Timezone = strPtr(tz)
+	}
+	return m
 }

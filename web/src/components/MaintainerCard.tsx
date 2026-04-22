@@ -12,6 +12,9 @@ type MaintainerCardProps = {
   githubEmail: string;
   status: string;
   company?: string;
+  location?: string;
+  country?: string;
+  timezone?: string;
   projects: Array<{ id: number; name: string } | string>;
   createdAt?: string;
   updatedAt?: string;
@@ -77,6 +80,9 @@ export default function MaintainerCard({
   githubEmail,
   status,
   company,
+  location,
+  country,
+  timezone,
   projects,
   createdAt,
   updatedAt,
@@ -175,6 +181,14 @@ export default function MaintainerCard({
             <span className={styles.detailLabel}>GitHub Email</span>
             <span className={styles.detailValue}>{githubEmail || "—"}</span>
           </div>
+          {(location || country || timezone) ? (
+            <div className={styles.detailRow}>
+              <span className={styles.detailLabel}>Location</span>
+              <span className={styles.detailValue}>
+                {[location, country, timezone].filter(Boolean).join(" · ") || "—"}
+              </span>
+            </div>
+          ) : null}
         </div>
 
         <div className={styles.section}>

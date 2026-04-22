@@ -6,6 +6,15 @@ import { Pagination } from "clo-ui/components/Pagination";
 import styles from "./ProjectsList.module.css";
 import ProjectCard from "./ProjectCard";
 
+type MaintainerSummary = {
+  id: number;
+  name: string;
+  github: string;
+  country?: string;
+  location?: string;
+  timezone?: string;
+};
+
 type RecentProject = {
   id: number;
   name: string;
@@ -16,7 +25,26 @@ type RecentProject = {
   legacyMaintainerRef?: string;
   githubOrg?: string;
   dotProjectYamlRef?: string;
-  maintainers?: { id: number; name: string }[];
+  maintainers?: MaintainerSummary[];
+};
+
+const countryFlag = (iso?: string): string => {
+  if (!iso || iso.length !== 2) return "";
+  return [...iso.toUpperCase()]
+    .map((c) => String.fromCodePoint(c.charCodeAt(0) + 0x1f1a5))
+    .join("");
+};
+
+const maintainerMatchesFilter = (m: MaintainerSummary, filter: string): boolean => {
+  if (!filter) return false;
+  const lower = filter.toLowerCase();
+  return (
+    m.name.toLowerCase().includes(lower) ||
+    m.github.toLowerCase().includes(lower) ||
+    (m.country?.toLowerCase().includes(lower) ?? false) ||
+    (m.location?.toLowerCase().includes(lower) ?? false) ||
+    (m.timezone?.toLowerCase().includes(lower) ?? false)
+  );
 };
 
 type ProjectsListProps = {
@@ -359,7 +387,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                 <input
                   ref={maintainerRef}
                   className={styles.filterInput}
-                  placeholder="Filter maintainer"
+                  placeholder="Filter using a maintainer's, name location or GitHub profile" 
                   value={maintainerFilter}
                   onChange={(event) => {
                     const value = event.target.value;
@@ -462,7 +490,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                   <input
                     ref={maintainerRef}
                     className={styles.filterInput}
-                    placeholder="Filter maintainer"
+                    placeholder="Filter maintainer, location, or timezone"
                     value={maintainerFilter}
                     onChange={(event) => {
                       const value = event.target.value;
@@ -522,17 +550,25 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                     <td className={styles.maturityCol}>{project.maturity || "—"}</td>
                     <td className={styles.maintainersCol}>
                       {maintainers.length > 0
-                        ? maintainers.map((maintainer, index) => (
-                            <span key={maintainer.id}>
-                              <Link
-                                className={styles.link}
-                                href={`/maintainers/${maintainer.id}`}
+                        ? maintainers.map((maintainer, index) => {
+                            const isMatch = maintainerMatchesFilter(maintainer, debouncedMaintainerFilter);
+                            const flag = isMatch ? countryFlag(maintainer.country) : "";
+                            return (
+                              <span
+                                key={maintainer.id}
+                                className={isMatch ? styles.maintainerMatch : undefined}
                               >
-                                {highlightMatch(maintainer.name, maintainerFilter)}
-                              </Link>
-                              {index < maintainers.length - 1 ? ", " : ""}
-                            </span>
-                          ))
+                                <Link
+                                  className={styles.link}
+                                  href={`/maintainers/${maintainer.id}`}
+                                >
+                                  {highlightMatch(maintainer.name, maintainerFilter)}
+                                </Link>
+                                {flag ? <span title={maintainer.country}> {flag}</span> : null}
+                                {index < maintainers.length - 1 ? ", " : ""}
+                              </span>
+                            );
+                          })
                         : "—"}
                     </td>
                     <td className={styles.addedByCol}>{project.addedBy || "—"}</td>

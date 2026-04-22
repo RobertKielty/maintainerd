@@ -4,7 +4,7 @@ metadata:
   name: letsencrypt-http
 spec:
   acme:
-    email: robert.kielty@cncf.io
+    email: projects@cncf.io
     server: https://acme-v02.api.letsencrypt.org/directory
     privateKeySecretRef:
       name: letsencrypt-http-account-key
