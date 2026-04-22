@@ -17,6 +17,8 @@ ONBOARDING_BACKFILL_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-onboarding-bac
 ONBOARDING_BACKFILL_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-onboarding-backfill:latest
 FOSSA_POLLER_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-fossa-poller:$(TAG)
 FOSSA_POLLER_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-fossa-poller:latest
+GITHUB_PROFILE_SYNC_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-github-profile-sync:$(TAG)
+GITHUB_PROFILE_SYNC_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-github-profile-sync:latest
 WEB_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-web:$(TAG)
 WEB_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-web:latest
 WEB_BFF_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-web-bff:$(TAG)
@@ -98,6 +100,11 @@ onboarding-backfill-image-build:
 fossa-poller-image-build:
 	@echo "Building fossa poller image: $(FOSSA_POLLER_IMAGE)"
 	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(FOSSA_POLLER_IMAGE) -f Dockerfile --target fossa-poller .
+
+.PHONY: github-profile-sync-image-build
+github-profile-sync-image-build:
+	@echo "Building GitHub profile sync image: $(GITHUB_PROFILE_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(GITHUB_PROFILE_SYNC_IMAGE) -f Dockerfile --target github-profile-sync .
 
 .PHONY: web-image-build
 web-image-build:
@@ -246,6 +253,21 @@ fossa-poller-image-push: fossa-poller-image-build
 	@$(CONTAINER_TOOL) tag $(FOSSA_POLLER_IMAGE) $(FOSSA_POLLER_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(FOSSA_POLLER_IMAGE_LATEST)
 
+.PHONY: github-profile-sync-image-push
+github-profile-sync-image-push: github-profile-sync-image-build
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(GITHUB_PROFILE_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) push $(GITHUB_PROFILE_SYNC_IMAGE)
+	@echo "Tagging and pushing latest: $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(GITHUB_PROFILE_SYNC_IMAGE) $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)
+
 .PHONY: web-image-push
 web-image-push: web-image-build
 	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
@@ -350,6 +372,16 @@ migrate-schema:
 onboarding-backfill-job:
 	@echo "Running onboarding backfill job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/maintainerd-onboarding-backfill-job.yaml
+
+.PHONY: github-profile-sync-run
+github-profile-sync-run:
+	@bash -c 'set -euo pipefail; \
+	echo "Recreating GitHub profile sync job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete job github-profile-sync --ignore-not-found; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/github-profile-sync-job.yaml; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/github-profile-sync --timeout=1800s; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) logs job/github-profile-sync --tail=-1; \
+	'
 
 .PHONY: fossa-poller-deploy
 fossa-poller-deploy:
@@ -468,6 +500,8 @@ help:
 	@echo "make deploy-web -> apply web-bff/web services + deployments + ingress + cert"
 	@echo "make web-image-set TAG=... -> set maintainerd-web image to a specific tag"
 	@echo "make web-release TAG=... -> build+push web & web-bff with same tag, then set both images"
+	@echo "make github-profile-sync-image-build -> build GitHub profile sync image $(GITHUB_PROFILE_SYNC_IMAGE) locally"
+	@echo "make github-profile-sync-image-push -> build and push $(GITHUB_PROFILE_SYNC_IMAGE)"
 	@echo "make clean-env       -> remove $(ENVOUT)"
 	@echo "make print           -> show which keys would be loaded (without values)"
 	@echo "make mntrd-image-build  -> build maintainerd image $(IMAGE) locally"
@@ -476,6 +510,7 @@ help:
 	@echo "make sync-apply      -> apply CronJob + RBAC for the sync job"
 	@echo "make sync-run        -> trigger a manual sync job and tail logs"
 	@echo "make fossa-poller-deploy -> apply Deployment for the long-running FOSSA poller"
+	@echo "make github-profile-sync-run -> recreate one-off GitHub profile sync job and tail logs"
 	@echo "make bootstrap-run   -> prod: recreate bootstrap job after applying SOPS bootstrap secrets"
 	@echo "make bootstrap-run-dev -> dev: recreate bootstrap job after applying .envrc secrets"
 	@echo "make migrate-schema  -> run one-off schema migration job"
@@ -1135,11 +1170,12 @@ images-show:
 	@echo "  maintainerd-sanitize $(SANITIZE_IMAGE)"
 	@echo "  maintainerd-migrate  $(MIGRATE_IMAGE)"
 	@echo "  maintainerd-fossa-poller $(FOSSA_POLLER_IMAGE)"
+	@echo "  maintainerd-github-profile-sync $(GITHUB_PROFILE_SYNC_IMAGE)"
 	@echo "  maintainerd-web      $(WEB_IMAGE)"
 	@echo "  maintainerd-web-bff  $(WEB_BFF_IMAGE)"
 
 .PHONY: images-build
-images-build: mntrd-image-build sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build fossa-poller-image-build web-image-build web-bff-image-build
+images-build: mntrd-image-build sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build fossa-poller-image-build github-profile-sync-image-build web-image-build web-bff-image-build
 	@echo "All images built."
 
 .PHONY: mntrd-image-push-only
@@ -1232,6 +1268,21 @@ fossa-poller-image-push-only:
 	@$(CONTAINER_TOOL) tag $(FOSSA_POLLER_IMAGE) $(FOSSA_POLLER_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(FOSSA_POLLER_IMAGE_LATEST)
 
+.PHONY: github-profile-sync-image-push-only
+github-profile-sync-image-push-only:
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(GITHUB_PROFILE_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) push $(GITHUB_PROFILE_SYNC_IMAGE)
+	@echo "Tagging and pushing latest: $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(GITHUB_PROFILE_SYNC_IMAGE) $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)
+
 .PHONY: web-image-push-only
 web-image-push-only:
 	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
@@ -1263,7 +1314,7 @@ web-bff-image-push-only:
 	@$(CONTAINER_TOOL) push $(WEB_BFF_IMAGE_LATEST)
 
 .PHONY: images-push
-images-push: mntrd-image-push-only sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only fossa-poller-image-push-only web-image-push-only web-bff-image-push-only
+images-push: mntrd-image-push-only sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only fossa-poller-image-push-only github-profile-sync-image-push-only web-image-push-only web-bff-image-push-only
 	@echo "All images pushed (no build)."
 
 .PHONY: clean-env
