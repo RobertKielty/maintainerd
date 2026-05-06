@@ -24,7 +24,7 @@ type RecentProject = {
   onboardingIssueStatus?: string;
   legacyMaintainerRef?: string;
   githubOrg?: string;
-  dotProjectYamlRef?: string;
+  dotProjectMaintainerRef?: string;
   maintainers?: MaintainerSummary[];
 };
 
@@ -589,7 +589,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                     </td>
                     <td className={styles.orgCol}>{orgLink(project.githubOrg)}</td>
                     <td className={styles.dotRepoCol}>
-                      {renderLink(project.dotProjectYamlRef)}
+                      {renderLink(project.dotProjectMaintainerRef)}
                     </td>
                     </tr>
                   );
@@ -612,7 +612,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                     onboardingIssueStatus={project.onboardingIssueStatus}
                     legacyMaintainerRef={project.legacyMaintainerRef}
                     githubOrg={project.githubOrg}
-                    dotProjectYamlRef={project.dotProjectYamlRef}
+                    dotProjectMaintainerRef={project.dotProjectMaintainerRef}
                     maintainers={project.maintainers}
                     maintainerFilter={maintainerFilter}
                   />

@@ -970,8 +970,8 @@ export default function ProjectReconciliationCard({
   );
 
   const defaultMenuItems: ProjectSectionNavItem[] = [
-    { id: "legacy", label: "MAINTAINER ROLL CALL" },
-    { id: "dot-project", label: "PROJECT RECORDS / DOT PROJECT YAML" },
+    { id: "legacy", label: "LEGACY ROLL CALL" },
+    { id: "dot-project", label: "DOT-PROJECT ROLL CALL" },
     { id: "license-checker", label: "SERVICES / LICENSE CHECKER" },
     { id: "mailing-maintainers", label: "SERVICES / MAILING LISTS / MAINTAINERS" },
     { id: "mailing-security", label: "SERVICES / MAILING LISTS / SECURITY" },

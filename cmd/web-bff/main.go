@@ -549,17 +549,17 @@ type projectsResponse struct {
 }
 
 type recentProjectSummary struct {
-	ID                   uint                `json:"id"`
-	Name                 string              `json:"name"`
-	Maturity             string              `json:"maturity"`
-	AddedBy              string              `json:"addedBy"`
-	OnboardingIssue      string              `json:"onboardingIssue,omitempty"`
-	OnboardingIssueState string              `json:"onboardingIssueStatus,omitempty"`
-	LegacyMaintainerRef  string              `json:"legacyMaintainerRef,omitempty"`
-	GitHubOrg            string              `json:"githubOrg,omitempty"`
-	DotProjectYamlRef    string              `json:"dotProjectYamlRef,omitempty"`
-	CreatedAt            string              `json:"createdAt,omitempty"`
-	Maintainers          []maintainerSummary `json:"maintainers,omitempty"`
+	ID                      uint                `json:"id"`
+	Name                    string              `json:"name"`
+	Maturity                string              `json:"maturity"`
+	AddedBy                 string              `json:"addedBy"`
+	OnboardingIssue         string              `json:"onboardingIssue,omitempty"`
+	OnboardingIssueState    string              `json:"onboardingIssueStatus,omitempty"`
+	LegacyMaintainerRef     string              `json:"legacyMaintainerRef,omitempty"`
+	GitHubOrg               string              `json:"githubOrg,omitempty"`
+	DotProjectMaintainerRef string              `json:"dotProjectMaintainerRef,omitempty"`
+	CreatedAt               string              `json:"createdAt,omitempty"`
+	Maintainers             []maintainerSummary `json:"maintainers,omitempty"`
 }
 
 type recentProjectsResponse struct {
@@ -580,13 +580,13 @@ type projectIDRow struct {
 }
 
 type projectCreateRequest struct {
-	OnboardingIssue     string `json:"onboardingIssue"`
-	ProjectName         string `json:"projectName,omitempty"`
-	GitHubOrg           string `json:"githubOrg"`
-	ParentProjectID     *uint  `json:"parentProjectId,omitempty"`
-	LegacyMaintainerRef string `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef   string `json:"dotProjectYamlRef,omitempty"`
-	Maturity            string `json:"maturity,omitempty"`
+	OnboardingIssue         string `json:"onboardingIssue"`
+	ProjectName             string `json:"projectName,omitempty"`
+	GitHubOrg               string `json:"githubOrg"`
+	ParentProjectID         *uint  `json:"parentProjectId,omitempty"`
+	LegacyMaintainerRef     string `json:"legacyMaintainerRef,omitempty"`
+	DotProjectMaintainerRef string `json:"dotProjectMaintainerRef,omitempty"`
+	Maturity                string `json:"maturity,omitempty"`
 }
 
 type projectCreateResponse struct {
@@ -655,7 +655,7 @@ type projectDetailResponse struct {
 	Maturity                string                         `json:"maturity"`
 	ParentProjectID         *uint                          `json:"parentProjectId,omitempty"`
 	LegacyMaintainerRef     string                         `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef       string                         `json:"dotProjectYamlRef,omitempty"`
+	DotProjectMaintainerRef string                         `json:"dotProjectMaintainerRef,omitempty"`
 	RefStatus               maintainerRefStatus            `json:"maintainerRefStatus"`
 	LegacyMaintainerRefBody string                         `json:"legacyMaintainerRefBody,omitempty"`
 	RefOnlyGitHub           []string                       `json:"refOnlyGitHub"`
@@ -1007,15 +1007,15 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		entry := recentProjectSummary{
-			ID:                  project.ID,
-			Name:                project.Name,
-			Maturity:            string(project.Maturity),
-			AddedBy:             addedBy[project.ID],
-			LegacyMaintainerRef: strings.TrimSpace(project.LegacyMaintainerRef),
-			GitHubOrg:           strings.TrimSpace(project.GitHubOrg),
-			DotProjectYamlRef:   strings.TrimSpace(project.DotProjectYamlRef),
-			CreatedAt:           project.CreatedAt.Format(time.RFC3339),
-			Maintainers:         summarizeMaintainers(project.Maintainers),
+			ID:                      project.ID,
+			Name:                    project.Name,
+			Maturity:                string(project.Maturity),
+			AddedBy:                 addedBy[project.ID],
+			LegacyMaintainerRef:     strings.TrimSpace(project.LegacyMaintainerRef),
+			GitHubOrg:               strings.TrimSpace(project.GitHubOrg),
+			DotProjectMaintainerRef: strings.TrimSpace(project.DotProjectMaintainerRef),
+			CreatedAt:               project.CreatedAt.Format(time.RFC3339),
+			Maintainers:             summarizeMaintainers(project.Maintainers),
 		}
 		if entry.AddedBy == "" {
 			entry.AddedBy = "—"
@@ -1315,8 +1315,8 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 	if maintainerRef != "" {
 		response.LegacyMaintainerRef = maintainerRef
 	}
-	if project.DotProjectYamlRef != "" {
-		response.DotProjectYamlRef = strings.TrimSpace(project.DotProjectYamlRef)
+	if project.DotProjectMaintainerRef != "" {
+		response.DotProjectMaintainerRef = strings.TrimSpace(project.DotProjectMaintainerRef)
 	}
 	if project.OnboardingIssue != nil {
 		onboardingIssue := strings.TrimSpace(*project.OnboardingIssue)
@@ -1387,9 +1387,9 @@ func (s *server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	githubOrg := strings.TrimSpace(req.GitHubOrg)
 	legacyRef := strings.TrimSpace(req.LegacyMaintainerRef)
-	dotProjectRef := strings.TrimSpace(req.DotProjectYamlRef)
+	dotProjectRef := strings.TrimSpace(req.DotProjectMaintainerRef)
 	if legacyRef == "" && dotProjectRef == "" {
-		http.Error(w, "legacyMaintainerRef or dotProjectYamlRef is required", http.StatusBadRequest)
+		http.Error(w, "legacyMaintainerRef or dotProjectMaintainerRef is required", http.StatusBadRequest)
 		return
 	}
 	inferredOrg := ""
@@ -1408,7 +1408,7 @@ func (s *server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if inferredOrg != "" && !strings.EqualFold(inferredOrg, org) {
-			http.Error(w, "legacyMaintainerRef and dotProjectYamlRef must reference the same GitHub org", http.StatusBadRequest)
+			http.Error(w, "legacyMaintainerRef and dotProjectMaintainerRef must reference the same GitHub org", http.StatusBadRequest)
 			return
 		}
 		inferredOrg = org
@@ -1451,13 +1451,13 @@ func (s *server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := model.Project{
-		Name:                projectName,
-		Maturity:            maturity,
-		GitHubOrg:           githubOrg,
-		ParentProjectID:     req.ParentProjectID,
-		LegacyMaintainerRef: legacyRef,
-		DotProjectYamlRef:   dotProjectRef,
-		OnboardingIssue:     &onboardingIssue,
+		Name:                    projectName,
+		Maturity:                maturity,
+		GitHubOrg:               githubOrg,
+		ParentProjectID:         req.ParentProjectID,
+		LegacyMaintainerRef:     legacyRef,
+		DotProjectMaintainerRef: dotProjectRef,
+		OnboardingIssue:         &onboardingIssue,
 	}
 	if err := s.store.DB().Create(&project).Error; err != nil {
 		s.logger.Printf("web-bff: create project error: %v", err)
@@ -3270,12 +3270,12 @@ type companyDetailResponse struct {
 }
 
 type searchProjectResult struct {
-	ID                  uint    `json:"id"`
-	Name                string  `json:"name"`
-	GitHubOrg           string  `json:"githubOrg,omitempty"`
-	OnboardingIssue     *string `json:"onboardingIssue,omitempty"`
-	LegacyMaintainerRef string  `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef   string  `json:"dotProjectYamlRef,omitempty"`
+	ID                      uint    `json:"id"`
+	Name                    string  `json:"name"`
+	GitHubOrg               string  `json:"githubOrg,omitempty"`
+	OnboardingIssue         *string `json:"onboardingIssue,omitempty"`
+	LegacyMaintainerRef     string  `json:"legacyMaintainerRef,omitempty"`
+	DotProjectMaintainerRef string  `json:"dotProjectMaintainerRef,omitempty"`
 }
 
 type searchMaintainerResult struct {
@@ -3585,12 +3585,12 @@ func (s *server) handleSearchPostgres(w http.ResponseWriter, query string, limit
 	projectResults := make([]searchProjectResult, 0, len(projects))
 	for _, project := range projects {
 		projectResults = append(projectResults, searchProjectResult{
-			ID:                  project.ID,
-			Name:                project.Name,
-			GitHubOrg:           strings.TrimSpace(project.GitHubOrg),
-			OnboardingIssue:     project.OnboardingIssue,
-			LegacyMaintainerRef: strings.TrimSpace(project.LegacyMaintainerRef),
-			DotProjectYamlRef:   strings.TrimSpace(project.DotProjectYamlRef),
+			ID:                      project.ID,
+			Name:                    project.Name,
+			GitHubOrg:               strings.TrimSpace(project.GitHubOrg),
+			OnboardingIssue:         project.OnboardingIssue,
+			LegacyMaintainerRef:     strings.TrimSpace(project.LegacyMaintainerRef),
+			DotProjectMaintainerRef: strings.TrimSpace(project.DotProjectMaintainerRef),
 		})
 	}
 
@@ -3763,12 +3763,12 @@ func (s *server) handleSearchFallback(w http.ResponseWriter, query string, limit
 	projectResults := make([]searchProjectResult, 0, len(projects))
 	for _, project := range projects {
 		projectResults = append(projectResults, searchProjectResult{
-			ID:                  project.ID,
-			Name:                project.Name,
-			GitHubOrg:           strings.TrimSpace(project.GitHubOrg),
-			OnboardingIssue:     project.OnboardingIssue,
-			LegacyMaintainerRef: strings.TrimSpace(project.LegacyMaintainerRef),
-			DotProjectYamlRef:   strings.TrimSpace(project.DotProjectYamlRef),
+			ID:                      project.ID,
+			Name:                    project.Name,
+			GitHubOrg:               strings.TrimSpace(project.GitHubOrg),
+			OnboardingIssue:         project.OnboardingIssue,
+			LegacyMaintainerRef:     strings.TrimSpace(project.LegacyMaintainerRef),
+			DotProjectMaintainerRef: strings.TrimSpace(project.DotProjectMaintainerRef),
 		})
 	}
 

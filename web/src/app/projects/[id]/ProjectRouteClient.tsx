@@ -31,7 +31,7 @@ type ProjectDetail = {
   maturity: string;
   parentProjectId?: number | null;
   legacyMaintainerRef?: string;
-  dotProjectYamlRef?: string;
+  dotProjectMaintainerRef?: string;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -81,8 +81,8 @@ const projectSectionRoutes: Array<{
   label: string;
   segment: string;
 }> = [
-  { id: "legacy", label: "ROLL CALL", segment: "github" },
-  { id: "dot-project", label: "PROJECT RECORDS", segment: "dot-project" },
+  { id: "legacy", label: "LEGACY ROLL CALL", segment: "github" },
+  { id: "dot-project", label: "DOT-PROJECT ROLL CALL", segment: "dot-project" },
   { id: "license-checker", label: "LICENSE CHECKER - FOSSA", segment: "fossa" },
   {
     id: "mailing-maintainers",
@@ -109,6 +109,7 @@ const projectDataHasChanged = (current: ProjectDetail | null, next: ProjectDetai
     current.maturity !== next.maturity ||
     current.parentProjectId !== next.parentProjectId ||
     current.legacyMaintainerRef !== next.legacyMaintainerRef ||
+    current.dotProjectMaintainerRef !== next.dotProjectMaintainerRef ||
     current.maintainerRefStatus.status !== next.maintainerRefStatus.status ||
     current.maintainerRefStatus.url !== next.maintainerRefStatus.url ||
     current.maintainerRefStatus.checkedAt !== next.maintainerRefStatus.checkedAt ||

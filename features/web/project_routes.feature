@@ -12,8 +12,8 @@ Feature: Project route navigation
     When I open the project github route
     Then the project route navigation exposes these routes
       | label                         | path-suffix            | heading                       | body-snippet                                                                     |
-      | ROLL CALL                     | /github                | ROLL CALL                     | Compare the Maintainer DB roster with the Legacy Maintainer File.                |
-      | PROJECT RECORDS               | /dot-project           | PROJECT RECORDS               | Coming soon: this section will combine CNCF database fields                      |
+      | LEGACY ROLL CALL              | /github                | LEGACY ROLL CALL              | Compare the Maintainer DB roster with the Legacy Maintainer File.                |
+      | DOT-PROJECT ROLL CALL         | /dot-project           | DOT-PROJECT ROLL CALL         | Coming soon: this section will combine CNCF database fields                      |
       | LICENSE CHECKER - FOSSA       | /fossa                 | LICENSE CHECKER - FOSSA       | This project has not selected a license checker.                                 |
       | MAILING LISTS / MAINTAINERS   | /mailing-maintainers   | MAILING LISTS / MAINTAINERS   | Placeholder for maintainer mailing list references                               |
       | MAILING LISTS / SECURITY      | /mailing-security      | MAILING LISTS / SECURITY      | Placeholder for security mailing list references.                                |

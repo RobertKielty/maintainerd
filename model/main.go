@@ -128,11 +128,13 @@ type Project struct {
 	Maturity            Maturity
 	GitHubOrg           string `gorm:"size:255"`
 	LegacyMaintainerRef string `gorm:"column:maintainer_ref"`
-	DotProjectYamlRef   string
-	OnboardingIssue     *string
-	MailingList         *string      `gorm:"size:254;default:MML_MISSING"`
-	Maintainers         []Maintainer `gorm:"many2many:maintainer_projects;joinForeignKey:ProjectID;joinReferences:MaintainerID"`
-	Services            []Service    `gorm:"many2many:service_projects;joinForeignKey:ProjectID;joinReferences:ServiceID"`
+	// Keep the legacy column name for the first migration phase while the
+	// logical field name moves to dot-project maintainer terminology.
+	DotProjectMaintainerRef string `gorm:"column:dot_project_yaml_ref"`
+	OnboardingIssue         *string
+	MailingList             *string      `gorm:"size:254;default:MML_MISSING"`
+	Maintainers             []Maintainer `gorm:"many2many:maintainer_projects;joinForeignKey:ProjectID;joinReferences:MaintainerID"`
+	Services                []Service    `gorm:"many2many:service_projects;joinForeignKey:ProjectID;joinReferences:ServiceID"`
 }
 
 type MaintainerProject struct {

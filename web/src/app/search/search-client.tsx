@@ -14,7 +14,7 @@ type SearchProject = {
   githubOrg?: string;
   onboardingIssue?: string | null;
   legacyMaintainerRef?: string;
-  dotProjectYamlRef?: string;
+  dotProjectMaintainerRef?: string;
 };
 
 type SearchMaintainer = {

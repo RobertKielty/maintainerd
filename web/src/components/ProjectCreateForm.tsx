@@ -281,7 +281,7 @@ export default function ProjectCreateForm({
       return;
     }
     if (!legacyRef.trim() && !dotProjectRef.trim()) {
-      setSaveError("Provide a Legacy Maintainer File or Dot Project YAML URL.");
+      setSaveError("Provide a Legacy Maintainer File or Dot-Project Maintainer File URL.");
       return;
     }
     if (orgMismatch || githubOrg.trim() === "") {
@@ -295,7 +295,7 @@ export default function ProjectCreateForm({
         projectName: projectName.trim(),
         githubOrg: githubOrg.trim(),
         legacyMaintainerRef: legacyRef.trim() || undefined,
-        dotProjectYamlRef: dotProjectRef.trim() || undefined,
+        dotProjectMaintainerRef: dotProjectRef.trim() || undefined,
         maturity,
       };
       const response = await fetch(`${apiBaseUrl}/projects`, {
@@ -433,11 +433,11 @@ export default function ProjectCreateForm({
         />
       </label>
       <label className={styles.field}>
-        <span>Dot Project YAML</span>
+        <span>Dot-Project Maintainer File</span>
         <input
           value={dotProjectRef}
           onChange={(event) => setDotProjectRef(event.target.value)}
-          placeholder="https://github.com/org/repo/path/.project.yaml"
+          placeholder="https://github.com/org/.project/blob/main/MAINTAINERS.yaml"
         />
       </label>
       {orgMismatch ? (
