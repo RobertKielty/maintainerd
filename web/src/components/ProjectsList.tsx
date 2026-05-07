@@ -24,7 +24,16 @@ type RecentProject = {
   onboardingIssueStatus?: string;
   legacyMaintainerRef?: string;
   githubOrg?: string;
+  dotProjectRepoRef?: string;
+  dotProjectProjectRef?: string;
   dotProjectMaintainerRef?: string;
+  dotProjectSecurityRef?: string;
+  dotProjectContributingRef?: string;
+  dotProjectGovernanceRef?: string;
+  dotProjectSchemaVersion?: string;
+  dotProjectMaintainerCount?: number | null;
+  dotProjectLastSyncedAt?: string | null;
+  dotProjectAdoptionStatus?: string;
   maintainers?: MaintainerSummary[];
 };
 

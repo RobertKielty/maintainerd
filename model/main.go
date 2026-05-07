@@ -130,11 +130,20 @@ type Project struct {
 	LegacyMaintainerRef string `gorm:"column:maintainer_ref"`
 	// Keep the legacy column name for the first migration phase while the
 	// logical field name moves to dot-project maintainer terminology.
-	DotProjectMaintainerRef string `gorm:"column:dot_project_yaml_ref"`
-	OnboardingIssue         *string
-	MailingList             *string      `gorm:"size:254;default:MML_MISSING"`
-	Maintainers             []Maintainer `gorm:"many2many:maintainer_projects;joinForeignKey:ProjectID;joinReferences:MaintainerID"`
-	Services                []Service    `gorm:"many2many:service_projects;joinForeignKey:ProjectID;joinReferences:ServiceID"`
+	DotProjectRepoRef         string `gorm:"size:1024"`
+	DotProjectProjectRef      string `gorm:"size:1024"`
+	DotProjectMaintainerRef   string `gorm:"column:dot_project_yaml_ref;size:1024"`
+	DotProjectSecurityRef     string `gorm:"size:1024"`
+	DotProjectContributingRef string `gorm:"size:1024"`
+	DotProjectGovernanceRef   string `gorm:"size:1024"`
+	DotProjectSchemaVersion   string `gorm:"size:64"`
+	DotProjectMaintainerCount *uint
+	DotProjectLastSyncedAt    *time.Time `gorm:"index"`
+	DotProjectAdoptionStatus  string     `gorm:"size:64"`
+	OnboardingIssue           *string
+	MailingList               *string      `gorm:"size:254;default:MML_MISSING"`
+	Maintainers               []Maintainer `gorm:"many2many:maintainer_projects;joinForeignKey:ProjectID;joinReferences:MaintainerID"`
+	Services                  []Service    `gorm:"many2many:service_projects;joinForeignKey:ProjectID;joinReferences:ServiceID"`
 }
 
 type MaintainerProject struct {

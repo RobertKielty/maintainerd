@@ -11,7 +11,16 @@ type ProjectCardProps = {
   onboardingIssueStatus?: string;
   legacyMaintainerRef?: string;
   githubOrg?: string;
+  dotProjectRepoRef?: string;
+  dotProjectProjectRef?: string;
   dotProjectMaintainerRef?: string;
+  dotProjectSecurityRef?: string;
+  dotProjectContributingRef?: string;
+  dotProjectGovernanceRef?: string;
+  dotProjectSchemaVersion?: string;
+  dotProjectMaintainerCount?: number | null;
+  dotProjectLastSyncedAt?: string | null;
+  dotProjectAdoptionStatus?: string;
   maintainers?: { id: number; name: string; country?: string; location?: string; timezone?: string }[];
   maintainerFilter?: string;
 };
