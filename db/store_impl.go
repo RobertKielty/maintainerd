@@ -349,6 +349,28 @@ func (s *SQLStore) UpsertMaintainerRefCache(cache *model.MaintainerRefCache) err
 	return s.db.Save(cache).Error
 }
 
+// GetDotProjectSyncState returns the cached sync metadata for a project's
+// dot-project repository, or nil if none exists.
+func (s *SQLStore) GetDotProjectSyncState(projectID uint) (*model.DotProjectSyncState, error) {
+	var state model.DotProjectSyncState
+	err := s.db.Where("project_id = ?", projectID).First(&state).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &state, nil
+}
+
+// UpsertDotProjectSyncState inserts or updates dot-project sync metadata.
+func (s *SQLStore) UpsertDotProjectSyncState(state *model.DotProjectSyncState) error {
+	if state == nil {
+		return nil
+	}
+	return s.db.Save(state).Error
+}
+
 // MergeCompanies reassigns all maintainers from fromID to toID and deletes the source company.
 func (s *SQLStore) MergeCompanies(fromID, toID uint) error {
 	if fromID == toID {

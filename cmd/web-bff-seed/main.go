@@ -51,6 +51,7 @@ func main() {
 		&model.Collaborator{},
 		&model.MaintainerProject{},
 		&model.MaintainerRefCache{},
+		&model.DotProjectSyncState{},
 		&model.Service{},
 		&model.RemoteTeam{},
 		&model.RemoteUser{},

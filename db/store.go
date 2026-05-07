@@ -43,5 +43,7 @@ type Store interface {
 	UpsertRemoteUserTeam(link *model.RemoteTeamUser) (*model.RemoteTeamUser, error)
 	GetMaintainerRefCache(projectID uint) (*model.MaintainerRefCache, error)
 	UpsertMaintainerRefCache(cache *model.MaintainerRefCache) error
+	GetDotProjectSyncState(projectID uint) (*model.DotProjectSyncState, error)
+	UpsertDotProjectSyncState(state *model.DotProjectSyncState) error
 	MergeCompanies(fromID, toID uint) error
 }

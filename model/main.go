@@ -111,6 +111,41 @@ type MaintainerRefCache struct {
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 }
+
+// DotProjectSyncState stores sync metadata for the files discovered in a
+// project's .project repository.
+type DotProjectSyncState struct {
+	ProjectID uint `gorm:"primaryKey"`
+
+	RepoExists             bool `gorm:"index"`
+	ProjectFileExists      bool
+	MaintainersFileExists  bool
+	SecurityFileExists     bool
+	ContributingFileExists bool
+	GovernanceFileExists   bool
+
+	DefaultBranch       string `gorm:"size:255"`
+	MaintainersFilename string `gorm:"size:255"`
+	SchemaVersion       string `gorm:"size:64"`
+	ImporterVersion     string `gorm:"size:64"`
+
+	ProjectFileETag          string `gorm:"size:255"`
+	MaintainersFileETag      string `gorm:"size:255"`
+	SecurityFileETag         string `gorm:"size:255"`
+	ContributingFileETag     string `gorm:"size:255"`
+	GovernanceFileETag       string `gorm:"size:255"`
+	ProjectFileBodyHash      string `gorm:"size:128"` // sha256 hex
+	MaintainersFileBodyHash  string `gorm:"size:128"` // sha256 hex
+	SecurityFileBodyHash     string `gorm:"size:128"` // sha256 hex
+	ContributingFileBodyHash string `gorm:"size:128"` // sha256 hex
+	GovernanceFileBodyHash   string `gorm:"size:128"` // sha256 hex
+
+	LastCheckedAt *time.Time `gorm:"index"`
+	SyncError     *string    `gorm:"type:text"`
+	ParseError    *string    `gorm:"type:text"`
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
 type Collaborator struct {
 	gorm.Model
 	Name          string
