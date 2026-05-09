@@ -52,3 +52,26 @@ Then("the project route navigation exposes these routes", async function (table)
     });
   }
 });
+
+Then("the legacy roll call shows a dot-project migration note", async function () {
+  await expect(
+    this.page.getByText(
+      "This project has a maintainer file in its .project repo. Use DOT-PROJECT ROLL CALL to track the migration from the legacy maintainer file.",
+      { exact: false }
+    )
+  ).toBeVisible({ timeout: 15000 });
+});
+
+Then("the project route navigation shows a red X on LEGACY ROLL CALL", async function () {
+  const link = this.page
+    .locator('[class*="projectMenu"]')
+    .getByRole("link", { name: "LEGACY ROLL CALL", exact: true });
+  await expect(link.locator("text=✕")).toBeVisible({ timeout: 15000 });
+});
+
+Then("the project route navigation shows a green tick on DOT-PROJECT ROLL CALL", async function () {
+  const link = this.page
+    .locator('[class*="projectMenu"]')
+    .getByRole("link", { name: "DOT-PROJECT ROLL CALL", exact: true });
+  await expect(link.locator("text=✓")).toBeVisible({ timeout: 15000 });
+});

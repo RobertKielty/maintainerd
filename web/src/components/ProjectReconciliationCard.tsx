@@ -85,6 +85,8 @@ type ProjectSectionNavItem = {
   id: ProjectSectionId;
   label: string;
   href?: string;
+  statusTone?: "success" | "danger";
+  statusSymbol?: string;
 };
 
 export type AddMaintainerPayload = {
@@ -101,6 +103,16 @@ type ProjectReconciliationCardProps = {
   name: string;
   maturity: string;
   maintainerRef?: string | null;
+  dotProjectRepoRef?: string | null;
+  dotProjectProjectRef?: string | null;
+  dotProjectMaintainerRef?: string | null;
+  dotProjectSecurityRef?: string | null;
+  dotProjectContributingRef?: string | null;
+  dotProjectGovernanceRef?: string | null;
+  dotProjectSchemaVersion?: string | null;
+  dotProjectMaintainerCount?: number | null;
+  dotProjectLastSyncedAt?: string | null;
+  dotProjectAdoptionStatus?: string | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -227,6 +239,16 @@ export default function ProjectReconciliationCard({
   name,
   maturity,
   maintainerRef,
+  dotProjectRepoRef,
+  dotProjectProjectRef,
+  dotProjectMaintainerRef,
+  dotProjectSecurityRef,
+  dotProjectContributingRef,
+  dotProjectGovernanceRef,
+  dotProjectSchemaVersion,
+  dotProjectMaintainerCount,
+  dotProjectLastSyncedAt,
+  dotProjectAdoptionStatus,
   maintainerRefStatus,
   maintainerRefBody,
   refLines,
@@ -258,6 +280,10 @@ export default function ProjectReconciliationCard({
   const refCheckedAt = maintainerRefStatus?.checkedAt || null;
   const refUrl = maintainerRefStatus?.url || maintainerRef || "";
   const refBody = maintainerRefBody?.trim() ?? "";
+  const hasDotProjectMaintainerFile = Boolean(dotProjectMaintainerRef);
+  const hasDotProjectRepo = Boolean(dotProjectRepoRef);
+  const dotProjectMissing = dotProjectAdoptionStatus === "not_found";
+  const dotProjectPresent = !dotProjectMissing && hasDotProjectRepo;
   const refMatchCount = maintainers.filter((maintainer) => maintainer.inMaintainerRef).length;
   const refMissingCount = maintainers.length - refMatchCount;
   const refOnlyCount = refOnlyGitHub.length;
@@ -780,6 +806,51 @@ export default function ProjectReconciliationCard({
 
   const dotProjectSection = (
     <div className={styles.section}>
+      <div className={styles.statusCallout}>
+        <div className={styles.statusCalloutTitle}>Persisted dot-project status</div>
+        <div className={styles.statusCalloutBody}>
+          Status: <strong>{dotProjectAdoptionStatus || "not_checked"}</strong>
+          {dotProjectLastSyncedAt ? ` · Last synced ${formatDateTime(dotProjectLastSyncedAt)}` : ""}
+        </div>
+        <div className={styles.statusCalloutLinks}>
+          {dotProjectRepoRef ? (
+            <a className={styles.link} href={dotProjectRepoRef} target="_blank" rel="noreferrer">
+              .project repo
+            </a>
+          ) : null}
+          {dotProjectProjectRef ? (
+            <a className={styles.link} href={dotProjectProjectRef} target="_blank" rel="noreferrer">
+              project.yaml
+            </a>
+          ) : null}
+          {dotProjectMaintainerRef ? (
+            <a className={styles.link} href={dotProjectMaintainerRef} target="_blank" rel="noreferrer">
+              maintainer file
+            </a>
+          ) : null}
+          {dotProjectSecurityRef ? (
+            <a className={styles.link} href={dotProjectSecurityRef} target="_blank" rel="noreferrer">
+              SECURITY.md
+            </a>
+          ) : null}
+          {dotProjectContributingRef ? (
+            <a className={styles.link} href={dotProjectContributingRef} target="_blank" rel="noreferrer">
+              CONTRIBUTING.md
+            </a>
+          ) : null}
+          {dotProjectGovernanceRef ? (
+            <a className={styles.link} href={dotProjectGovernanceRef} target="_blank" rel="noreferrer">
+              GOVERNANCE.md
+            </a>
+          ) : null}
+        </div>
+        {dotProjectSchemaVersion || dotProjectMaintainerCount != null ? (
+          <div className={styles.statusCalloutMeta}>
+            {dotProjectSchemaVersion ? `Schema ${dotProjectSchemaVersion}` : "Schema unknown"}
+            {dotProjectMaintainerCount != null ? ` · ${dotProjectMaintainerCount} maintainers` : ""}
+          </div>
+        ) : null}
+      </div>
       <h3 className={styles.subSectionTitle}>Proposed dot project.yaml</h3>
       <p className={styles.stub}>
         Coming soon: this section will combine CNCF database fields and the Project Admin File to propose a standardized{" "}
@@ -794,10 +865,25 @@ export default function ProjectReconciliationCard({
 
   const legacyContent = (
     <div className={styles.legacyStack}>
-      <div className={styles.legacyIntro}>
-        Compare the Maintainer DB roster with the Legacy Maintainer File. Use ADD MAINTAINER to add any maintainers listed
-        in the project file who are missing from the DB.
-      </div>
+      {hasDotProjectMaintainerFile ? (
+        <div className={styles.statusCallout}>
+          <div className={styles.statusCalloutTitle}>Dot-project maintainer file detected</div>
+          <div className={styles.statusCalloutBody}>
+            This project has a maintainer file in its <code>.project</code> repo. Use DOT-PROJECT ROLL CALL to track the
+            migration from the legacy maintainer file.
+          </div>
+          <div className={styles.statusCalloutLinks}>
+            <a className={styles.link} href={dotProjectMaintainerRef!} target="_blank" rel="noreferrer">
+              Open maintainer file
+            </a>
+            {hasDotProjectRepo ? (
+              <a className={styles.link} href={dotProjectRepoRef!} target="_blank" rel="noreferrer">
+                Open .project repo
+              </a>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <div className={styles.legacyGrid}>
         <div className={styles.column}>
           <div className={styles.sectionHeader}>
@@ -970,8 +1056,18 @@ export default function ProjectReconciliationCard({
   );
 
   const defaultMenuItems: ProjectSectionNavItem[] = [
-    { id: "legacy", label: "LEGACY ROLL CALL" },
-    { id: "dot-project", label: "DOT-PROJECT ROLL CALL" },
+    {
+      id: "legacy",
+      label: "LEGACY ROLL CALL",
+      statusTone: dotProjectMissing ? "success" : dotProjectPresent ? "danger" : undefined,
+      statusSymbol: dotProjectMissing ? "✓" : dotProjectPresent ? "✕" : undefined,
+    },
+    {
+      id: "dot-project",
+      label: "DOT-PROJECT ROLL CALL",
+      statusTone: dotProjectPresent ? "success" : dotProjectMissing ? "danger" : undefined,
+      statusSymbol: dotProjectPresent ? "✓" : dotProjectMissing ? "✕" : undefined,
+    },
     { id: "license-checker", label: "SERVICES / LICENSE CHECKER" },
     { id: "mailing-maintainers", label: "SERVICES / MAILING LISTS / MAINTAINERS" },
     { id: "mailing-security", label: "SERVICES / MAILING LISTS / SECURITY" },
@@ -1498,7 +1594,19 @@ export default function ProjectReconciliationCard({
                       href={item.href}
                       className={`${styles.menuItem} ${currentSection === item.id ? styles.menuItemActive : ""}`}
                     >
-                      {item.label}
+                      <span className={styles.menuItemInner}>
+                        <span>{item.label}</span>
+                        {item.statusSymbol ? (
+                          <span
+                            aria-hidden="true"
+                            className={`${styles.menuStatus} ${
+                              item.statusTone === "success" ? styles.menuStatusSuccess : styles.menuStatusDanger
+                            }`}
+                          >
+                            {item.statusSymbol}
+                          </span>
+                        ) : null}
+                      </span>
                     </Link>
                   ) : (
                     <button
@@ -1507,7 +1615,19 @@ export default function ProjectReconciliationCard({
                       className={`${styles.menuItem} ${currentSection === item.id ? styles.menuItemActive : ""}`}
                       onClick={() => setActiveSection(item.id)}
                     >
-                      {item.label}
+                      <span className={styles.menuItemInner}>
+                        <span>{item.label}</span>
+                        {item.statusSymbol ? (
+                          <span
+                            aria-hidden="true"
+                            className={`${styles.menuStatus} ${
+                              item.statusTone === "success" ? styles.menuStatusSuccess : styles.menuStatusDanger
+                            }`}
+                          >
+                            {item.statusSymbol}
+                          </span>
+                        ) : null}
+                      </span>
                     </button>
                   )
                 )}
@@ -1517,7 +1637,23 @@ export default function ProjectReconciliationCard({
           <div className={styles.contentColumn}>
             <div className={styles.nestedCard}>
               <div className={styles.collapsibleHeader}>
-                <h2 className={styles.sectionTitle}>{menuItems.find((m) => m.id === currentSection)?.label}</h2>
+                <h2 className={styles.sectionTitle}>
+                  <span className={styles.menuItemInner}>
+                    <span>{menuItems.find((m) => m.id === currentSection)?.label}</span>
+                    {menuItems.find((m) => m.id === currentSection)?.statusSymbol ? (
+                      <span
+                        aria-hidden="true"
+                        className={`${styles.menuStatus} ${
+                          menuItems.find((m) => m.id === currentSection)?.statusTone === "success"
+                            ? styles.menuStatusSuccess
+                            : styles.menuStatusDanger
+                        }`}
+                      >
+                        {menuItems.find((m) => m.id === currentSection)?.statusSymbol}
+                      </span>
+                    ) : null}
+                  </span>
+                </h2>
               </div>
               {renderContent()}
             </div>

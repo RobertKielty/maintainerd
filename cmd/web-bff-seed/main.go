@@ -155,7 +155,18 @@ func main() {
 	}
 
 	projects := []model.Project{
-		{Name: "Project Atlas", Maturity: model.Graduated},
+		{
+			Name:                      "Project Atlas",
+			Maturity:                  model.Graduated,
+			GitHubOrg:                 "project-atlas",
+			DotProjectRepoRef:         "https://github.com/project-atlas/.project",
+			DotProjectProjectRef:      "https://github.com/project-atlas/.project/blob/main/project.yaml",
+			DotProjectMaintainerRef:   "https://github.com/project-atlas/.project/blob/main/MAINTAINERS.yaml",
+			DotProjectSchemaVersion:   "1.0.0",
+			DotProjectMaintainerCount: uintPtr(3),
+			DotProjectLastSyncedAt:    timePtr(time.Now()),
+			DotProjectAdoptionStatus:  "adopted",
+		},
 		{Name: "Project Beacon", Maturity: model.Incubating},
 		{Name: "Project Comet", Maturity: model.Sandbox},
 		{Name: "Project Fossa Full", Maturity: model.Sandbox},
@@ -359,6 +370,10 @@ func main() {
 
 func timePtr(t time.Time) *time.Time {
 	return &t
+}
+
+func uintPtr(v uint) *uint {
+	return &v
 }
 
 func strPtr(s string) *string { return &s }

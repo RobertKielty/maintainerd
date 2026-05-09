@@ -12,7 +12,7 @@ Feature: Project route navigation
     When I open the project github route
     Then the project route navigation exposes these routes
       | label                         | path-suffix            | heading                       | body-snippet                                                                     |
-      | LEGACY ROLL CALL              | /github                | LEGACY ROLL CALL              | Compare the Maintainer DB roster with the Legacy Maintainer File.                |
+      | LEGACY ROLL CALL              | /github                | LEGACY ROLL CALL              | This project has a maintainer file in its .project repo.                         |
       | DOT-PROJECT ROLL CALL         | /dot-project           | DOT-PROJECT ROLL CALL         | Coming soon: this section will combine CNCF database fields                      |
       | LICENSE CHECKER - FOSSA       | /fossa                 | LICENSE CHECKER - FOSSA       | This project has not selected a license checker.                                 |
       | MAILING LISTS / MAINTAINERS   | /mailing-maintainers   | MAILING LISTS / MAINTAINERS   | Placeholder for maintainer mailing list references                               |
@@ -20,3 +20,10 @@ Feature: Project route navigation
       | DOCUMENTATION                 | /docs                  | DOCUMENTATION                 | Placeholder for documentation hosting details.                                   |
       | COLLABORATION / SLACK         | /slack                 | COLLABORATION / SLACK         | Placeholder for Slack workspace/channel references.                              |
       | COLLABORATION / DISCORD       | /discord               | COLLABORATION / DISCORD       | Placeholder for Discord server/channel references.                               |
+
+  Scenario: Staff can see persisted dot-project migration status on roll call routes
+    Given a project exists with reconciliation routes
+    When I open the project github route
+    Then the legacy roll call shows a dot-project migration note
+    And the project route navigation shows a red X on LEGACY ROLL CALL
+    And the project route navigation shows a green tick on DOT-PROJECT ROLL CALL

@@ -38,6 +38,12 @@ This document gives agents instructions and tips for working in this repository.
 - Avoid unrelated refactors in the same change. Update docs/Makefile if deployment surface changes.
 - Use the "The Friends method" of writing commit messages to describe patches where each commit message is notionally pre-fixed with the sentence, "This is the change that " and then the commit message continues this sentence, for example, (this is the change that) "adds the repo being monitored to log output at loglevel INFO"
 
+## Web UI Theme Rule
+- When changing the web UI, always make the change work in both light mode and dark mode.
+- Respect the current `ThemeProvider` / `data-theme` mechanism instead of assuming light mode.
+- Prefer existing CSS variables in `web/src/app/globals.css`. When new UI colors or surfaces are needed, add theme-aware variables there and use those variables in component CSS.
+- Do not ship a web UI change that only looks correct in light mode.
+
 ## CRD Workflow (Generated)
 - CRDs and deepcopy files are generated; do not hand-edit `config/crd/bases/*.yaml`, `config/kcp/*.yaml`, or `apis/maintainers/v1alpha1/zz_generated.deepcopy.go`.
 - When changing existing CRDs: update Go types and kubebuilder markers in `apis/maintainers/v1alpha1/types.go`, then regenerate.

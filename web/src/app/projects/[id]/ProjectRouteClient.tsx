@@ -366,12 +366,29 @@ export default function ProjectRouteClient({ children }: ProjectRouteClientProps
     }
   };
 
-  const sectionNavItems = projectId
-    ? projectSectionRoutes.map((item) => ({
-        id: item.id,
-        label: item.label,
-        href: `/projects/${projectId}/${item.segment}`,
-      }))
+  const sectionNavItems: Array<{
+    id: ProjectSectionId;
+    label: string;
+    href: string;
+    statusTone?: "success" | "danger";
+    statusSymbol?: string;
+  }> = projectId
+    ? projectSectionRoutes.map((item) => {
+        const adoptionStatus = project?.dotProjectAdoptionStatus || "";
+        const dotProjectMissing = adoptionStatus === "not_found";
+        const dotProjectPresent = !dotProjectMissing && Boolean(project?.dotProjectRepoRef);
+        const isLegacySuccess = item.id === "legacy" && dotProjectMissing;
+        const isLegacyDanger = item.id === "legacy" && dotProjectPresent;
+        const isDotProjectSuccess = item.id === "dot-project" && dotProjectPresent;
+        const isDotProjectDanger = item.id === "dot-project" && dotProjectMissing;
+        return {
+          id: item.id,
+          label: item.label,
+          href: `/projects/${projectId}/${item.segment}`,
+          statusTone: isLegacySuccess || isDotProjectSuccess ? "success" : isLegacyDanger || isDotProjectDanger ? "danger" : undefined,
+          statusSymbol: isLegacySuccess || isDotProjectSuccess ? "✓" : isLegacyDanger || isDotProjectDanger ? "✕" : undefined,
+        };
+      })
     : [];
 
   return (
@@ -387,6 +404,16 @@ export default function ProjectRouteClient({ children }: ProjectRouteClientProps
                 name={project.name}
                 maturity={project.maturity}
                 maintainerRef={project.legacyMaintainerRef}
+                dotProjectRepoRef={project.dotProjectRepoRef}
+                dotProjectProjectRef={project.dotProjectProjectRef}
+                dotProjectMaintainerRef={project.dotProjectMaintainerRef}
+                dotProjectSecurityRef={project.dotProjectSecurityRef}
+                dotProjectContributingRef={project.dotProjectContributingRef}
+                dotProjectGovernanceRef={project.dotProjectGovernanceRef}
+                dotProjectSchemaVersion={project.dotProjectSchemaVersion}
+                dotProjectMaintainerCount={project.dotProjectMaintainerCount}
+                dotProjectLastSyncedAt={project.dotProjectLastSyncedAt}
+                dotProjectAdoptionStatus={project.dotProjectAdoptionStatus}
                 maintainerRefStatus={project.maintainerRefStatus}
                 maintainerRefBody={project.legacyMaintainerRefBody}
                 refOnlyGitHub={project.refOnlyGitHub}
