@@ -73,6 +73,13 @@ func (s *SQLStore) GetProjectByID(projectID uint) (*model.Project, error) {
 	return &project, nil
 }
 
+// ListProjects returns all projects without preloading associations.
+func (s *SQLStore) ListProjects() ([]model.Project, error) {
+	var projects []model.Project
+	err := s.db.Find(&projects).Error
+	return projects, err
+}
+
 // ListProjectsWithMaintainers returns all projects with maintainer associations preloaded.
 func (s *SQLStore) ListProjectsWithMaintainers() ([]model.Project, error) {
 	var projects []model.Project
@@ -104,6 +111,54 @@ func (s *SQLStore) UpdateProjectMaturity(projectID uint, maturity model.Maturity
 		return ErrProjectNotFound
 	}
 	return nil
+}
+
+func (s *SQLStore) UpdateProjectDotProjectMetadata(projectID uint, patch model.Project) error {
+	result := s.db.Model(&model.Project{}).
+		Where("id = ?", projectID).
+		Updates(dotProjectProjectUpdates(patch))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrProjectNotFound
+	}
+	return nil
+}
+
+func (s *SQLStore) PersistDotProjectSync(projectID uint, patch model.Project, state *model.DotProjectSyncState) error {
+	return s.db.Transaction(func(tx *gorm.DB) error {
+		result := tx.Model(&model.Project{}).
+			Where("id = ?", projectID).
+			Updates(dotProjectProjectUpdates(patch))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrProjectNotFound
+		}
+		if state != nil {
+			if err := tx.Save(state).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func dotProjectProjectUpdates(patch model.Project) map[string]interface{} {
+	return map[string]interface{}{
+		"dot_project_repo_ref":         strings.TrimSpace(patch.DotProjectRepoRef),
+		"dot_project_project_ref":      strings.TrimSpace(patch.DotProjectProjectRef),
+		"dot_project_yaml_ref":         strings.TrimSpace(patch.DotProjectMaintainerRef),
+		"dot_project_security_ref":     strings.TrimSpace(patch.DotProjectSecurityRef),
+		"dot_project_contributing_ref": strings.TrimSpace(patch.DotProjectContributingRef),
+		"dot_project_governance_ref":   strings.TrimSpace(patch.DotProjectGovernanceRef),
+		"dot_project_schema_version":   strings.TrimSpace(patch.DotProjectSchemaVersion),
+		"dot_project_maintainer_count": patch.DotProjectMaintainerCount,
+		"dot_project_last_synced_at":   patch.DotProjectLastSyncedAt,
+		"dot_project_adoption_status":  strings.TrimSpace(patch.DotProjectAdoptionStatus),
+	}
 }
 
 func (s *SQLStore) UpsertMaintainer(projectID uint, name, email, githubHandle, company string) (*model.Maintainer, error) {

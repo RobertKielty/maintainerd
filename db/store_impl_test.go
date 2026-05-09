@@ -211,6 +211,54 @@ func TestDotProjectSyncState(t *testing.T) {
 	})
 }
 
+func TestUpdateProjectDotProjectMetadata(t *testing.T) {
+	db := setupTestDB(t)
+	_, project1, _, _, _, _ := seedTestData(t, db)
+	store := NewSQLStore(db)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	count := uint(7)
+	err := store.UpdateProjectDotProjectMetadata(project1.ID, model.Project{
+		DotProjectRepoRef:         "https://github.com/example-org/.project",
+		DotProjectProjectRef:      "https://github.com/example-org/.project/blob/main/project.yaml",
+		DotProjectMaintainerRef:   "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml",
+		DotProjectSecurityRef:     "https://github.com/example-org/.project/blob/main/SECURITY.md",
+		DotProjectContributingRef: "https://github.com/example-org/.project/blob/main/CONTRIBUTING.md",
+		DotProjectGovernanceRef:   "https://github.com/example-org/.project/blob/main/GOVERNANCE.md",
+		DotProjectSchemaVersion:   "1.0.0",
+		DotProjectMaintainerCount: &count,
+		DotProjectLastSyncedAt:    &now,
+		DotProjectAdoptionStatus:  "adopted",
+	})
+	require.NoError(t, err)
+
+	reloaded, err := store.GetProjectByID(project1.ID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, "https://github.com/example-org/.project", reloaded.DotProjectRepoRef)
+	assert.Equal(t, "https://github.com/example-org/.project/blob/main/project.yaml", reloaded.DotProjectProjectRef)
+	assert.Equal(t, "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml", reloaded.DotProjectMaintainerRef)
+	assert.Equal(t, "1.0.0", reloaded.DotProjectSchemaVersion)
+	require.NotNil(t, reloaded.DotProjectMaintainerCount)
+	assert.Equal(t, uint(7), *reloaded.DotProjectMaintainerCount)
+	require.NotNil(t, reloaded.DotProjectLastSyncedAt)
+	assert.True(t, reloaded.DotProjectLastSyncedAt.Equal(now))
+	assert.Equal(t, "adopted", reloaded.DotProjectAdoptionStatus)
+
+	err = store.UpdateProjectDotProjectMetadata(project1.ID, model.Project{
+		DotProjectAdoptionStatus: "not_found",
+	})
+	require.NoError(t, err)
+
+	reloaded, err = store.GetProjectByID(project1.ID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, "", reloaded.DotProjectRepoRef)
+	assert.Nil(t, reloaded.DotProjectMaintainerCount)
+	assert.Nil(t, reloaded.DotProjectLastSyncedAt)
+	assert.Equal(t, "not_found", reloaded.DotProjectAdoptionStatus)
+}
+
 func TestGetProjectsUsingService(t *testing.T) {
 	t.Skip("testDB not defined - needs implementation")
 }

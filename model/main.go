@@ -165,9 +165,11 @@ type Project struct {
 	LegacyMaintainerRef string `gorm:"column:maintainer_ref"`
 	// Keep the legacy column name for the first migration phase while the
 	// logical field name moves to dot-project maintainer terminology.
-	DotProjectRepoRef         string `gorm:"size:1024"`
-	DotProjectProjectRef      string `gorm:"size:1024"`
-	DotProjectMaintainerRef   string `gorm:"column:dot_project_yaml_ref;size:1024"`
+	DotProjectRepoRef    string `gorm:"size:1024"`
+	DotProjectProjectRef string `gorm:"size:1024"`
+	// Keep this legacy DB column as text so migrations do not fight the
+	// generated search_tsv column on refreshed production snapshots.
+	DotProjectMaintainerRef   string `gorm:"column:dot_project_yaml_ref;type:text"`
 	DotProjectSecurityRef     string `gorm:"size:1024"`
 	DotProjectContributingRef string `gorm:"size:1024"`
 	DotProjectGovernanceRef   string `gorm:"size:1024"`
