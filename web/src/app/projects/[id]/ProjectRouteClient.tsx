@@ -25,6 +25,21 @@ type ServiceSummary = {
   description: string;
 };
 
+type DotProjectSyncState = {
+  repoExists: boolean;
+  projectFileExists: boolean;
+  maintainersFileExists: boolean;
+  securityFileExists: boolean;
+  contributingFileExists: boolean;
+  governanceFileExists: boolean;
+  defaultBranch?: string;
+  maintainersFilename?: string;
+  schemaVersion?: string;
+  lastCheckedAt?: string | null;
+  syncError?: string;
+  parseError?: string;
+};
+
 type ProjectDetail = {
   id: number;
   name: string;
@@ -41,6 +56,7 @@ type ProjectDetail = {
   dotProjectMaintainerCount?: number | null;
   dotProjectLastSyncedAt?: string | null;
   dotProjectAdoptionStatus?: string;
+  dotProjectSyncState?: DotProjectSyncState | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -128,6 +144,18 @@ const projectDataHasChanged = (current: ProjectDetail | null, next: ProjectDetai
     current.dotProjectMaintainerCount !== next.dotProjectMaintainerCount ||
     current.dotProjectLastSyncedAt !== next.dotProjectLastSyncedAt ||
     current.dotProjectAdoptionStatus !== next.dotProjectAdoptionStatus ||
+    current.dotProjectSyncState?.repoExists !== next.dotProjectSyncState?.repoExists ||
+    current.dotProjectSyncState?.projectFileExists !== next.dotProjectSyncState?.projectFileExists ||
+    current.dotProjectSyncState?.maintainersFileExists !== next.dotProjectSyncState?.maintainersFileExists ||
+    current.dotProjectSyncState?.securityFileExists !== next.dotProjectSyncState?.securityFileExists ||
+    current.dotProjectSyncState?.contributingFileExists !== next.dotProjectSyncState?.contributingFileExists ||
+    current.dotProjectSyncState?.governanceFileExists !== next.dotProjectSyncState?.governanceFileExists ||
+    current.dotProjectSyncState?.defaultBranch !== next.dotProjectSyncState?.defaultBranch ||
+    current.dotProjectSyncState?.maintainersFilename !== next.dotProjectSyncState?.maintainersFilename ||
+    current.dotProjectSyncState?.schemaVersion !== next.dotProjectSyncState?.schemaVersion ||
+    current.dotProjectSyncState?.lastCheckedAt !== next.dotProjectSyncState?.lastCheckedAt ||
+    current.dotProjectSyncState?.syncError !== next.dotProjectSyncState?.syncError ||
+    current.dotProjectSyncState?.parseError !== next.dotProjectSyncState?.parseError ||
     current.maintainerRefStatus.status !== next.maintainerRefStatus.status ||
     current.maintainerRefStatus.url !== next.maintainerRefStatus.url ||
     current.maintainerRefStatus.checkedAt !== next.maintainerRefStatus.checkedAt ||
@@ -414,6 +442,7 @@ export default function ProjectRouteClient({ children }: ProjectRouteClientProps
                 dotProjectMaintainerCount={project.dotProjectMaintainerCount}
                 dotProjectLastSyncedAt={project.dotProjectLastSyncedAt}
                 dotProjectAdoptionStatus={project.dotProjectAdoptionStatus}
+                dotProjectSyncState={project.dotProjectSyncState}
                 maintainerRefStatus={project.maintainerRefStatus}
                 maintainerRefBody={project.legacyMaintainerRefBody}
                 refOnlyGitHub={project.refOnlyGitHub}

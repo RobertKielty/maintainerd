@@ -674,6 +674,7 @@ type projectDetailResponse struct {
 	DotProjectMaintainerCount *uint                          `json:"dotProjectMaintainerCount,omitempty"`
 	DotProjectLastSyncedAt    *time.Time                     `json:"dotProjectLastSyncedAt,omitempty"`
 	DotProjectAdoptionStatus  string                         `json:"dotProjectAdoptionStatus,omitempty"`
+	DotProjectSyncState       *dotProjectSyncStateResponse   `json:"dotProjectSyncState,omitempty"`
 	RefStatus                 maintainerRefStatus            `json:"maintainerRefStatus"`
 	LegacyMaintainerRefBody   string                         `json:"legacyMaintainerRefBody,omitempty"`
 	RefOnlyGitHub             []string                       `json:"refOnlyGitHub"`
@@ -692,6 +693,21 @@ type projectDetailResponse struct {
 	DeletedAt                 *time.Time                     `json:"deletedAt,omitempty"`
 	UpdatedBy                 string                         `json:"updatedBy,omitempty"`
 	UpdatedAuditID            *uint                          `json:"updatedAuditId,omitempty"`
+}
+
+type dotProjectSyncStateResponse struct {
+	RepoExists             bool       `json:"repoExists"`
+	ProjectFileExists      bool       `json:"projectFileExists"`
+	MaintainersFileExists  bool       `json:"maintainersFileExists"`
+	SecurityFileExists     bool       `json:"securityFileExists"`
+	ContributingFileExists bool       `json:"contributingFileExists"`
+	GovernanceFileExists   bool       `json:"governanceFileExists"`
+	DefaultBranch          string     `json:"defaultBranch,omitempty"`
+	MaintainersFilename    string     `json:"maintainersFilename,omitempty"`
+	SchemaVersion          string     `json:"schemaVersion,omitempty"`
+	LastCheckedAt          *time.Time `json:"lastCheckedAt,omitempty"`
+	SyncError              string     `json:"syncError,omitempty"`
+	ParseError             string     `json:"parseError,omitempty"`
 }
 
 func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -737,10 +753,16 @@ func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maturityFilters := parseCSVParam(r, "maturity")
+	dotProjectFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("dotProject")))
 
 	base := s.store.DB().Model(&model.Project{})
 	if len(maturityFilters) > 0 {
 		base = base.Where("projects.maturity IN ?", maturityFilters)
+	}
+	if dotProjectFilter == "with" {
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') <> ''")
+	} else if dotProjectFilter == "without" {
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') = ''")
 	}
 	if namePrefix != "" {
 		base = base.Where("LOWER(projects.name) LIKE ?", strings.ToLower(namePrefix)+"%")
@@ -867,6 +889,7 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 		direction = "desc"
 	}
 	maturityFilters := parseCSVParam(r, "maturity")
+	dotProjectFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("dotProject")))
 	nameFilter := strings.TrimSpace(r.URL.Query().Get("projectName"))
 	maintainerFilter := strings.TrimSpace(r.URL.Query().Get("maintainer"))
 	maintainerFileFilter := strings.TrimSpace(r.URL.Query().Get("maintainerFile"))
@@ -874,6 +897,11 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 	base := s.store.DB().Model(&model.Project{})
 	if len(maturityFilters) > 0 {
 		base = base.Where("projects.maturity IN ?", maturityFilters)
+	}
+	if dotProjectFilter == "with" {
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') <> ''")
+	} else if dotProjectFilter == "without" {
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') = ''")
 	}
 	if nameFilter != "" {
 		base = base.Where("LOWER(projects.name) LIKE ?", "%"+strings.ToLower(nameFilter)+"%")
@@ -1108,6 +1136,13 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 	} else if session.Role != roleStaff {
 		s.logger.Printf("web-bff: access denied project=%d user=%s role=%s reason=role_not_allowed", id, session.Login, session.Role)
 		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	dotProjectSyncState, err := s.store.GetDotProjectSyncState(project.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: failed to load dot-project sync state project=%d path=%s user=%s role=%s err=%v", id, r.URL.Path, login, role, err)
+		http.Error(w, "failed to load project", http.StatusInternalServerError)
 		return
 	}
 
@@ -1352,6 +1387,27 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 	response.DotProjectGovernanceRef = strings.TrimSpace(project.DotProjectGovernanceRef)
 	response.DotProjectSchemaVersion = strings.TrimSpace(project.DotProjectSchemaVersion)
 	response.DotProjectAdoptionStatus = strings.TrimSpace(project.DotProjectAdoptionStatus)
+	if dotProjectSyncState != nil {
+		syncState := &dotProjectSyncStateResponse{
+			RepoExists:             dotProjectSyncState.RepoExists,
+			ProjectFileExists:      dotProjectSyncState.ProjectFileExists,
+			MaintainersFileExists:  dotProjectSyncState.MaintainersFileExists,
+			SecurityFileExists:     dotProjectSyncState.SecurityFileExists,
+			ContributingFileExists: dotProjectSyncState.ContributingFileExists,
+			GovernanceFileExists:   dotProjectSyncState.GovernanceFileExists,
+			DefaultBranch:          strings.TrimSpace(dotProjectSyncState.DefaultBranch),
+			MaintainersFilename:    strings.TrimSpace(dotProjectSyncState.MaintainersFilename),
+			SchemaVersion:          strings.TrimSpace(dotProjectSyncState.SchemaVersion),
+			LastCheckedAt:          dotProjectSyncState.LastCheckedAt,
+		}
+		if dotProjectSyncState.SyncError != nil {
+			syncState.SyncError = strings.TrimSpace(*dotProjectSyncState.SyncError)
+		}
+		if dotProjectSyncState.ParseError != nil {
+			syncState.ParseError = strings.TrimSpace(*dotProjectSyncState.ParseError)
+		}
+		response.DotProjectSyncState = syncState
+	}
 	if project.OnboardingIssue != nil {
 		onboardingIssue := strings.TrimSpace(*project.OnboardingIssue)
 		if onboardingIssue != "" {

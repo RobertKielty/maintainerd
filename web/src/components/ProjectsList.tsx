@@ -69,6 +69,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
   const [sortBy, setSortBy] = useState<"created" | "name" | "obIssue">("created");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const [maturityFilter, setMaturityFilter] = useState("all");
+  const [dotProjectFilter, setDotProjectFilter] = useState("all");
   const [projectNameFilter, setProjectNameFilter] = useState("");
   const [maintainerFilter, setMaintainerFilter] = useState("");
   const [maintainerFileFilter, setMaintainerFileFilter] = useState("");
@@ -135,6 +136,9 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
         if (maturityFilter !== "all") {
           params.set("maturity", maturityFilter);
         }
+        if (dotProjectFilter !== "all") {
+          params.set("dotProject", dotProjectFilter);
+        }
         if (debouncedProjectNameFilter) {
           params.set("projectName", debouncedProjectNameFilter);
         }
@@ -183,6 +187,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
     page,
     sortBy,
     maturityFilter,
+    dotProjectFilter,
     debouncedProjectNameFilter,
     debouncedMaintainerFilter,
     debouncedMaintainerFileFilter,
@@ -353,6 +358,28 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                 }}
               >
                 {value === "all" ? "All" : value}
+              </button>
+            ))}
+          </div>
+          <div className={styles.filterRow}>
+            <span className={styles.filterLabel}>Dot-project</span>
+            {[
+              { value: "all", label: "All" },
+              { value: "with", label: "adopted!" },
+              { value: "without", label: "legacy file" },
+            ].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`${styles.filterChip} ${
+                  dotProjectFilter === option.value ? styles.filterChipActive : ""
+                }`}
+                onClick={() => {
+                  setDotProjectFilter(option.value);
+                  setPage(1);
+                }}
+              >
+                {option.label}
               </button>
             ))}
           </div>
@@ -598,7 +625,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                     </td>
                     <td className={styles.orgCol}>{orgLink(project.githubOrg)}</td>
                     <td className={styles.dotRepoCol}>
-                      {renderLink(project.dotProjectMaintainerRef)}
+                      {renderLink(project.dotProjectRepoRef, fileName(project.dotProjectRepoRef))}
                     </td>
                     </tr>
                   );
@@ -621,7 +648,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                     onboardingIssueStatus={project.onboardingIssueStatus}
                     legacyMaintainerRef={project.legacyMaintainerRef}
                     githubOrg={project.githubOrg}
-                    dotProjectMaintainerRef={project.dotProjectMaintainerRef}
+                    dotProjectRepoRef={project.dotProjectRepoRef}
                     maintainers={project.maintainers}
                     maintainerFilter={maintainerFilter}
                   />

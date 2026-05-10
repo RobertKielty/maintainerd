@@ -64,6 +64,21 @@ type FossaInviteCandidateSummary = {
   email: string;
 };
 
+type DotProjectSyncStateSummary = {
+  repoExists: boolean;
+  projectFileExists: boolean;
+  maintainersFileExists: boolean;
+  securityFileExists: boolean;
+  contributingFileExists: boolean;
+  governanceFileExists: boolean;
+  defaultBranch?: string | null;
+  maintainersFilename?: string | null;
+  schemaVersion?: string | null;
+  lastCheckedAt?: string | null;
+  syncError?: string | null;
+  parseError?: string | null;
+};
+
 type SortDirection = "asc" | "desc";
 
 type SortState<Key extends string> = {
@@ -113,6 +128,7 @@ type ProjectReconciliationCardProps = {
   dotProjectMaintainerCount?: number | null;
   dotProjectLastSyncedAt?: string | null;
   dotProjectAdoptionStatus?: string | null;
+  dotProjectSyncState?: DotProjectSyncStateSummary | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -234,6 +250,9 @@ const maintainerRefSchema = {
 
 const isYamlRef = (value: string) => /\.(ya?ml)(\?|#|$)/i.test(value);
 
+const buildStatusBadgeClassName = (stylesMap: Record<string, string>, found: boolean) =>
+  `${stylesMap.statusBadge} ${found ? stylesMap.statusOk : stylesMap.statusWarn}`;
+
 export default function ProjectReconciliationCard({
   projectId,
   name,
@@ -249,6 +268,7 @@ export default function ProjectReconciliationCard({
   dotProjectMaintainerCount,
   dotProjectLastSyncedAt,
   dotProjectAdoptionStatus,
+  dotProjectSyncState,
   maintainerRefStatus,
   maintainerRefBody,
   refLines,
@@ -284,6 +304,48 @@ export default function ProjectReconciliationCard({
   const hasDotProjectRepo = Boolean(dotProjectRepoRef);
   const dotProjectMissing = dotProjectAdoptionStatus === "not_found";
   const dotProjectPresent = !dotProjectMissing && hasDotProjectRepo;
+  const dotProjectRepoExists = dotProjectSyncState?.repoExists ?? dotProjectPresent;
+  const dotProjectLastCheckedAt = dotProjectSyncState?.lastCheckedAt || dotProjectLastSyncedAt || null;
+  const dotProjectSchema = dotProjectSyncState?.schemaVersion || dotProjectSchemaVersion || "";
+  const dotProjectMaintainersFilename = dotProjectSyncState?.maintainersFilename || "MAINTAINERS.yaml";
+  const dotProjectFiles = [
+    {
+      label: ".project repo",
+      present: dotProjectRepoExists,
+      href: dotProjectRepoRef || "",
+      detail: dotProjectSyncState?.defaultBranch ? `Default branch: ${dotProjectSyncState.defaultBranch}` : "Repository root",
+    },
+    {
+      label: "project.yaml",
+      present: dotProjectSyncState?.projectFileExists ?? Boolean(dotProjectProjectRef),
+      href: dotProjectProjectRef || "",
+      detail: dotProjectSchema ? `Schema ${dotProjectSchema}` : "Core project metadata",
+    },
+    {
+      label: dotProjectMaintainersFilename,
+      present: dotProjectSyncState?.maintainersFileExists ?? hasDotProjectMaintainerFile,
+      href: dotProjectMaintainerRef || "",
+      detail: dotProjectMaintainerCount != null ? `${dotProjectMaintainerCount} maintainers` : "Maintainer roster",
+    },
+    {
+      label: "SECURITY.md",
+      present: dotProjectSyncState?.securityFileExists ?? Boolean(dotProjectSecurityRef),
+      href: dotProjectSecurityRef || "",
+      detail: "Security policy",
+    },
+    {
+      label: "CONTRIBUTING.md",
+      present: dotProjectSyncState?.contributingFileExists ?? Boolean(dotProjectContributingRef),
+      href: dotProjectContributingRef || "",
+      detail: "Contribution guidelines",
+    },
+    {
+      label: "GOVERNANCE.md",
+      present: dotProjectSyncState?.governanceFileExists ?? Boolean(dotProjectGovernanceRef),
+      href: dotProjectGovernanceRef || "",
+      detail: "Governance document",
+    },
+  ];
   const refMatchCount = maintainers.filter((maintainer) => maintainer.inMaintainerRef).length;
   const refMissingCount = maintainers.length - refMatchCount;
   const refOnlyCount = refOnlyGitHub.length;
@@ -807,56 +869,107 @@ export default function ProjectReconciliationCard({
   const dotProjectSection = (
     <div className={styles.section}>
       <div className={styles.statusCallout}>
-        <div className={styles.statusCalloutTitle}>Persisted dot-project status</div>
+        <div className={styles.statusCalloutTitle}>Persisted dot-project roll call</div>
         <div className={styles.statusCalloutBody}>
+          Review the persisted <code>.project</code> discovery state captured by the background sync job.
+        </div>
+        <div className={styles.statusCalloutMeta}>
           Status: <strong>{dotProjectAdoptionStatus || "not_checked"}</strong>
-          {dotProjectLastSyncedAt ? ` · Last synced ${formatDateTime(dotProjectLastSyncedAt)}` : ""}
+          {dotProjectLastCheckedAt ? ` · Last checked ${formatDateTime(dotProjectLastCheckedAt)}` : ""}
         </div>
-        <div className={styles.statusCalloutLinks}>
-          {dotProjectRepoRef ? (
-            <a className={styles.link} href={dotProjectRepoRef} target="_blank" rel="noreferrer">
-              .project repo
-            </a>
-          ) : null}
-          {dotProjectProjectRef ? (
-            <a className={styles.link} href={dotProjectProjectRef} target="_blank" rel="noreferrer">
-              project.yaml
-            </a>
-          ) : null}
-          {dotProjectMaintainerRef ? (
-            <a className={styles.link} href={dotProjectMaintainerRef} target="_blank" rel="noreferrer">
-              maintainer file
-            </a>
-          ) : null}
-          {dotProjectSecurityRef ? (
-            <a className={styles.link} href={dotProjectSecurityRef} target="_blank" rel="noreferrer">
-              SECURITY.md
-            </a>
-          ) : null}
-          {dotProjectContributingRef ? (
-            <a className={styles.link} href={dotProjectContributingRef} target="_blank" rel="noreferrer">
-              CONTRIBUTING.md
-            </a>
-          ) : null}
-          {dotProjectGovernanceRef ? (
-            <a className={styles.link} href={dotProjectGovernanceRef} target="_blank" rel="noreferrer">
-              GOVERNANCE.md
-            </a>
-          ) : null}
-        </div>
-        {dotProjectSchemaVersion || dotProjectMaintainerCount != null ? (
-          <div className={styles.statusCalloutMeta}>
-            {dotProjectSchemaVersion ? `Schema ${dotProjectSchemaVersion}` : "Schema unknown"}
-            {dotProjectMaintainerCount != null ? ` · ${dotProjectMaintainerCount} maintainers` : ""}
-          </div>
-        ) : null}
       </div>
-      <h3 className={styles.subSectionTitle}>Proposed dot project.yaml</h3>
-      <p className={styles.stub}>
-        Coming soon: this section will combine CNCF database fields and the Project Admin File to propose a standardized{" "}
-        <code>project.yaml</code> that projects can check in for GitOps-friendly maintainer rosters, mailing lists, and
-        service metadata.
-      </p>
+      <div className={styles.tableSection}>
+        <div className={styles.tableHeader}>
+          <h3 className={styles.tableTitle}>Discovery summary</h3>
+        </div>
+        <div className={styles.dotProjectSummaryGrid}>
+          <div className={styles.dotProjectSummaryCard}>
+            <span className={styles.detailLabel}>Repo</span>
+            <div className={styles.statusRow}>
+              <span className={buildStatusBadgeClassName(styles, dotProjectRepoExists)}>
+                {dotProjectRepoExists ? "FOUND" : "MISSING"}
+              </span>
+              <span className={styles.secondary}>{dotProjectSyncState?.defaultBranch || "Branch unknown"}</span>
+            </div>
+          </div>
+          <div className={styles.dotProjectSummaryCard}>
+            <span className={styles.detailLabel}>Schema version</span>
+            <span className={styles.secondary}>{dotProjectSchema || "Unknown"}</span>
+          </div>
+          <div className={styles.dotProjectSummaryCard}>
+            <span className={styles.detailLabel}>Maintainer count</span>
+            <span className={styles.secondary}>
+              {dotProjectMaintainerCount != null ? String(dotProjectMaintainerCount) : "Not parsed"}
+            </span>
+          </div>
+          <div className={styles.dotProjectSummaryCard}>
+            <span className={styles.detailLabel}>Maintainer filename</span>
+            <span className={styles.secondary}>{dotProjectMaintainersFilename}</span>
+          </div>
+        </div>
+      </div>
+      <div className={styles.tableSection}>
+        <div className={styles.tableHeader}>
+          <h3 className={styles.tableTitle}>Tracked files</h3>
+        </div>
+        <div className={styles.tableWrap}>
+          <table className={styles.dataTable}>
+            <thead>
+              <tr>
+                <th>Artifact</th>
+                <th>Status</th>
+                <th>Notes</th>
+                <th>Link</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dotProjectFiles.map((file) => (
+                <tr key={file.label}>
+                  <td className={styles.dotProjectArtifactName}>{file.label}</td>
+                  <td>
+                    <span className={buildStatusBadgeClassName(styles, file.present)}>
+                      {file.present ? "FOUND" : "MISSING"}
+                    </span>
+                  </td>
+                  <td>{file.detail}</td>
+                  <td>
+                    {file.href ? (
+                      <a className={styles.link} href={file.href} target="_blank" rel="noreferrer">
+                        Open
+                      </a>
+                    ) : (
+                      <span className={styles.secondary}>—</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {dotProjectSyncState?.syncError || dotProjectSyncState?.parseError ? (
+        <div className={styles.statusCallout}>
+          <div className={styles.statusCalloutTitle}>Recorded sync issues</div>
+          {dotProjectSyncState?.syncError ? (
+            <div className={styles.statusCalloutBody}>
+              Sync error: <strong>{dotProjectSyncState.syncError}</strong>
+            </div>
+          ) : null}
+          {dotProjectSyncState?.parseError ? (
+            <div className={styles.statusCalloutBody}>
+              Parse error: <strong>{dotProjectSyncState.parseError}</strong>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {!dotProjectSyncState && !dotProjectAdoptionStatus ? (
+        <div className={styles.statusCallout}>
+          <div className={styles.statusCalloutTitle}>No persisted sync state yet</div>
+          <div className={styles.statusCalloutBody}>
+            Run the dot-project background sync job to populate this roll call from the CNCF <code>.project</code> repo.
+          </div>
+        </div>
+        ) : null}
     </div>
   );
 

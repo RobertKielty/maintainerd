@@ -33,7 +33,7 @@ export default function ProjectCard({
   onboardingIssueStatus,
   legacyMaintainerRef,
   githubOrg,
-  dotProjectMaintainerRef,
+  dotProjectRepoRef,
   maintainers = [],
   maintainerFilter = "",
 }: ProjectCardProps) {
@@ -42,7 +42,7 @@ export default function ProjectCard({
   const hasObStatus = Boolean(onboardingIssueStatus);
   const hasLegacyFile = Boolean(legacyMaintainerRef);
   const hasOrg = Boolean(githubOrg && githubOrg.trim());
-  const hasDotProjectMaintainerFile = Boolean(dotProjectMaintainerRef);
+  const hasDotProjectRepo = Boolean(dotProjectRepoRef);
 
   const renderLink = (value?: string | null, label?: string) => {
     if (!value) {
@@ -190,10 +190,10 @@ export default function ProjectCard({
             <dd>{orgLink(githubOrg)}</dd>
           </div>
         ) : null}
-        {hasDotProjectMaintainerFile ? (
+        {hasDotProjectRepo ? (
           <div>
-            <dt>.project maintainer file</dt>
-            <dd>{renderLink(dotProjectMaintainerRef, fileName(dotProjectMaintainerRef))}</dd>
+            <dt>.project repo</dt>
+            <dd>{renderLink(dotProjectRepoRef, fileName(dotProjectRepoRef))}</dd>
           </div>
         ) : null}
       </dl>

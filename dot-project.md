@@ -294,6 +294,36 @@ The next user-visible commit is step 6, where these persisted values start drivi
 - Add the legacy-page note when a dot-project maintainer file exists.
 - Add green tick and red X status indicators based on persisted discovery state.
 
+#### Implementation report
+
+Step 6 is complete.
+
+What changed:
+
+- Renamed the project route navigation labels to emphasize migration tracking:
+  - `LEGACY ROLL CALL`
+  - `DOT-PROJECT ROLL CALL`
+- Surfaced persisted dot-project adoption state in the project route navigation.
+- Added a legacy-page note when a persisted dot-project maintainer file exists.
+- Added navigation status indicators:
+  - green tick on `DOT-PROJECT ROLL CALL` when a dot-project repo is present
+  - red X on `LEGACY ROLL CALL` when a dot-project repo is present
+  - the inverse when the persisted adoption state is `not_found`
+- Seeded route test data so the navigation status and migration note are visible in the default web BDD fixtures.
+- Updated theme variables and component styles so the new UI callouts and status markers work in both light mode and dark mode.
+
+Operational details:
+
+- This step remained strictly persisted-data driven. The UI does not probe GitHub directly during page render.
+- The dot-project route still remained a placeholder at the end of step 6, but it now surfaced the persisted adoption summary needed for the later full roll call page.
+
+Verification:
+
+- `npm --prefix web run lint`
+- `npm --prefix web run typecheck`
+- `GOCACHE=/tmp/go-build go test ./cmd/web-bff-seed`
+- `WEB_BDD_USE_MICROCKS=true BDD_FEATURE=../features/web/project_routes.feature make test-web`
+
 ### Commit 7: Implement the Dot-Project Roll Call Page
 
 Replace the current stub route with a page that shows:
@@ -304,6 +334,59 @@ Replace the current stub route with a page that shows:
 - maintainer count
 - last sync time
 - links to discovered files
+
+#### Implementation report
+
+Step 7 is complete.
+
+What changed:
+
+- Replaced the dot-project placeholder content with a persisted dot-project roll call view.
+- Extended the project detail API to include the persisted `DotProjectSyncState` summary for the selected project.
+- Added a dot-project roll call section that shows:
+  - persisted adoption status
+  - last checked time
+  - repo presence
+  - schema version
+  - maintainer count
+  - maintainer filename
+  - per-file presence for:
+    - `.project` repo
+    - `project.yaml`
+    - `MAINTAINERS.yaml` / `maintainers.yaml`
+    - `SECURITY.md`
+    - `CONTRIBUTING.md`
+    - `GOVERNANCE.md`
+  - links to each discovered file when a persisted ref exists
+  - recorded sync and parse errors when present
+- Seeded a persisted sync-state row for `Project Atlas` so the dot-project route is testable end-to-end in the seeded web environment.
+- Updated route-level BDD coverage to assert on the persisted roll call summary and the tracked file list.
+
+Operational details:
+
+- The page remains read-only and persisted-data driven. It renders the sync job output rather than probing GitHub live during page render.
+- The route uses the project-level ref fields for links and the sync-state record for repo/file presence and error reporting.
+- When no persisted sync state exists yet, the page explains that the dot-project background sync job must be run first.
+
+Verification:
+
+- `npm --prefix web run lint`
+- `npm --prefix web run typecheck`
+- `GOCACHE=/tmp/go-build go test ./cmd/web-bff ./cmd/web-bff-seed`
+- `WEB_BDD_USE_MICROCKS=true BDD_FEATURE=../features/web/project_routes.feature make test-web`
+
+What to sanity check locally:
+
+- Run `go run ./cmd/dot-project-sync` against the refreshed local Podman database.
+- Open `/projects/<id>/dot-project` for a project with persisted dot-project state.
+- Confirm the page shows:
+  - adoption status
+  - last checked time
+  - schema version
+  - maintainer count
+  - the tracked file table with `FOUND` / `MISSING` badges
+  - links for any discovered dot-project files
+- Open a project without a dot-project repo and confirm the route shows the persisted `not_found` state cleanly rather than the old placeholder.
 
 ### Commit 8: Import Selected `project.yaml` Metadata
 
@@ -327,6 +410,37 @@ Add search/reporting for:
 - projects missing recommended files
 - schema version distribution
 - maintainer coverage comparisons between legacy and dot-project sources
+
+#### Partial implementation report
+
+Initial reporting work is complete.
+
+What changed:
+
+- Added dot-project repo filtering to the main project list.
+- The main list now supports:
+  - `All`
+  - `adopted!`
+  - `legacy file`
+- Wired the filter through the recent-projects API so it remains server-side and works cleanly with existing pagination.
+- Corrected the main list `.project repo` column so it links to the `.project` repo itself rather than the maintainer file.
+- Updated the mobile project card view to show the `.project` repo link consistently.
+- Added focused BDD coverage for the dot-project repo filter states.
+
+Operational details:
+
+- This is the first slice of the broader reporting/search work planned for commit 9.
+- The current filter is based on persisted `.project` repo presence using the project-level dot-project ref fields.
+- The user-facing labels intentionally match migration framing:
+  - `adopted!` for projects with a `.project` repo
+  - `legacy file` for projects without a `.project` repo
+
+Verification:
+
+- `GOCACHE=/tmp/go-build go test ./cmd/web-bff`
+- `npm --prefix web run lint`
+- `npm --prefix web run typecheck`
+- `WEB_BDD_USE_MICROCKS=true BDD_FEATURE=../features/web/project_list_dot_project_filter.feature make test-web`
 
 ## Schema Tracking
 

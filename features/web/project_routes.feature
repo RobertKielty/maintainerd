@@ -13,7 +13,7 @@ Feature: Project route navigation
     Then the project route navigation exposes these routes
       | label                         | path-suffix            | heading                       | body-snippet                                                                     |
       | LEGACY ROLL CALL              | /github                | LEGACY ROLL CALL              | This project has a maintainer file in its .project repo.                         |
-      | DOT-PROJECT ROLL CALL         | /dot-project           | DOT-PROJECT ROLL CALL         | Coming soon: this section will combine CNCF database fields                      |
+      | DOT-PROJECT ROLL CALL         | /dot-project           | DOT-PROJECT ROLL CALL         | Review the persisted .project discovery state captured by the background sync job. |
       | LICENSE CHECKER - FOSSA       | /fossa                 | LICENSE CHECKER - FOSSA       | This project has not selected a license checker.                                 |
       | MAILING LISTS / MAINTAINERS   | /mailing-maintainers   | MAILING LISTS / MAINTAINERS   | Placeholder for maintainer mailing list references                               |
       | MAILING LISTS / SECURITY      | /mailing-security      | MAILING LISTS / SECURITY      | Placeholder for security mailing list references.                                |
@@ -27,3 +27,10 @@ Feature: Project route navigation
     Then the legacy roll call shows a dot-project migration note
     And the project route navigation shows a red X on LEGACY ROLL CALL
     And the project route navigation shows a green tick on DOT-PROJECT ROLL CALL
+
+  Scenario: Staff can review the persisted dot-project roll call
+    Given a project exists with reconciliation routes
+    When I open the project github route
+    And I open the DOT-PROJECT ROLL CALL route
+    Then the dot-project roll call shows the persisted discovery summary
+    And the dot-project roll call lists the tracked .project files
