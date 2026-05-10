@@ -9,6 +9,8 @@ IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd:$(TAG)
 IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd:latest
 SYNC_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sync:$(TAG)
 SYNC_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sync:latest
+DOT_PROJECT_SYNC_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-dot-project-sync:$(TAG)
+DOT_PROJECT_SYNC_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-dot-project-sync:latest
 SANITIZE_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sanitize:$(TAG)
 SANITIZE_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sanitize:latest
 MIGRATE_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-migrate:$(TAG)
@@ -80,6 +82,11 @@ mntrd-image-build:
 sync-image-build:
 	@echo "Building sync image: $(SYNC_IMAGE)"
 	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(SYNC_IMAGE) -f Dockerfile --target sync .
+
+.PHONY: dot-project-sync-image-build
+dot-project-sync-image-build:
+	@echo "Building dot-project sync image: $(DOT_PROJECT_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(DOT_PROJECT_SYNC_IMAGE) -f Dockerfile --target dot-project-sync .
 
 .PHONY: sanitize-image-build
 sanitize-image-build:
@@ -192,6 +199,21 @@ sync-image-push: sync-image-build
 	@echo "Tagging and pushing latest: $(SYNC_IMAGE_LATEST)"
 	@$(CONTAINER_TOOL) tag $(SYNC_IMAGE) $(SYNC_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(SYNC_IMAGE_LATEST)
+
+.PHONY: dot-project-sync-image-push
+dot-project-sync-image-push: dot-project-sync-image-build
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(DOT_PROJECT_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) push $(DOT_PROJECT_SYNC_IMAGE)
+	@echo "Tagging and pushing latest: $(DOT_PROJECT_SYNC_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(DOT_PROJECT_SYNC_IMAGE) $(DOT_PROJECT_SYNC_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(DOT_PROJECT_SYNC_IMAGE_LATEST)
 
 .PHONY: sanitize-image-push
 sanitize-image-push: sanitize-image-build
@@ -314,10 +336,31 @@ sync-image-deploy: sync-image-push
 	kubectl -n $(NAMESPACE) $$CTX_FLAG delete job -l job-name=maintainer-sync --ignore-not-found; \
 	echo "Next scheduled run will pull $(SYNC_IMAGE)."
 
+.PHONY: dot-project-sync-image-deploy
+dot-project-sync-image-deploy: dot-project-sync-image-push
+	@echo "Image pushed. Updating CronJob/dot-project-sync in $(NAMESPACE) [ctx=$(CTX_STR)]"
+	@CTX_FLAG="$(if $(KUBECONTEXT),--context $(KUBECONTEXT))" ; \
+	if ! kubectl $$CTX_FLAG config current-context >/dev/null 2>&1; then \
+		echo "kubectl context $(CTX_STR) unavailable; skipping rollout"; exit 0; \
+	fi ; \
+	if ! kubectl -n $(NAMESPACE) $$CTX_FLAG get cronjob/dot-project-sync >/dev/null 2>&1; then \
+		echo "CronJob/dot-project-sync not found in namespace $(NAMESPACE)."; \
+		echo "Hint: apply deploy/manifests/dot-project-sync-cronjob.yaml or run 'make dot-project-sync-apply'."; \
+		exit 1; \
+	fi ; \
+	kubectl -n $(NAMESPACE) $$CTX_FLAG set image cronjob/dot-project-sync '*=$(DOT_PROJECT_SYNC_IMAGE)'; \
+	kubectl -n $(NAMESPACE) $$CTX_FLAG delete job -l job-name=dot-project-sync --ignore-not-found; \
+	echo "Next scheduled run will pull $(DOT_PROJECT_SYNC_IMAGE)."
+
 .PHONY: sync-apply
 sync-apply:
 	@echo "Applying sync resources in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/cronjob.yaml -f deploy/manifests/sync-rbac.yaml
+
+.PHONY: dot-project-sync-apply
+dot-project-sync-apply:
+	@echo "Applying dot-project sync CronJob in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/dot-project-sync-cronjob.yaml
 
 .PHONY: sync-run
 sync-run:
@@ -325,6 +368,14 @@ sync-run:
 	job="maintainer-sync-manual-$$(date +%s)"; \
 	echo "Creating sync job $$job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) create job --from=cronjob/maintainer-sync $$job; \
+	'
+
+.PHONY: dot-project-sync-run
+dot-project-sync-run:
+	@bash -c 'set -euo pipefail; \
+	job="dot-project-sync-manual-$$(date +%s)"; \
+	echo "Creating dot-project sync job $$job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) create job --from=cronjob/dot-project-sync $$job; \
 	'
 
 .PHONY: bootstrap-run
@@ -502,6 +553,8 @@ help:
 	@echo "make web-release TAG=... -> build+push web & web-bff with same tag, then set both images"
 	@echo "make github-profile-sync-image-build -> build GitHub profile sync image $(GITHUB_PROFILE_SYNC_IMAGE) locally"
 	@echo "make github-profile-sync-image-push -> build and push $(GITHUB_PROFILE_SYNC_IMAGE)"
+	@echo "make dot-project-sync-image-build -> build dot-project sync image $(DOT_PROJECT_SYNC_IMAGE) locally"
+	@echo "make dot-project-sync-image-push -> build and push $(DOT_PROJECT_SYNC_IMAGE)"
 	@echo "make clean-env       -> remove $(ENVOUT)"
 	@echo "make print           -> show which keys would be loaded (without values)"
 	@echo "make mntrd-image-build  -> build maintainerd image $(IMAGE) locally"
@@ -509,6 +562,8 @@ help:
 	@echo "make mntrd-image-deploy -> build, push, and restart Deployment in $(NAMESPACE)"
 	@echo "make sync-apply      -> apply CronJob + RBAC for the sync job"
 	@echo "make sync-run        -> trigger a manual sync job and tail logs"
+	@echo "make dot-project-sync-apply -> apply the hourly dot-project sync CronJob"
+	@echo "make dot-project-sync-run -> trigger a manual dot-project sync job"
 	@echo "make fossa-poller-deploy -> apply Deployment for the long-running FOSSA poller"
 	@echo "make github-profile-sync-run -> recreate one-off GitHub profile sync job and tail logs"
 	@echo "make bootstrap-run   -> prod: recreate bootstrap job after applying SOPS bootstrap secrets"
@@ -1129,6 +1184,15 @@ sync-image-set:
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
 		set image cronjob/maintainer-sync '*=$(SYNC_IMAGE)'
 
+.PHONY: dot-project-sync-image-set
+dot-project-sync-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make dot-project-sync-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-dot-project-sync image to $(DOT_PROJECT_SYNC_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/dot-project-sync '*=$(DOT_PROJECT_SYNC_IMAGE)'
+
 .PHONY: sanitize-image-set
 sanitize-image-set:
 	@if [ -z "$(TAG)" ]; then \
@@ -1148,7 +1212,7 @@ onboarding-backfill-image-set:
 		set image cronjob/maintainerd-onboarding-backfill '*=$(ONBOARDING_BACKFILL_IMAGE)'
 
 .PHONY: image-set
-image-set: mntrd-image-set web-image-set web-bff-image-set fossa-poller-image-set sync-image-set sanitize-image-set onboarding-backfill-image-set
+image-set: mntrd-image-set web-image-set web-bff-image-set fossa-poller-image-set sync-image-set dot-project-sync-image-set sanitize-image-set onboarding-backfill-image-set
 	@true
 
 # Convenience combo target
@@ -1167,6 +1231,7 @@ images-show:
 	@echo "Image repositories:"
 	@echo "  maintainerd        $(IMAGE)"
 	@echo "  maintainerd-sync   $(SYNC_IMAGE)"
+	@echo "  maintainerd-dot-project-sync $(DOT_PROJECT_SYNC_IMAGE)"
 	@echo "  maintainerd-sanitize $(SANITIZE_IMAGE)"
 	@echo "  maintainerd-migrate  $(MIGRATE_IMAGE)"
 	@echo "  maintainerd-fossa-poller $(FOSSA_POLLER_IMAGE)"
@@ -1175,7 +1240,7 @@ images-show:
 	@echo "  maintainerd-web-bff  $(WEB_BFF_IMAGE)"
 
 .PHONY: images-build
-images-build: mntrd-image-build sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build fossa-poller-image-build github-profile-sync-image-build web-image-build web-bff-image-build
+images-build: mntrd-image-build sync-image-build dot-project-sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build fossa-poller-image-build github-profile-sync-image-build web-image-build web-bff-image-build
 	@echo "All images built."
 
 .PHONY: mntrd-image-push-only
@@ -1207,6 +1272,21 @@ sync-image-push-only:
 	@echo "Tagging and pushing latest: $(SYNC_IMAGE_LATEST)"
 	@$(CONTAINER_TOOL) tag $(SYNC_IMAGE) $(SYNC_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(SYNC_IMAGE_LATEST)
+
+.PHONY: dot-project-sync-image-push-only
+dot-project-sync-image-push-only:
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(DOT_PROJECT_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) push $(DOT_PROJECT_SYNC_IMAGE)
+	@echo "Tagging and pushing latest: $(DOT_PROJECT_SYNC_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(DOT_PROJECT_SYNC_IMAGE) $(DOT_PROJECT_SYNC_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(DOT_PROJECT_SYNC_IMAGE_LATEST)
 
 .PHONY: sanitize-image-push-only
 sanitize-image-push-only:
@@ -1314,7 +1394,7 @@ web-bff-image-push-only:
 	@$(CONTAINER_TOOL) push $(WEB_BFF_IMAGE_LATEST)
 
 .PHONY: images-push
-images-push: mntrd-image-push-only sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only fossa-poller-image-push-only github-profile-sync-image-push-only web-image-push-only web-bff-image-push-only
+images-push: mntrd-image-push-only sync-image-push-only dot-project-sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only fossa-poller-image-push-only github-profile-sync-image-push-only web-image-push-only web-bff-image-push-only
 	@echo "All images pushed (no build)."
 
 .PHONY: clean-env
@@ -1493,10 +1573,10 @@ ci-local:
 		exit 1; \
 	fi
 	@echo "→ Running go vet..."
-	@GOCACHE=$(GOCACHE_DIR) go vet # ./...
+	@GOCACHE=$(GOCACHE_DIR) go vet ./...
 	@echo "→ Running staticcheck..."
 	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck not installed. Run: go install honnef.co/go/tools/cmd/staticcheck@latest"; exit 1; }
-	@GOCACHE=$(GOCACHE_DIR) staticcheck # ./...
+	@GOCACHE=$(GOCACHE_DIR) staticcheck ./...
 	@echo "→ Running golangci-lint..."
 	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; exit 1; }
 	@GOLANGCI_LINT_CACHE=/tmp/golangci-lint GOCACHE=$(GOCACHE_DIR) golangci-lint run ./...

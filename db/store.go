@@ -14,6 +14,7 @@ var ErrCompanyExists = errors.New("company already exists")
 
 type Store interface {
 	GetProjectsUsingService(serviceID uint) ([]model.Project, error)
+	ListProjects() ([]model.Project, error)
 	GetProjectByID(projectID uint) (*model.Project, error)
 	GetProjectMapByName() (map[string]model.Project, error)
 	GetMaintainersByProject(projectID uint) ([]model.Maintainer, error)
@@ -27,6 +28,8 @@ type Store interface {
 	CreateCompany(name string) (*model.Company, error)
 	UpdateProjectMaturity(projectID uint, maturity model.Maturity) error
 	UpdateProjectLegacyMaintainerRef(projectID uint, ref string) error
+	UpdateProjectDotProjectMetadata(projectID uint, patch model.Project) error
+	PersistDotProjectSync(projectID uint, patch model.Project, state *model.DotProjectSyncState) error
 	UpdateMaintainerStatus(maintainerID uint, status model.MaintainerStatus) error
 	UpdateMaintainersStatus(ids []uint, status model.MaintainerStatus) error
 	UpdateMaintainerGitHubEmail(maintainerID uint, githubEmail string) error
@@ -43,5 +46,7 @@ type Store interface {
 	UpsertRemoteUserTeam(link *model.RemoteTeamUser) (*model.RemoteTeamUser, error)
 	GetMaintainerRefCache(projectID uint) (*model.MaintainerRefCache, error)
 	UpsertMaintainerRefCache(cache *model.MaintainerRefCache) error
+	GetDotProjectSyncState(projectID uint) (*model.DotProjectSyncState, error)
+	UpsertDotProjectSyncState(state *model.DotProjectSyncState) error
 	MergeCompanies(fromID, toID uint) error
 }

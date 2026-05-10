@@ -72,6 +72,7 @@ func setupPollerTestDB(t *testing.T) *gorm.DB {
 		&model.ServiceInvitation{},
 		&model.RemoteUser{},
 		&model.RemoteTeamUser{},
+		&model.DotProjectSyncState{},
 	))
 	return dbConn
 }

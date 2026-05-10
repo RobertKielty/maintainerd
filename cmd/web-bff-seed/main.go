@@ -51,6 +51,7 @@ func main() {
 		&model.Collaborator{},
 		&model.MaintainerProject{},
 		&model.MaintainerRefCache{},
+		&model.DotProjectSyncState{},
 		&model.Service{},
 		&model.RemoteTeam{},
 		&model.RemoteUser{},
@@ -153,8 +154,24 @@ func main() {
 		}
 	}
 
+	atlasSyncedAt := timePtr(time.Now())
+
 	projects := []model.Project{
-		{Name: "Project Atlas", Maturity: model.Graduated},
+		{
+			Name:                      "Project Atlas",
+			Maturity:                  model.Graduated,
+			GitHubOrg:                 "project-atlas",
+			DotProjectRepoRef:         "https://github.com/project-atlas/.project",
+			DotProjectProjectRef:      "https://github.com/project-atlas/.project/blob/main/project.yaml",
+			DotProjectMaintainerRef:   "https://github.com/project-atlas/.project/blob/main/MAINTAINERS.yaml",
+			DotProjectSecurityRef:     "https://github.com/project-atlas/.project/blob/main/SECURITY.md",
+			DotProjectContributingRef: "https://github.com/project-atlas/.project/blob/main/CONTRIBUTING.md",
+			DotProjectGovernanceRef:   "https://github.com/project-atlas/.project/blob/main/GOVERNANCE.md",
+			DotProjectSchemaVersion:   "1.0.0",
+			DotProjectMaintainerCount: uintPtr(3),
+			DotProjectLastSyncedAt:    atlasSyncedAt,
+			DotProjectAdoptionStatus:  "adopted",
+		},
 		{Name: "Project Beacon", Maturity: model.Incubating},
 		{Name: "Project Comet", Maturity: model.Sandbox},
 		{Name: "Project Fossa Full", Maturity: model.Sandbox},
@@ -204,6 +221,33 @@ func main() {
 	projectMap := map[string]*model.Project{}
 	for i := range projects {
 		projectMap[projects[i].Name] = &projects[i]
+	}
+	atlasSyncState := model.DotProjectSyncState{
+		ProjectID:                projectMap["Project Atlas"].ID,
+		RepoExists:               true,
+		ProjectFileExists:        true,
+		MaintainersFileExists:    true,
+		SecurityFileExists:       true,
+		ContributingFileExists:   true,
+		GovernanceFileExists:     true,
+		DefaultBranch:            "main",
+		MaintainersFilename:      "MAINTAINERS.yaml",
+		SchemaVersion:            "1.0.0",
+		ImporterVersion:          "seed",
+		LastCheckedAt:            atlasSyncedAt,
+		ProjectFileETag:          "seed-project",
+		MaintainersFileETag:      "seed-maintainers",
+		SecurityFileETag:         "seed-security",
+		ContributingFileETag:     "seed-contributing",
+		GovernanceFileETag:       "seed-governance",
+		ProjectFileBodyHash:      "seed-project-hash",
+		MaintainersFileBodyHash:  "seed-maintainers-hash",
+		SecurityFileBodyHash:     "seed-security-hash",
+		ContributingFileBodyHash: "seed-contributing-hash",
+		GovernanceFileBodyHash:   "seed-governance-hash",
+	}
+	if err := dbConn.Where(model.DotProjectSyncState{ProjectID: atlasSyncState.ProjectID}).Assign(atlasSyncState).FirstOrCreate(&atlasSyncState).Error; err != nil {
+		log.Fatalf("seed: dot-project sync state insert failed: %v", err)
 	}
 	if err := dbConn.Model(projectMap["Project Fossa Full"]).Association("Maintainers").Replace(
 		&maintainers[0],
@@ -358,6 +402,10 @@ func main() {
 
 func timePtr(t time.Time) *time.Time {
 	return &t
+}
+
+func uintPtr(v uint) *uint {
+	return &v
 }
 
 func strPtr(s string) *string { return &s }

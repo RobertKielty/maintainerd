@@ -349,6 +349,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Expires:  time.Now().Add(s.oauthStates.ttl),
 	})
 
+	//nolint:gosec // Secure is intentionally configurable for local HTTP development and test mode; HttpOnly and SameSite are set.
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.stateCookie,
 		Value:    state,
@@ -470,6 +471,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	//nolint:gosec // Secure is intentionally configurable for local HTTP development and test mode; HttpOnly and SameSite are set.
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName,
 		Value:    "",
@@ -500,6 +502,7 @@ func (s *server) createSession(login, role string, w http.ResponseWriter) error 
 
 	s.logger.Printf("web-bff: login success user=%s role=%s", login, role)
 
+	//nolint:gosec // Secure is intentionally configurable for local HTTP development and test mode; HttpOnly and SameSite are set.
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName,
 		Value:    sessionID,
@@ -549,17 +552,26 @@ type projectsResponse struct {
 }
 
 type recentProjectSummary struct {
-	ID                   uint                `json:"id"`
-	Name                 string              `json:"name"`
-	Maturity             string              `json:"maturity"`
-	AddedBy              string              `json:"addedBy"`
-	OnboardingIssue      string              `json:"onboardingIssue,omitempty"`
-	OnboardingIssueState string              `json:"onboardingIssueStatus,omitempty"`
-	LegacyMaintainerRef  string              `json:"legacyMaintainerRef,omitempty"`
-	GitHubOrg            string              `json:"githubOrg,omitempty"`
-	DotProjectYamlRef    string              `json:"dotProjectYamlRef,omitempty"`
-	CreatedAt            string              `json:"createdAt,omitempty"`
-	Maintainers          []maintainerSummary `json:"maintainers,omitempty"`
+	ID                        uint                `json:"id"`
+	Name                      string              `json:"name"`
+	Maturity                  string              `json:"maturity"`
+	AddedBy                   string              `json:"addedBy"`
+	OnboardingIssue           string              `json:"onboardingIssue,omitempty"`
+	OnboardingIssueState      string              `json:"onboardingIssueStatus,omitempty"`
+	LegacyMaintainerRef       string              `json:"legacyMaintainerRef,omitempty"`
+	GitHubOrg                 string              `json:"githubOrg,omitempty"`
+	DotProjectRepoRef         string              `json:"dotProjectRepoRef,omitempty"`
+	DotProjectProjectRef      string              `json:"dotProjectProjectRef,omitempty"`
+	DotProjectMaintainerRef   string              `json:"dotProjectMaintainerRef,omitempty"`
+	DotProjectSecurityRef     string              `json:"dotProjectSecurityRef,omitempty"`
+	DotProjectContributingRef string              `json:"dotProjectContributingRef,omitempty"`
+	DotProjectGovernanceRef   string              `json:"dotProjectGovernanceRef,omitempty"`
+	DotProjectSchemaVersion   string              `json:"dotProjectSchemaVersion,omitempty"`
+	DotProjectMaintainerCount *uint               `json:"dotProjectMaintainerCount,omitempty"`
+	DotProjectLastSyncedAt    *time.Time          `json:"dotProjectLastSyncedAt,omitempty"`
+	DotProjectAdoptionStatus  string              `json:"dotProjectAdoptionStatus,omitempty"`
+	CreatedAt                 string              `json:"createdAt,omitempty"`
+	Maintainers               []maintainerSummary `json:"maintainers,omitempty"`
 }
 
 type recentProjectsResponse struct {
@@ -580,13 +592,13 @@ type projectIDRow struct {
 }
 
 type projectCreateRequest struct {
-	OnboardingIssue     string `json:"onboardingIssue"`
-	ProjectName         string `json:"projectName,omitempty"`
-	GitHubOrg           string `json:"githubOrg"`
-	ParentProjectID     *uint  `json:"parentProjectId,omitempty"`
-	LegacyMaintainerRef string `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef   string `json:"dotProjectYamlRef,omitempty"`
-	Maturity            string `json:"maturity,omitempty"`
+	OnboardingIssue         string `json:"onboardingIssue"`
+	ProjectName             string `json:"projectName,omitempty"`
+	GitHubOrg               string `json:"githubOrg"`
+	ParentProjectID         *uint  `json:"parentProjectId,omitempty"`
+	LegacyMaintainerRef     string `json:"legacyMaintainerRef,omitempty"`
+	DotProjectMaintainerRef string `json:"dotProjectMaintainerRef,omitempty"`
+	Maturity                string `json:"maturity,omitempty"`
 }
 
 type projectCreateResponse struct {
@@ -650,30 +662,55 @@ type maintainerRefStatus struct {
 }
 
 type projectDetailResponse struct {
-	ID                      uint                           `json:"id"`
-	Name                    string                         `json:"name"`
-	Maturity                string                         `json:"maturity"`
-	ParentProjectID         *uint                          `json:"parentProjectId,omitempty"`
-	LegacyMaintainerRef     string                         `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef       string                         `json:"dotProjectYamlRef,omitempty"`
-	RefStatus               maintainerRefStatus            `json:"maintainerRefStatus"`
-	LegacyMaintainerRefBody string                         `json:"legacyMaintainerRefBody,omitempty"`
-	RefOnlyGitHub           []string                       `json:"refOnlyGitHub"`
-	RefLines                map[string]string              `json:"refLines,omitempty"`
-	OnboardingIssue         string                         `json:"onboardingIssue,omitempty"`
-	MailingList             string                         `json:"mailingList,omitempty"`
-	Maintainers             []projectMaintainerDetail      `json:"maintainers"`
-	Services                []serviceSummary               `json:"services"`
-	FossaTeamID             *uint                          `json:"fossaTeamId,omitempty"`
-	FossaTeamName           string                         `json:"fossaTeamName,omitempty"`
-	FossaTeamMembers        []fossaTeamMemberSummary       `json:"fossaTeamMembers,omitempty"`
-	FossaInviteIneligible   []fossaInviteIneligibleSummary `json:"fossaInviteIneligible,omitempty"`
-	FossaInviteCandidates   []fossaInviteCandidateSummary  `json:"fossaInviteCandidates,omitempty"`
-	CreatedAt               time.Time                      `json:"createdAt"`
-	UpdatedAt               time.Time                      `json:"updatedAt"`
-	DeletedAt               *time.Time                     `json:"deletedAt,omitempty"`
-	UpdatedBy               string                         `json:"updatedBy,omitempty"`
-	UpdatedAuditID          *uint                          `json:"updatedAuditId,omitempty"`
+	ID                        uint                           `json:"id"`
+	Name                      string                         `json:"name"`
+	Maturity                  string                         `json:"maturity"`
+	ParentProjectID           *uint                          `json:"parentProjectId,omitempty"`
+	LegacyMaintainerRef       string                         `json:"legacyMaintainerRef,omitempty"`
+	DotProjectRepoRef         string                         `json:"dotProjectRepoRef,omitempty"`
+	DotProjectProjectRef      string                         `json:"dotProjectProjectRef,omitempty"`
+	DotProjectMaintainerRef   string                         `json:"dotProjectMaintainerRef,omitempty"`
+	DotProjectSecurityRef     string                         `json:"dotProjectSecurityRef,omitempty"`
+	DotProjectContributingRef string                         `json:"dotProjectContributingRef,omitempty"`
+	DotProjectGovernanceRef   string                         `json:"dotProjectGovernanceRef,omitempty"`
+	DotProjectSchemaVersion   string                         `json:"dotProjectSchemaVersion,omitempty"`
+	DotProjectMaintainerCount *uint                          `json:"dotProjectMaintainerCount,omitempty"`
+	DotProjectLastSyncedAt    *time.Time                     `json:"dotProjectLastSyncedAt,omitempty"`
+	DotProjectAdoptionStatus  string                         `json:"dotProjectAdoptionStatus,omitempty"`
+	DotProjectSyncState       *dotProjectSyncStateResponse   `json:"dotProjectSyncState,omitempty"`
+	RefStatus                 maintainerRefStatus            `json:"maintainerRefStatus"`
+	LegacyMaintainerRefBody   string                         `json:"legacyMaintainerRefBody,omitempty"`
+	RefOnlyGitHub             []string                       `json:"refOnlyGitHub"`
+	RefLines                  map[string]string              `json:"refLines,omitempty"`
+	OnboardingIssue           string                         `json:"onboardingIssue,omitempty"`
+	MailingList               string                         `json:"mailingList,omitempty"`
+	Maintainers               []projectMaintainerDetail      `json:"maintainers"`
+	Services                  []serviceSummary               `json:"services"`
+	FossaTeamID               *uint                          `json:"fossaTeamId,omitempty"`
+	FossaTeamName             string                         `json:"fossaTeamName,omitempty"`
+	FossaTeamMembers          []fossaTeamMemberSummary       `json:"fossaTeamMembers,omitempty"`
+	FossaInviteIneligible     []fossaInviteIneligibleSummary `json:"fossaInviteIneligible,omitempty"`
+	FossaInviteCandidates     []fossaInviteCandidateSummary  `json:"fossaInviteCandidates,omitempty"`
+	CreatedAt                 time.Time                      `json:"createdAt"`
+	UpdatedAt                 time.Time                      `json:"updatedAt"`
+	DeletedAt                 *time.Time                     `json:"deletedAt,omitempty"`
+	UpdatedBy                 string                         `json:"updatedBy,omitempty"`
+	UpdatedAuditID            *uint                          `json:"updatedAuditId,omitempty"`
+}
+
+type dotProjectSyncStateResponse struct {
+	RepoExists             bool       `json:"repoExists"`
+	ProjectFileExists      bool       `json:"projectFileExists"`
+	MaintainersFileExists  bool       `json:"maintainersFileExists"`
+	SecurityFileExists     bool       `json:"securityFileExists"`
+	ContributingFileExists bool       `json:"contributingFileExists"`
+	GovernanceFileExists   bool       `json:"governanceFileExists"`
+	DefaultBranch          string     `json:"defaultBranch,omitempty"`
+	MaintainersFilename    string     `json:"maintainersFilename,omitempty"`
+	SchemaVersion          string     `json:"schemaVersion,omitempty"`
+	LastCheckedAt          *time.Time `json:"lastCheckedAt,omitempty"`
+	SyncError              string     `json:"syncError,omitempty"`
+	ParseError             string     `json:"parseError,omitempty"`
 }
 
 func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -719,10 +756,17 @@ func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maturityFilters := parseCSVParam(r, "maturity")
+	dotProjectFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("dotProject")))
 
 	base := s.store.DB().Model(&model.Project{})
 	if len(maturityFilters) > 0 {
 		base = base.Where("projects.maturity IN ?", maturityFilters)
+	}
+	switch dotProjectFilter {
+	case "with":
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') <> ''")
+	case "without":
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') = ''")
 	}
 	if namePrefix != "" {
 		base = base.Where("LOWER(projects.name) LIKE ?", strings.ToLower(namePrefix)+"%")
@@ -849,6 +893,7 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 		direction = "desc"
 	}
 	maturityFilters := parseCSVParam(r, "maturity")
+	dotProjectFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("dotProject")))
 	nameFilter := strings.TrimSpace(r.URL.Query().Get("projectName"))
 	maintainerFilter := strings.TrimSpace(r.URL.Query().Get("maintainer"))
 	maintainerFileFilter := strings.TrimSpace(r.URL.Query().Get("maintainerFile"))
@@ -856,6 +901,12 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 	base := s.store.DB().Model(&model.Project{})
 	if len(maturityFilters) > 0 {
 		base = base.Where("projects.maturity IN ?", maturityFilters)
+	}
+	switch dotProjectFilter {
+	case "with":
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') <> ''")
+	case "without":
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') = ''")
 	}
 	if nameFilter != "" {
 		base = base.Where("LOWER(projects.name) LIKE ?", "%"+strings.ToLower(nameFilter)+"%")
@@ -1007,15 +1058,24 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		entry := recentProjectSummary{
-			ID:                  project.ID,
-			Name:                project.Name,
-			Maturity:            string(project.Maturity),
-			AddedBy:             addedBy[project.ID],
-			LegacyMaintainerRef: strings.TrimSpace(project.LegacyMaintainerRef),
-			GitHubOrg:           strings.TrimSpace(project.GitHubOrg),
-			DotProjectYamlRef:   strings.TrimSpace(project.DotProjectYamlRef),
-			CreatedAt:           project.CreatedAt.Format(time.RFC3339),
-			Maintainers:         summarizeMaintainers(project.Maintainers),
+			ID:                        project.ID,
+			Name:                      project.Name,
+			Maturity:                  string(project.Maturity),
+			AddedBy:                   addedBy[project.ID],
+			LegacyMaintainerRef:       strings.TrimSpace(project.LegacyMaintainerRef),
+			GitHubOrg:                 strings.TrimSpace(project.GitHubOrg),
+			DotProjectRepoRef:         strings.TrimSpace(project.DotProjectRepoRef),
+			DotProjectProjectRef:      strings.TrimSpace(project.DotProjectProjectRef),
+			DotProjectMaintainerRef:   strings.TrimSpace(project.DotProjectMaintainerRef),
+			DotProjectSecurityRef:     strings.TrimSpace(project.DotProjectSecurityRef),
+			DotProjectContributingRef: strings.TrimSpace(project.DotProjectContributingRef),
+			DotProjectGovernanceRef:   strings.TrimSpace(project.DotProjectGovernanceRef),
+			DotProjectSchemaVersion:   strings.TrimSpace(project.DotProjectSchemaVersion),
+			DotProjectMaintainerCount: project.DotProjectMaintainerCount,
+			DotProjectLastSyncedAt:    project.DotProjectLastSyncedAt,
+			DotProjectAdoptionStatus:  strings.TrimSpace(project.DotProjectAdoptionStatus),
+			CreatedAt:                 project.CreatedAt.Format(time.RFC3339),
+			Maintainers:               summarizeMaintainers(project.Maintainers),
 		}
 		if entry.AddedBy == "" {
 			entry.AddedBy = "—"
@@ -1081,6 +1141,13 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 	} else if session.Role != roleStaff {
 		s.logger.Printf("web-bff: access denied project=%d user=%s role=%s reason=role_not_allowed", id, session.Login, session.Role)
 		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	dotProjectSyncState, err := s.store.GetDotProjectSyncState(project.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: failed to load dot-project sync state project=%d path=%s user=%s role=%s err=%v", id, r.URL.Path, login, role, err)
+		http.Error(w, "failed to load project", http.StatusInternalServerError)
 		return
 	}
 
@@ -1289,34 +1356,62 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := projectDetailResponse{
-		ID:                      project.ID,
-		Name:                    project.Name,
-		Maturity:                string(project.Maturity),
-		ParentProjectID:         project.ParentProjectID,
-		RefStatus:               refStatus,
-		LegacyMaintainerRefBody: refBody,
-		RefOnlyGitHub:           refOnlyGitHub,
-		RefLines:                refLines,
-		Maintainers:             maintainers,
-		Services:                services,
-		FossaTeamID:             fossaTeamID,
-		FossaTeamName:           fossaTeamName,
-		FossaTeamMembers:        fossaTeamMembers,
-		FossaInviteIneligible:   fossaInviteIneligible,
-		FossaInviteCandidates:   fossaInviteCandidates,
-		CreatedAt:               project.CreatedAt,
-		UpdatedAt:               project.UpdatedAt,
-		DeletedAt:               deletedAt,
-		UpdatedBy:               updatedBy,
-		UpdatedAuditID:          updatedAuditID,
+		ID:                        project.ID,
+		Name:                      project.Name,
+		Maturity:                  string(project.Maturity),
+		ParentProjectID:           project.ParentProjectID,
+		RefStatus:                 refStatus,
+		LegacyMaintainerRefBody:   refBody,
+		RefOnlyGitHub:             refOnlyGitHub,
+		RefLines:                  refLines,
+		Maintainers:               maintainers,
+		Services:                  services,
+		FossaTeamID:               fossaTeamID,
+		FossaTeamName:             fossaTeamName,
+		FossaTeamMembers:          fossaTeamMembers,
+		FossaInviteIneligible:     fossaInviteIneligible,
+		FossaInviteCandidates:     fossaInviteCandidates,
+		DotProjectMaintainerCount: project.DotProjectMaintainerCount,
+		DotProjectLastSyncedAt:    project.DotProjectLastSyncedAt,
+		CreatedAt:                 project.CreatedAt,
+		UpdatedAt:                 project.UpdatedAt,
+		DeletedAt:                 deletedAt,
+		UpdatedBy:                 updatedBy,
+		UpdatedAuditID:            updatedAuditID,
 	}
 
 	maintainerRef := strings.TrimSpace(project.LegacyMaintainerRef)
 	if maintainerRef != "" {
 		response.LegacyMaintainerRef = maintainerRef
 	}
-	if project.DotProjectYamlRef != "" {
-		response.DotProjectYamlRef = strings.TrimSpace(project.DotProjectYamlRef)
+	response.DotProjectRepoRef = strings.TrimSpace(project.DotProjectRepoRef)
+	response.DotProjectProjectRef = strings.TrimSpace(project.DotProjectProjectRef)
+	response.DotProjectMaintainerRef = strings.TrimSpace(project.DotProjectMaintainerRef)
+	response.DotProjectSecurityRef = strings.TrimSpace(project.DotProjectSecurityRef)
+	response.DotProjectContributingRef = strings.TrimSpace(project.DotProjectContributingRef)
+	response.DotProjectGovernanceRef = strings.TrimSpace(project.DotProjectGovernanceRef)
+	response.DotProjectSchemaVersion = strings.TrimSpace(project.DotProjectSchemaVersion)
+	response.DotProjectAdoptionStatus = strings.TrimSpace(project.DotProjectAdoptionStatus)
+	if dotProjectSyncState != nil {
+		syncState := &dotProjectSyncStateResponse{
+			RepoExists:             dotProjectSyncState.RepoExists,
+			ProjectFileExists:      dotProjectSyncState.ProjectFileExists,
+			MaintainersFileExists:  dotProjectSyncState.MaintainersFileExists,
+			SecurityFileExists:     dotProjectSyncState.SecurityFileExists,
+			ContributingFileExists: dotProjectSyncState.ContributingFileExists,
+			GovernanceFileExists:   dotProjectSyncState.GovernanceFileExists,
+			DefaultBranch:          strings.TrimSpace(dotProjectSyncState.DefaultBranch),
+			MaintainersFilename:    strings.TrimSpace(dotProjectSyncState.MaintainersFilename),
+			SchemaVersion:          strings.TrimSpace(dotProjectSyncState.SchemaVersion),
+			LastCheckedAt:          dotProjectSyncState.LastCheckedAt,
+		}
+		if dotProjectSyncState.SyncError != nil {
+			syncState.SyncError = strings.TrimSpace(*dotProjectSyncState.SyncError)
+		}
+		if dotProjectSyncState.ParseError != nil {
+			syncState.ParseError = strings.TrimSpace(*dotProjectSyncState.ParseError)
+		}
+		response.DotProjectSyncState = syncState
 	}
 	if project.OnboardingIssue != nil {
 		onboardingIssue := strings.TrimSpace(*project.OnboardingIssue)
@@ -1387,9 +1482,9 @@ func (s *server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	githubOrg := strings.TrimSpace(req.GitHubOrg)
 	legacyRef := strings.TrimSpace(req.LegacyMaintainerRef)
-	dotProjectRef := strings.TrimSpace(req.DotProjectYamlRef)
+	dotProjectRef := strings.TrimSpace(req.DotProjectMaintainerRef)
 	if legacyRef == "" && dotProjectRef == "" {
-		http.Error(w, "legacyMaintainerRef or dotProjectYamlRef is required", http.StatusBadRequest)
+		http.Error(w, "legacyMaintainerRef or dotProjectMaintainerRef is required", http.StatusBadRequest)
 		return
 	}
 	inferredOrg := ""
@@ -1408,7 +1503,7 @@ func (s *server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if inferredOrg != "" && !strings.EqualFold(inferredOrg, org) {
-			http.Error(w, "legacyMaintainerRef and dotProjectYamlRef must reference the same GitHub org", http.StatusBadRequest)
+			http.Error(w, "legacyMaintainerRef and dotProjectMaintainerRef must reference the same GitHub org", http.StatusBadRequest)
 			return
 		}
 		inferredOrg = org
@@ -1451,13 +1546,13 @@ func (s *server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := model.Project{
-		Name:                projectName,
-		Maturity:            maturity,
-		GitHubOrg:           githubOrg,
-		ParentProjectID:     req.ParentProjectID,
-		LegacyMaintainerRef: legacyRef,
-		DotProjectYamlRef:   dotProjectRef,
-		OnboardingIssue:     &onboardingIssue,
+		Name:                    projectName,
+		Maturity:                maturity,
+		GitHubOrg:               githubOrg,
+		ParentProjectID:         req.ParentProjectID,
+		LegacyMaintainerRef:     legacyRef,
+		DotProjectMaintainerRef: dotProjectRef,
+		OnboardingIssue:         &onboardingIssue,
 	}
 	if err := s.store.DB().Create(&project).Error; err != nil {
 		s.logger.Printf("web-bff: create project error: %v", err)
@@ -3270,12 +3365,21 @@ type companyDetailResponse struct {
 }
 
 type searchProjectResult struct {
-	ID                  uint    `json:"id"`
-	Name                string  `json:"name"`
-	GitHubOrg           string  `json:"githubOrg,omitempty"`
-	OnboardingIssue     *string `json:"onboardingIssue,omitempty"`
-	LegacyMaintainerRef string  `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef   string  `json:"dotProjectYamlRef,omitempty"`
+	ID                        uint       `json:"id"`
+	Name                      string     `json:"name"`
+	GitHubOrg                 string     `json:"githubOrg,omitempty"`
+	OnboardingIssue           *string    `json:"onboardingIssue,omitempty"`
+	LegacyMaintainerRef       string     `json:"legacyMaintainerRef,omitempty"`
+	DotProjectRepoRef         string     `json:"dotProjectRepoRef,omitempty"`
+	DotProjectProjectRef      string     `json:"dotProjectProjectRef,omitempty"`
+	DotProjectMaintainerRef   string     `json:"dotProjectMaintainerRef,omitempty"`
+	DotProjectSecurityRef     string     `json:"dotProjectSecurityRef,omitempty"`
+	DotProjectContributingRef string     `json:"dotProjectContributingRef,omitempty"`
+	DotProjectGovernanceRef   string     `json:"dotProjectGovernanceRef,omitempty"`
+	DotProjectSchemaVersion   string     `json:"dotProjectSchemaVersion,omitempty"`
+	DotProjectMaintainerCount *uint      `json:"dotProjectMaintainerCount,omitempty"`
+	DotProjectLastSyncedAt    *time.Time `json:"dotProjectLastSyncedAt,omitempty"`
+	DotProjectAdoptionStatus  string     `json:"dotProjectAdoptionStatus,omitempty"`
 }
 
 type searchMaintainerResult struct {
@@ -3571,7 +3675,11 @@ func (s *server) handleSearchPostgres(w http.ResponseWriter, query string, limit
 
 	var projects []model.Project
 	if err := s.store.DB().Raw(`
-		SELECT id, name, git_hub_org, onboarding_issue, maintainer_ref, dot_project_yaml_ref
+		SELECT id, name, git_hub_org, onboarding_issue, maintainer_ref, dot_project_repo_ref,
+		       dot_project_project_ref, dot_project_yaml_ref, dot_project_security_ref,
+		       dot_project_contributing_ref, dot_project_governance_ref,
+		       dot_project_schema_version, dot_project_maintainer_count,
+		       dot_project_last_synced_at, dot_project_adoption_status
 		FROM projects
 		WHERE deleted_at IS NULL
 		  AND search_tsv @@ websearch_to_tsquery('simple', unaccent(?))
@@ -3585,12 +3693,21 @@ func (s *server) handleSearchPostgres(w http.ResponseWriter, query string, limit
 	projectResults := make([]searchProjectResult, 0, len(projects))
 	for _, project := range projects {
 		projectResults = append(projectResults, searchProjectResult{
-			ID:                  project.ID,
-			Name:                project.Name,
-			GitHubOrg:           strings.TrimSpace(project.GitHubOrg),
-			OnboardingIssue:     project.OnboardingIssue,
-			LegacyMaintainerRef: strings.TrimSpace(project.LegacyMaintainerRef),
-			DotProjectYamlRef:   strings.TrimSpace(project.DotProjectYamlRef),
+			ID:                        project.ID,
+			Name:                      project.Name,
+			GitHubOrg:                 strings.TrimSpace(project.GitHubOrg),
+			OnboardingIssue:           project.OnboardingIssue,
+			LegacyMaintainerRef:       strings.TrimSpace(project.LegacyMaintainerRef),
+			DotProjectRepoRef:         strings.TrimSpace(project.DotProjectRepoRef),
+			DotProjectProjectRef:      strings.TrimSpace(project.DotProjectProjectRef),
+			DotProjectMaintainerRef:   strings.TrimSpace(project.DotProjectMaintainerRef),
+			DotProjectSecurityRef:     strings.TrimSpace(project.DotProjectSecurityRef),
+			DotProjectContributingRef: strings.TrimSpace(project.DotProjectContributingRef),
+			DotProjectGovernanceRef:   strings.TrimSpace(project.DotProjectGovernanceRef),
+			DotProjectSchemaVersion:   strings.TrimSpace(project.DotProjectSchemaVersion),
+			DotProjectMaintainerCount: project.DotProjectMaintainerCount,
+			DotProjectLastSyncedAt:    project.DotProjectLastSyncedAt,
+			DotProjectAdoptionStatus:  strings.TrimSpace(project.DotProjectAdoptionStatus),
 		})
 	}
 
@@ -3743,7 +3860,11 @@ func (s *server) handleSearchFallback(w http.ResponseWriter, query string, limit
 	}
 	if err := s.store.DB().
 		Model(&model.Project{}).
-		Select("id, name, git_hub_org, onboarding_issue, maintainer_ref, dot_project_yaml_ref").
+		Select(`id, name, git_hub_org, onboarding_issue, maintainer_ref,
+			dot_project_repo_ref, dot_project_project_ref, dot_project_yaml_ref,
+			dot_project_security_ref, dot_project_contributing_ref, dot_project_governance_ref,
+			dot_project_schema_version, dot_project_maintainer_count, dot_project_last_synced_at,
+			dot_project_adoption_status`).
 		Where(
 			"LOWER(name) LIKE ? OR LOWER(maintainer_ref) LIKE ? OR LOWER(dot_project_yaml_ref) LIKE ? OR LOWER(git_hub_org) LIKE ?",
 			like,
@@ -3763,12 +3884,21 @@ func (s *server) handleSearchFallback(w http.ResponseWriter, query string, limit
 	projectResults := make([]searchProjectResult, 0, len(projects))
 	for _, project := range projects {
 		projectResults = append(projectResults, searchProjectResult{
-			ID:                  project.ID,
-			Name:                project.Name,
-			GitHubOrg:           strings.TrimSpace(project.GitHubOrg),
-			OnboardingIssue:     project.OnboardingIssue,
-			LegacyMaintainerRef: strings.TrimSpace(project.LegacyMaintainerRef),
-			DotProjectYamlRef:   strings.TrimSpace(project.DotProjectYamlRef),
+			ID:                        project.ID,
+			Name:                      project.Name,
+			GitHubOrg:                 strings.TrimSpace(project.GitHubOrg),
+			OnboardingIssue:           project.OnboardingIssue,
+			LegacyMaintainerRef:       strings.TrimSpace(project.LegacyMaintainerRef),
+			DotProjectRepoRef:         strings.TrimSpace(project.DotProjectRepoRef),
+			DotProjectProjectRef:      strings.TrimSpace(project.DotProjectProjectRef),
+			DotProjectMaintainerRef:   strings.TrimSpace(project.DotProjectMaintainerRef),
+			DotProjectSecurityRef:     strings.TrimSpace(project.DotProjectSecurityRef),
+			DotProjectContributingRef: strings.TrimSpace(project.DotProjectContributingRef),
+			DotProjectGovernanceRef:   strings.TrimSpace(project.DotProjectGovernanceRef),
+			DotProjectSchemaVersion:   strings.TrimSpace(project.DotProjectSchemaVersion),
+			DotProjectMaintainerCount: project.DotProjectMaintainerCount,
+			DotProjectLastSyncedAt:    project.DotProjectLastSyncedAt,
+			DotProjectAdoptionStatus:  strings.TrimSpace(project.DotProjectAdoptionStatus),
 		})
 	}
 

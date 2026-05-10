@@ -10,7 +10,7 @@ Feature: Maintainer roll call selection
   Scenario: Staff can select all maintainers and then select an individual maintainer
     Given a project has multiple active maintainers in the maintainer roll call
     When I open the project page
-    Then I see the "ROLL CALL" section
+    Then I see the "LEGACY ROLL CALL" section
     And I see the "PRESENT IN CNCF DATABASE" section
     When I select all maintainers in the roll call
     Then all maintainer checkboxes in the roll call are selected

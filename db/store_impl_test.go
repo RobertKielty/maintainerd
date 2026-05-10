@@ -3,6 +3,7 @@ package db
 import (
 	"maintainerd/model"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&model.Project{},
 		&model.Maintainer{},
 		&model.MaintainerProject{},
+		&model.DotProjectSyncState{},
 		&model.Service{},
 		&model.RemoteTeam{},
 		&model.RemoteUser{},
@@ -148,6 +150,113 @@ func TestGetMaintainersByProject(t *testing.T) {
 		// Projects field should NOT be populated (not preloaded)
 		assert.Empty(t, m.Projects)
 	})
+}
+
+func TestDotProjectSyncState(t *testing.T) {
+	db := setupTestDB(t)
+	_, project1, _, _, _, _ := seedTestData(t, db)
+	store := NewSQLStore(db)
+
+	t.Run("returns nil when no sync state exists", func(t *testing.T) {
+		state, err := store.GetDotProjectSyncState(project1.ID)
+		require.NoError(t, err)
+		assert.Nil(t, state)
+	})
+
+	t.Run("upserts and reloads sync state", func(t *testing.T) {
+		now := time.Now().UTC().Truncate(time.Second)
+		syncErr := "repo probe failed"
+		parseErr := "unsupported schema version"
+		state := &model.DotProjectSyncState{
+			ProjectID:               project1.ID,
+			RepoExists:              true,
+			ProjectFileExists:       true,
+			MaintainersFileExists:   true,
+			SecurityFileExists:      true,
+			ContributingFileExists:  false,
+			GovernanceFileExists:    true,
+			DefaultBranch:           "main",
+			MaintainersFilename:     "MAINTAINERS.yaml",
+			SchemaVersion:           "1.0.0",
+			ImporterVersion:         "dot-project-sync/v1",
+			ProjectFileETag:         "\"project-etag\"",
+			MaintainersFileETag:     "\"maintainers-etag\"",
+			ProjectFileBodyHash:     "abc123",
+			MaintainersFileBodyHash: "def456",
+			SecurityFileBodyHash:    "ghi789",
+			GovernanceFileBodyHash:  "jkl012",
+			LastCheckedAt:           &now,
+			SyncError:               &syncErr,
+			ParseError:              &parseErr,
+		}
+
+		require.NoError(t, store.UpsertDotProjectSyncState(state))
+
+		reloaded, err := store.GetDotProjectSyncState(project1.ID)
+		require.NoError(t, err)
+		require.NotNil(t, reloaded)
+		assert.True(t, reloaded.RepoExists)
+		assert.True(t, reloaded.ProjectFileExists)
+		assert.True(t, reloaded.MaintainersFileExists)
+		assert.False(t, reloaded.ContributingFileExists)
+		assert.Equal(t, "MAINTAINERS.yaml", reloaded.MaintainersFilename)
+		assert.Equal(t, "1.0.0", reloaded.SchemaVersion)
+		assert.Equal(t, "dot-project-sync/v1", reloaded.ImporterVersion)
+		require.NotNil(t, reloaded.LastCheckedAt)
+		assert.True(t, reloaded.LastCheckedAt.Equal(now))
+		require.NotNil(t, reloaded.SyncError)
+		assert.Equal(t, syncErr, *reloaded.SyncError)
+		require.NotNil(t, reloaded.ParseError)
+		assert.Equal(t, parseErr, *reloaded.ParseError)
+	})
+}
+
+func TestUpdateProjectDotProjectMetadata(t *testing.T) {
+	db := setupTestDB(t)
+	_, project1, _, _, _, _ := seedTestData(t, db)
+	store := NewSQLStore(db)
+
+	now := time.Now().UTC().Truncate(time.Second)
+	count := uint(7)
+	err := store.UpdateProjectDotProjectMetadata(project1.ID, model.Project{
+		DotProjectRepoRef:         "https://github.com/example-org/.project",
+		DotProjectProjectRef:      "https://github.com/example-org/.project/blob/main/project.yaml",
+		DotProjectMaintainerRef:   "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml",
+		DotProjectSecurityRef:     "https://github.com/example-org/.project/blob/main/SECURITY.md",
+		DotProjectContributingRef: "https://github.com/example-org/.project/blob/main/CONTRIBUTING.md",
+		DotProjectGovernanceRef:   "https://github.com/example-org/.project/blob/main/GOVERNANCE.md",
+		DotProjectSchemaVersion:   "1.0.0",
+		DotProjectMaintainerCount: &count,
+		DotProjectLastSyncedAt:    &now,
+		DotProjectAdoptionStatus:  "adopted",
+	})
+	require.NoError(t, err)
+
+	reloaded, err := store.GetProjectByID(project1.ID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, "https://github.com/example-org/.project", reloaded.DotProjectRepoRef)
+	assert.Equal(t, "https://github.com/example-org/.project/blob/main/project.yaml", reloaded.DotProjectProjectRef)
+	assert.Equal(t, "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml", reloaded.DotProjectMaintainerRef)
+	assert.Equal(t, "1.0.0", reloaded.DotProjectSchemaVersion)
+	require.NotNil(t, reloaded.DotProjectMaintainerCount)
+	assert.Equal(t, uint(7), *reloaded.DotProjectMaintainerCount)
+	require.NotNil(t, reloaded.DotProjectLastSyncedAt)
+	assert.True(t, reloaded.DotProjectLastSyncedAt.Equal(now))
+	assert.Equal(t, "adopted", reloaded.DotProjectAdoptionStatus)
+
+	err = store.UpdateProjectDotProjectMetadata(project1.ID, model.Project{
+		DotProjectAdoptionStatus: "not_found",
+	})
+	require.NoError(t, err)
+
+	reloaded, err = store.GetProjectByID(project1.ID)
+	require.NoError(t, err)
+	require.NotNil(t, reloaded)
+	assert.Equal(t, "", reloaded.DotProjectRepoRef)
+	assert.Nil(t, reloaded.DotProjectMaintainerCount)
+	assert.Nil(t, reloaded.DotProjectLastSyncedAt)
+	assert.Equal(t, "not_found", reloaded.DotProjectAdoptionStatus)
 }
 
 func TestGetProjectsUsingService(t *testing.T) {

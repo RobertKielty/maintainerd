@@ -217,7 +217,7 @@ export default function AppShell({
             ) : null}
             {me?.role === "staff" ? (
               <Link className={styles.auditButton} href="/audit">
-                Audit
+                AUDIT LOGS
               </Link>
             ) : null}
             {me ? (

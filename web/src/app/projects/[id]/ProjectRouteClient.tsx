@@ -25,13 +25,38 @@ type ServiceSummary = {
   description: string;
 };
 
+type DotProjectSyncState = {
+  repoExists: boolean;
+  projectFileExists: boolean;
+  maintainersFileExists: boolean;
+  securityFileExists: boolean;
+  contributingFileExists: boolean;
+  governanceFileExists: boolean;
+  defaultBranch?: string;
+  maintainersFilename?: string;
+  schemaVersion?: string;
+  lastCheckedAt?: string | null;
+  syncError?: string;
+  parseError?: string;
+};
+
 type ProjectDetail = {
   id: number;
   name: string;
   maturity: string;
   parentProjectId?: number | null;
   legacyMaintainerRef?: string;
-  dotProjectYamlRef?: string;
+  dotProjectRepoRef?: string;
+  dotProjectProjectRef?: string;
+  dotProjectMaintainerRef?: string;
+  dotProjectSecurityRef?: string;
+  dotProjectContributingRef?: string;
+  dotProjectGovernanceRef?: string;
+  dotProjectSchemaVersion?: string;
+  dotProjectMaintainerCount?: number | null;
+  dotProjectLastSyncedAt?: string | null;
+  dotProjectAdoptionStatus?: string;
+  dotProjectSyncState?: DotProjectSyncState | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -81,8 +106,8 @@ const projectSectionRoutes: Array<{
   label: string;
   segment: string;
 }> = [
-  { id: "legacy", label: "ROLL CALL", segment: "github" },
-  { id: "dot-project", label: "PROJECT RECORDS", segment: "dot-project" },
+  { id: "legacy", label: "LEGACY ROLL CALL", segment: "github" },
+  { id: "dot-project", label: "DOT-PROJECT ROLL CALL", segment: "dot-project" },
   { id: "license-checker", label: "LICENSE CHECKER - FOSSA", segment: "fossa" },
   {
     id: "mailing-maintainers",
@@ -109,6 +134,28 @@ const projectDataHasChanged = (current: ProjectDetail | null, next: ProjectDetai
     current.maturity !== next.maturity ||
     current.parentProjectId !== next.parentProjectId ||
     current.legacyMaintainerRef !== next.legacyMaintainerRef ||
+    current.dotProjectRepoRef !== next.dotProjectRepoRef ||
+    current.dotProjectProjectRef !== next.dotProjectProjectRef ||
+    current.dotProjectMaintainerRef !== next.dotProjectMaintainerRef ||
+    current.dotProjectSecurityRef !== next.dotProjectSecurityRef ||
+    current.dotProjectContributingRef !== next.dotProjectContributingRef ||
+    current.dotProjectGovernanceRef !== next.dotProjectGovernanceRef ||
+    current.dotProjectSchemaVersion !== next.dotProjectSchemaVersion ||
+    current.dotProjectMaintainerCount !== next.dotProjectMaintainerCount ||
+    current.dotProjectLastSyncedAt !== next.dotProjectLastSyncedAt ||
+    current.dotProjectAdoptionStatus !== next.dotProjectAdoptionStatus ||
+    current.dotProjectSyncState?.repoExists !== next.dotProjectSyncState?.repoExists ||
+    current.dotProjectSyncState?.projectFileExists !== next.dotProjectSyncState?.projectFileExists ||
+    current.dotProjectSyncState?.maintainersFileExists !== next.dotProjectSyncState?.maintainersFileExists ||
+    current.dotProjectSyncState?.securityFileExists !== next.dotProjectSyncState?.securityFileExists ||
+    current.dotProjectSyncState?.contributingFileExists !== next.dotProjectSyncState?.contributingFileExists ||
+    current.dotProjectSyncState?.governanceFileExists !== next.dotProjectSyncState?.governanceFileExists ||
+    current.dotProjectSyncState?.defaultBranch !== next.dotProjectSyncState?.defaultBranch ||
+    current.dotProjectSyncState?.maintainersFilename !== next.dotProjectSyncState?.maintainersFilename ||
+    current.dotProjectSyncState?.schemaVersion !== next.dotProjectSyncState?.schemaVersion ||
+    current.dotProjectSyncState?.lastCheckedAt !== next.dotProjectSyncState?.lastCheckedAt ||
+    current.dotProjectSyncState?.syncError !== next.dotProjectSyncState?.syncError ||
+    current.dotProjectSyncState?.parseError !== next.dotProjectSyncState?.parseError ||
     current.maintainerRefStatus.status !== next.maintainerRefStatus.status ||
     current.maintainerRefStatus.url !== next.maintainerRefStatus.url ||
     current.maintainerRefStatus.checkedAt !== next.maintainerRefStatus.checkedAt ||
@@ -180,7 +227,7 @@ const projectDataHasChanged = (current: ProjectDetail | null, next: ProjectDetai
   return false;
 };
 
-export default function ProjectRouteClient(_props: ProjectRouteClientProps) {
+export default function ProjectRouteClient({ children }: ProjectRouteClientProps) {
   const segment = useSelectedLayoutSegment();
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [status, setStatus] = useState<"idle" | "loading" | "ready">("idle");
@@ -347,12 +394,29 @@ export default function ProjectRouteClient(_props: ProjectRouteClientProps) {
     }
   };
 
-  const sectionNavItems = projectId
-    ? projectSectionRoutes.map((item) => ({
-        id: item.id,
-        label: item.label,
-        href: `/projects/${projectId}/${item.segment}`,
-      }))
+  const sectionNavItems: Array<{
+    id: ProjectSectionId;
+    label: string;
+    href: string;
+    statusTone?: "success" | "danger";
+    statusSymbol?: string;
+  }> = projectId
+    ? projectSectionRoutes.map((item) => {
+        const adoptionStatus = project?.dotProjectAdoptionStatus || "";
+        const dotProjectMissing = adoptionStatus === "not_found";
+        const dotProjectPresent = !dotProjectMissing && Boolean(project?.dotProjectRepoRef);
+        const isLegacySuccess = item.id === "legacy" && dotProjectMissing;
+        const isLegacyDanger = item.id === "legacy" && dotProjectPresent;
+        const isDotProjectSuccess = item.id === "dot-project" && dotProjectPresent;
+        const isDotProjectDanger = item.id === "dot-project" && dotProjectMissing;
+        return {
+          id: item.id,
+          label: item.label,
+          href: `/projects/${projectId}/${item.segment}`,
+          statusTone: isLegacySuccess || isDotProjectSuccess ? "success" : isLegacyDanger || isDotProjectDanger ? "danger" : undefined,
+          statusSymbol: isLegacySuccess || isDotProjectSuccess ? "✓" : isLegacyDanger || isDotProjectDanger ? "✕" : undefined,
+        };
+      })
     : [];
 
   return (
@@ -362,111 +426,125 @@ export default function ProjectRouteClient(_props: ProjectRouteClientProps) {
           {status === "loading" && <div className={styles.banner}>Loading…</div>}
           {error && <div className={styles.banner}>{error}</div>}
           {project ? (
-            <ProjectReconciliationCard
-              projectId={project.id}
-              name={project.name}
-              maturity={project.maturity}
-              maintainerRef={project.legacyMaintainerRef}
-              maintainerRefStatus={project.maintainerRefStatus}
-              maintainerRefBody={project.legacyMaintainerRefBody}
-              refOnlyGitHub={project.refOnlyGitHub}
-              refLines={project.refLines}
-              onboardingIssue={project.onboardingIssue}
-              mailingList={project.mailingList}
-              maintainers={project.maintainers}
-              services={project.services}
-              fossaTeamId={project.fossaTeamId}
-              fossaTeamName={project.fossaTeamName}
-              fossaTeamMembers={project.fossaTeamMembers}
-              fossaInviteIneligible={project.fossaInviteIneligible}
-              fossaInviteCandidates={project.fossaInviteCandidates}
-              createdAt={project.createdAt}
-              updatedAt={project.updatedAt}
-              updatedBy={project.updatedBy}
-              updatedAuditId={project.updatedAuditId}
-              onRefresh={handleRefresh}
-              isRefreshing={status === "loading"}
-              canEdit={role === "staff"}
-              companyOptions={companies}
-              activeSection={section}
-              sectionNavItems={sectionNavItems}
-              hideSectionMenu={false}
-              onUpdateMaturity={async (next) => {
-                if (!projectId) {
-                  return;
-                }
-                const response = await fetch(`${apiBaseUrl}/projects/${projectId}/maturity`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({ maturity: next }),
-                });
-                if (!response.ok) {
-                  setError("Unable to update project status");
-                  throw new Error("update failed");
-                }
-                await handleRefresh();
-              }}
-              onUpdateMaintainerRef={async (nextRef) => {
-                if (!projectId) {
-                  return;
-                }
-                const response = await fetch(`${apiBaseUrl}/projects/${projectId}`, {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({ legacyMaintainerRef: nextRef }),
-                });
-                if (!response.ok) {
-                  setError("Unable to update project admin file");
-                  throw new Error("update failed");
-                }
-                await handleRefresh();
-              }}
-              onAddMaintainer={async (payload: AddMaintainerPayload) => {
-                if (!projectId) {
-                  return;
-                }
-                if (payload.companyMode === "new" && payload.company.trim() !== "") {
-                  const companyResponse = await fetch(`${apiBaseUrl}/companies`, {
+            <>
+              <ProjectReconciliationCard
+                projectId={project.id}
+                name={project.name}
+                maturity={project.maturity}
+                maintainerRef={project.legacyMaintainerRef}
+                dotProjectRepoRef={project.dotProjectRepoRef}
+                dotProjectProjectRef={project.dotProjectProjectRef}
+                dotProjectMaintainerRef={project.dotProjectMaintainerRef}
+                dotProjectSecurityRef={project.dotProjectSecurityRef}
+                dotProjectContributingRef={project.dotProjectContributingRef}
+                dotProjectGovernanceRef={project.dotProjectGovernanceRef}
+                dotProjectSchemaVersion={project.dotProjectSchemaVersion}
+                dotProjectMaintainerCount={project.dotProjectMaintainerCount}
+                dotProjectLastSyncedAt={project.dotProjectLastSyncedAt}
+                dotProjectAdoptionStatus={project.dotProjectAdoptionStatus}
+                dotProjectSyncState={project.dotProjectSyncState}
+                maintainerRefStatus={project.maintainerRefStatus}
+                maintainerRefBody={project.legacyMaintainerRefBody}
+                refOnlyGitHub={project.refOnlyGitHub}
+                refLines={project.refLines}
+                onboardingIssue={project.onboardingIssue}
+                mailingList={project.mailingList}
+                maintainers={project.maintainers}
+                services={project.services}
+                fossaTeamId={project.fossaTeamId}
+                fossaTeamName={project.fossaTeamName}
+                fossaTeamMembers={project.fossaTeamMembers}
+                fossaInviteIneligible={project.fossaInviteIneligible}
+                fossaInviteCandidates={project.fossaInviteCandidates}
+                createdAt={project.createdAt}
+                updatedAt={project.updatedAt}
+                updatedBy={project.updatedBy}
+                updatedAuditId={project.updatedAuditId}
+                onRefresh={handleRefresh}
+                isRefreshing={status === "loading"}
+                canEdit={role === "staff"}
+                companyOptions={companies}
+                activeSection={section}
+                sectionNavItems={sectionNavItems}
+                hideSectionMenu={false}
+                onUpdateMaturity={async (next) => {
+                  if (!projectId) {
+                    return;
+                  }
+                  const response = await fetch(`${apiBaseUrl}/projects/${projectId}/maturity`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({ maturity: next }),
+                  });
+                  if (!response.ok) {
+                    setError("Unable to update project status");
+                    throw new Error("update failed");
+                  }
+                  await handleRefresh();
+                }}
+                onUpdateMaintainerRef={async (nextRef) => {
+                  if (!projectId) {
+                    return;
+                  }
+                  const response = await fetch(`${apiBaseUrl}/projects/${projectId}`, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({ legacyMaintainerRef: nextRef }),
+                  });
+                  if (!response.ok) {
+                    setError("Unable to update project admin file");
+                    throw new Error("update failed");
+                  }
+                  await handleRefresh();
+                }}
+                onAddMaintainer={async (payload: AddMaintainerPayload) => {
+                  if (!projectId) {
+                    return;
+                  }
+                  if (payload.companyMode === "new" && payload.company.trim() !== "") {
+                    const companyResponse = await fetch(`${apiBaseUrl}/companies`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      credentials: "include",
+                      body: JSON.stringify({ name: payload.company }),
+                    });
+                    if (companyResponse.status === 409) {
+                      setError("Company already exists. Select it from the list instead.");
+                      return;
+                    }
+                  }
+                  const response = await fetch(`${apiBaseUrl}/maintainers/from-ref`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     credentials: "include",
-                    body: JSON.stringify({ name: payload.company }),
+                    body: JSON.stringify({
+                      projectId: Number(projectId),
+                      name: payload.name,
+                      githubHandle: payload.githubHandle,
+                      email: payload.email,
+                      company: payload.company,
+                    }),
                   });
-                  if (companyResponse.status === 409) {
-                    setError("Company already exists. Select it from the list instead.");
+                  if (!response.ok) {
+                    setError("Unable to add maintainer");
                     return;
                   }
-                }
-                const response = await fetch(`${apiBaseUrl}/maintainers/from-ref`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({
-                    projectId: Number(projectId),
-                    name: payload.name,
-                    githubHandle: payload.githubHandle,
-                    email: payload.email,
-                    company: payload.company,
-                  }),
-                });
-                if (!response.ok) {
-                  setError("Unable to add maintainer");
-                  return;
-                }
-                await handleRefresh();
-              }}
-              onBulkStatusChange={async (ids, statusValue) => {
-                await fetch(`${apiBaseUrl}/maintainers/status`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({ ids, status: statusValue }),
-                });
-                await handleRefresh();
-              }}
-            />
+                  await handleRefresh();
+                }}
+                onBulkStatusChange={async (ids, statusValue) => {
+                  await fetch(`${apiBaseUrl}/maintainers/status`, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    credentials: "include",
+                    body: JSON.stringify({ ids, status: statusValue }),
+                  });
+                  await handleRefresh();
+                }}
+              />
+              {children}
+            </>
           ) : null}
         </div>
       </div>

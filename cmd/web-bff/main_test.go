@@ -88,6 +88,7 @@ func setupPostgresTestDB(t *testing.T) *gorm.DB {
 		&model.RemoteUser{},
 		&model.RemoteTeamUser{},
 		&model.ServiceInvitation{},
+		&model.DotProjectSyncState{},
 	)
 	require.NoError(t, err)
 
