@@ -349,6 +349,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Expires:  time.Now().Add(s.oauthStates.ttl),
 	})
 
+	//nolint:gosec // Secure is intentionally configurable for local HTTP development and test mode; HttpOnly and SameSite are set.
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.stateCookie,
 		Value:    state,
@@ -470,6 +471,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	//nolint:gosec // Secure is intentionally configurable for local HTTP development and test mode; HttpOnly and SameSite are set.
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName,
 		Value:    "",
@@ -500,6 +502,7 @@ func (s *server) createSession(login, role string, w http.ResponseWriter) error 
 
 	s.logger.Printf("web-bff: login success user=%s role=%s", login, role)
 
+	//nolint:gosec // Secure is intentionally configurable for local HTTP development and test mode; HttpOnly and SameSite are set.
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName,
 		Value:    sessionID,
