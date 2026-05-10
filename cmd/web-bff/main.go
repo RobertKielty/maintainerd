@@ -759,9 +759,10 @@ func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	if len(maturityFilters) > 0 {
 		base = base.Where("projects.maturity IN ?", maturityFilters)
 	}
-	if dotProjectFilter == "with" {
+	switch dotProjectFilter {
+	case "with":
 		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') <> ''")
-	} else if dotProjectFilter == "without" {
+	case "without":
 		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') = ''")
 	}
 	if namePrefix != "" {
@@ -898,9 +899,10 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 	if len(maturityFilters) > 0 {
 		base = base.Where("projects.maturity IN ?", maturityFilters)
 	}
-	if dotProjectFilter == "with" {
+	switch dotProjectFilter {
+	case "with":
 		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') <> ''")
-	} else if dotProjectFilter == "without" {
+	case "without":
 		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') = ''")
 	}
 	if nameFilter != "" {

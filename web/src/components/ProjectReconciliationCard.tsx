@@ -1689,7 +1689,7 @@ export default function ProjectReconciliationCard({
                   setMaturityError(null);
                 }}
               >
-                Transition
+                MOVE LEVEL
               </button>
             ) : null}
           </div>
@@ -1792,7 +1792,7 @@ export default function ProjectReconciliationCard({
           <div className={styles.modalOverlay} role="dialog" aria-modal="true">
             <div className={styles.modal}>
               <div className={styles.modalHeader}>
-                <h2 className={styles.modalTitle}>Transition Project Status</h2>
+                <h2 className={styles.modalTitle}>Move Project to new Level</h2>
                 <button
                   className={styles.modalClose}
                   type="button"

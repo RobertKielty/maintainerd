@@ -18,6 +18,16 @@ The upstream README is inconsistent about `MAINTAINERS.yaml` vs `maintainers.yam
 
 `project.yaml.schema_version` is the authoritative upstream schema version and must be persisted with the imported metadata.
 
+## Maintainer Roster Contract
+
+For dot-project roll call, diffing, and PR generation, `maintainer-d` should treat the maintainer roster as:
+
+- the `members` list from the team whose normalized `name` is exactly `project-maintainers`
+- GitHub handles compared case-insensitively
+- all other teams ignored for this purpose
+
+If a `maintainers.yaml` file does not contain a `project-maintainers` team, that should be treated as a validation issue, persisted by the sync layer, and shown clearly in the UI.
+
 ## Working Principles
 
 - Use a background sync job as the authoritative discovery mechanism.
@@ -388,9 +398,9 @@ What to sanity check locally:
   - links for any discovered dot-project files
 - Open a project without a dot-project repo and confirm the route shows the persisted `not_found` state cleanly rather than the old placeholder.
 
-### Commit 8: Import Selected `project.yaml` Metadata
+### Deferred Work: `project.yaml` Metadata Import
 
-Start with high-value fields:
+The original next step was to import selected `project.yaml` metadata such as:
 
 - `slug`
 - `description`
@@ -400,7 +410,9 @@ Start with high-value fields:
 - `mailing_lists`
 - selected governance and security references
 
-### Commit 9: Reporting and Search
+This work is now deferred until after the dot-project maintainer-file UX and PR workflow are in place.
+
+### Reporting and Search
 
 Add search/reporting for:
 
@@ -441,6 +453,136 @@ Verification:
 - `npm --prefix web run lint`
 - `npm --prefix web run typecheck`
 - `WEB_BDD_USE_MICROCKS=true BDD_FEATURE=../features/web/project_list_dot_project_filter.feature make test-web`
+
+## Phase 2 Plan
+
+### Commit A: Deploy Hourly Dot-Project Sync CronJob
+
+- Deploy `cmd/dot-project-sync` as a Kubernetes `CronJob`.
+- Run once per hour.
+- Only scan active projects.
+- Exclude the `maintainer-d` project from scanning.
+- Record an audit-log summary for each run.
+- Include GitHub API failures, including rate-limit failures, in the summary entry.
+
+Operational goals:
+
+- Keep the background sync authoritative for adoption detection.
+- Make failures visible to staff without requiring direct pod log access.
+
+#### Implementation report
+
+Commit A is complete.
+
+What changed:
+
+- Added a dedicated `maintainerd-dot-project-sync` container target to the main `Dockerfile`.
+- Added Makefile targets for:
+  - building the dot-project sync image
+  - pushing the dot-project sync image
+  - applying the dot-project sync CronJob
+  - triggering a manual dot-project sync job
+  - setting the deployed CronJob image
+- Added a dedicated Kubernetes manifest:
+  - `deploy/manifests/dot-project-sync-cronjob.yaml`
+- Configured the CronJob to run hourly.
+- Updated the syncer so it only scans active projects.
+- Explicitly excluded the `maintainer-d` project from sync scans.
+- Extended sync summaries so they now track:
+  - loaded projects
+  - scanned projects
+  - skipped projects
+  - archived skips
+  - explicit exclusions
+  - GitHub API error counts
+  - rate-limit error counts
+  - summarized run errors
+- Added a run-level audit-log entry with action `DOT_PROJECT_SYNC_RUN`.
+- Included GitHub/rate-limit failures in the audit metadata summary.
+
+Operational details:
+
+- The older generic `maintainer-sync` CronJob and image remain unchanged.
+- The dot-project sync deployment is intentionally separate so it can evolve independently from the Kubernetes resource sync job.
+- The run summary is now visible through the existing audit log view instead of only through pod logs.
+
+Verification:
+
+- `GOCACHE=/tmp/go-build go test ./dotproject ./cmd/dot-project-sync`
+- `GOCACHE=/tmp/go-build go test ./...`
+
+### Commit B: Cache Raw Dot-Project File Bodies
+
+- Persist the raw cached body for the discovered `maintainers.yaml` file in maintainer-d.
+- Accept any filename casing variant, but keep the file plural: `maintainers.yaml`.
+- Prefer cached file bodies in the web UI instead of fetching GitHub live on page load.
+- Expose the cached maintainer-file body and related metadata through the project detail API.
+
+Operational goals:
+
+- Make the UI deterministic and resilient to GitHub availability.
+- Provide a stable source of truth for roll-call diffing and PR preview generation.
+
+### Commit C: Render a Formatted Dot-Project Maintainer File
+
+- Render the cached `maintainers.yaml` body in the dot-project route.
+- Use a structured, AST-backed YAML renderer rather than a generic syntax highlighter.
+- Colorize the YAML while preserving existing whitespace and comments in the rendered view.
+- Keep the first version read-only.
+
+Operational goals:
+
+- Establish a strong file-viewing experience before adding inline diff and PR behaviors.
+- Preserve enough source fidelity that later edit/PR generation can patch the original file cleanly.
+
+### Commit D: Add Inline Maintainer-D Awareness to the Rendered YAML
+
+- Match GitHub handles case-insensitively against active maintainer records in maintainer-d.
+- Make matched GitHub handles link to the maintainer route in maintainer-d.
+- Underline unmatched GitHub handles with a red wavy line.
+- Clicking an unmatched handle should open the existing `Add Maintainer to CNCF INTERNAL DB` flow, prefilled with the GitHub handle when possible.
+- Surface the absence of a `project-maintainers` team as a validation issue in the dot-project UI.
+
+Operational goals:
+
+- Move missing-maintainer feedback into the rendered file itself.
+- Keep the interaction clearly focused on the standardized `project-maintainers` team.
+
+### Commit E: Add DB-vs-File Diff Summary and PR Preview
+
+- Compare active project maintainers in maintainer-d against the members of the `project-maintainers` team only.
+- Show active maintainers that exist in maintainer-d but are missing from `maintainers.yaml`.
+- Add a `Create Pull Request` action that patches the rendered file in the UI preview with the missing GitHub handles.
+- Render a suggested updated `maintainers.yaml` preview that respects the existing comments, formatting, and ordering as much as possible.
+
+Operational goals:
+
+- Replicate the existing roll-call diff behavior for dot-project, but in a better UI.
+- Keep the preview faithful to the original file so maintainers can trust the generated patch.
+
+### Commit F: Submit Pull Request Workflow
+
+- Add a `Submit Pull Request` action after the preview patch has been generated.
+- Create a branch and PR against the project’s `.project` repository using maintainer-d’s service credentials.
+- Record the PR creation in the audit log.
+- Show PR result details back in the UI.
+
+Operational goals:
+
+- Turn missing-maintainer detection into an actionable remediation workflow.
+- Keep the write path bot-driven first rather than depending on each end user’s GitHub OAuth identity.
+
+### Commit G: Return to Deferred `project.yaml` Metadata Import
+
+- Resume the selected `project.yaml` import work after the maintainer-file UX and PR workflow are in place.
+
+### Commit H: Finish the Remaining Reporting and Search Work
+
+- add reporting for projects with `project.yaml`
+- add reporting for projects with a maintainer roster
+- add reporting for projects missing recommended files
+- add schema version distribution reporting
+- add legacy-vs-dot-project maintainer coverage comparisons
 
 ## Schema Tracking
 
