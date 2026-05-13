@@ -4,6 +4,11 @@ on:
   push:
   pull_request:
 
+# actions/cache@v5 saves the Playwright browser cache on miss.
+permissions:
+  contents: read
+  actions: write
+
 jobs:
   web-bdd:
     runs-on: ubuntu-latest
