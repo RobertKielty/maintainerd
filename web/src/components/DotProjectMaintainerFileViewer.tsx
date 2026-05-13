@@ -4,9 +4,18 @@ import { useMemo } from "react";
 import { isMap, isScalar, isSeq, parseDocument, type Node } from "yaml";
 import styles from "./ProjectReconciliationCard.module.css";
 
+type KnownMaintainer = {
+  id: number;
+  github: string;
+  status?: string;
+};
+
 type DotProjectMaintainerFileViewerProps = {
   source: string;
   filename: string;
+  maintainers: KnownMaintainer[];
+  canEdit?: boolean;
+  onAddMissingMaintainer?: (handle: string, refLine: string) => void;
 };
 
 type MaintainerTeam = {
@@ -17,6 +26,7 @@ type MaintainerTeam = {
 type SourceToken = {
   text: string;
   tone?: "comment" | "key" | "punctuation" | "scalar";
+  maintainerHandle?: string;
 };
 
 const scalarText = (node: unknown): string => {
@@ -40,6 +50,8 @@ const scalarSeqValues = (node: unknown): string[] => {
   }
   return node.items.map(scalarText).filter(Boolean);
 };
+
+const normalizeHandle = (handle: string): string => handle.trim().replace(/^@/, "").toLowerCase();
 
 const parseMaintainerTeams = (source: string): { teams: MaintainerTeam[]; errors: string[] } => {
   const document = parseDocument<Node>(source, { keepSourceTokens: true });
@@ -94,7 +106,12 @@ const findCommentStart = (line: string): number => {
   return -1;
 };
 
-const tokenizeYamlCode = (code: string): SourceToken[] => {
+const tokenHandle = (value: string, projectMaintainerHandles: Set<string>): string | undefined => {
+  const normalized = normalizeHandle(value);
+  return projectMaintainerHandles.has(normalized) ? normalized : undefined;
+};
+
+const tokenizeYamlCode = (code: string, projectMaintainerHandles: Set<string>): SourceToken[] => {
   if (!code) {
     return [];
   }
@@ -121,26 +138,34 @@ const tokenizeYamlCode = (code: string): SourceToken[] => {
       tokens.push({ text: keyMatch[3] });
     }
     if (keyMatch[4]) {
-      tokens.push({ text: keyMatch[4], tone: "scalar" });
+      tokens.push({
+        text: keyMatch[4],
+        tone: "scalar",
+        maintainerHandle: tokenHandle(keyMatch[4], projectMaintainerHandles),
+      });
     }
     return tokens;
   }
 
   if (content) {
-    tokens.push({ text: content, tone: "scalar" });
+    tokens.push({
+      text: content,
+      tone: "scalar",
+      maintainerHandle: tokenHandle(content, projectMaintainerHandles),
+    });
   }
 
   return tokens;
 };
 
-const tokenizeYamlLine = (line: string): SourceToken[] => {
+const tokenizeYamlLine = (line: string, projectMaintainerHandles: Set<string>): SourceToken[] => {
   const commentStart = findCommentStart(line);
   if (commentStart < 0) {
-    return tokenizeYamlCode(line);
+    return tokenizeYamlCode(line, projectMaintainerHandles);
   }
 
   return [
-    ...tokenizeYamlCode(line.slice(0, commentStart)),
+    ...tokenizeYamlCode(line.slice(0, commentStart), projectMaintainerHandles),
     { text: line.slice(commentStart), tone: "comment" },
   ];
 };
@@ -163,10 +188,58 @@ const tokenClassName = (token: SourceToken): string | undefined => {
 export default function DotProjectMaintainerFileViewer({
   source,
   filename,
+  maintainers,
+  canEdit = false,
+  onAddMissingMaintainer,
 }: DotProjectMaintainerFileViewerProps) {
   const parsed = useMemo(() => parseMaintainerTeams(source), [source]);
   const lines = useMemo(() => source.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n"), [source]);
+  const activeMaintainersByHandle = useMemo(() => {
+    const known = new Map<string, KnownMaintainer>();
+    for (const maintainer of maintainers) {
+      if ((maintainer.status || "").toLowerCase() !== "active") {
+        continue;
+      }
+      const normalized = normalizeHandle(maintainer.github);
+      if (normalized) {
+        known.set(normalized, maintainer);
+      }
+    }
+    return known;
+  }, [maintainers]);
+  const projectMaintainerTeam = parsed.teams.find((team) => normalizeHandle(team.name) === "project-maintainers");
+  const projectMaintainerHandles = useMemo(
+    () => new Set((projectMaintainerTeam?.members ?? []).map(normalizeHandle).filter(Boolean)),
+    [projectMaintainerTeam],
+  );
   const memberCount = parsed.teams.reduce((total, team) => total + team.members.length, 0);
+  const missingProjectMaintainers = (projectMaintainerTeam?.members ?? []).filter(
+    (member) => !activeMaintainersByHandle.has(normalizeHandle(member)),
+  );
+
+  const renderMaintainerHandle = (handle: string, refLine: string) => {
+    const normalized = normalizeHandle(handle);
+    const maintainer = activeMaintainersByHandle.get(normalized);
+    if (maintainer) {
+      return (
+        <a className={styles.dotProjectMaintainerLink} href={`/maintainers/${maintainer.id}`}>
+          {handle}
+        </a>
+      );
+    }
+    if (canEdit && onAddMissingMaintainer) {
+      return (
+        <button
+          className={styles.dotProjectMissingMaintainerButton}
+          type="button"
+          onClick={() => onAddMissingMaintainer(handle, refLine)}
+        >
+          {handle}
+        </button>
+      );
+    }
+    return <span className={styles.dotProjectMissingMaintainer}>{handle}</span>;
+  };
 
   return (
     <div className={styles.dotProjectYamlViewer}>
@@ -188,6 +261,17 @@ export default function DotProjectMaintainerFileViewer({
           YAML parse issue: <strong>{parsed.errors[0]}</strong>
         </div>
       ) : null}
+      {parsed.errors.length === 0 && !projectMaintainerTeam ? (
+        <div className={styles.dotProjectYamlParseError}>
+          Validation issue: <strong>project-maintainers</strong> team was not found in the cached maintainer file.
+        </div>
+      ) : null}
+      {missingProjectMaintainers.length > 0 ? (
+        <div className={styles.dotProjectYamlValidation}>
+          {missingProjectMaintainers.length} project-maintainers handle
+          {missingProjectMaintainers.length === 1 ? " is" : "s are"} not active in maintainer-d.
+        </div>
+      ) : null}
 
       {parsed.teams.length > 0 ? (
         <div className={styles.dotProjectTeamGrid}>
@@ -200,7 +284,9 @@ export default function DotProjectMaintainerFileViewer({
               <div className={styles.dotProjectMemberList}>
                 {team.members.map((member) => (
                   <span className={styles.dotProjectMemberChip} key={`${team.name}-${member}`}>
-                    {member}
+                    {normalizeHandle(team.name) === "project-maintainers"
+                      ? renderMaintainerHandle(member, `- ${member}`)
+                      : member}
                   </span>
                 ))}
               </div>
@@ -213,17 +299,23 @@ export default function DotProjectMaintainerFileViewer({
 
       <div className={styles.dotProjectSource} aria-label={`${filename} source`}>
         {lines.map((line, lineIndex) => {
-          const tokens = tokenizeYamlLine(line);
+          const tokens = tokenizeYamlLine(line, projectMaintainerHandles);
           return (
             <div className={styles.dotProjectSourceLine} key={`${lineIndex}-${line}`}>
               <span className={styles.dotProjectLineNumber}>{lineIndex + 1}</span>
               <code className={styles.dotProjectLineCode}>
                 {tokens.length > 0
-                  ? tokens.map((token, tokenIndex) => (
-                      <span className={tokenClassName(token)} key={`${tokenIndex}-${token.text}`}>
-                        {token.text}
-                      </span>
-                    ))
+                  ? tokens.map((token, tokenIndex) =>
+                      token.maintainerHandle ? (
+                        <span className={tokenClassName(token)} key={`${tokenIndex}-${token.text}`}>
+                          {renderMaintainerHandle(token.text, line)}
+                        </span>
+                      ) : (
+                        <span className={tokenClassName(token)} key={`${tokenIndex}-${token.text}`}>
+                          {token.text}
+                        </span>
+                      ),
+                    )
                   : "\u00a0"}
               </code>
             </div>

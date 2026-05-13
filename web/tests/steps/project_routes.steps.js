@@ -95,7 +95,7 @@ Then("the dot-project roll call shows the persisted discovery summary", async fu
   await expect(contentColumn.getByText("Schema version", { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(contentColumn.getByText("1.0.0", { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(contentColumn.getByText("Maintainer count", { exact: true })).toBeVisible({ timeout: 15000 });
-  await expect(contentColumn.getByText("3 maintainers", { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(contentColumn.getByText("4 maintainers", { exact: true })).toBeVisible({ timeout: 15000 });
 });
 
 Then("the dot-project roll call lists the tracked .project files", async function () {
@@ -128,6 +128,21 @@ Then("the dot-project roll call renders the cached maintainer file as formatted 
   await expect(viewer.locator('[class*="dotProjectMemberChip"]').getByText("antonio-example")).toBeVisible({
     timeout: 15000,
   });
+  const memberList = viewer.locator('[class*="dotProjectMemberList"]');
+  await expect(memberList.locator('a[href^="/maintainers/"]').getByText("antonio-example")).toBeVisible({
+    timeout: 15000,
+  });
+  const missingHandle = memberList
+    .locator('[class*="dotProjectMissingMaintainerButton"]')
+    .getByText("unmapped-dotproject");
+  await expect(missingHandle).toBeVisible({ timeout: 15000 });
+  await missingHandle.click();
+  const modal = this.page.getByRole("dialog");
+  await expect(modal.getByRole("heading", { name: "Add Maintainer to CNCF INTERNAL DB" })).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(modal.getByLabel("GitHub Handle")).toHaveValue("unmapped-dotproject", { timeout: 15000 });
+  await modal.getByRole("button", { name: "Close" }).click();
   await expect(viewer.locator('[class*="yamlTokenComment"]')).toContainText(
     "# Project Atlas dot-project maintainers"
   );

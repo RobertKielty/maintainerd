@@ -168,7 +168,7 @@ func main() {
 			DotProjectContributingRef: "https://github.com/project-atlas/.project/blob/main/CONTRIBUTING.md",
 			DotProjectGovernanceRef:   "https://github.com/project-atlas/.project/blob/main/GOVERNANCE.md",
 			DotProjectSchemaVersion:   "1.0.0",
-			DotProjectMaintainerCount: uintPtr(3),
+			DotProjectMaintainerCount: uintPtr(4),
 			DotProjectLastSyncedAt:    atlasSyncedAt,
 			DotProjectAdoptionStatus:  "adopted",
 		},
@@ -250,6 +250,7 @@ maintainers:
           - antonio-example
           - renee-sample
           - alex-example
+          - unmapped-dotproject
 `),
 		SecurityFileBodyHash:     "seed-security-hash",
 		ContributingFileBodyHash: "seed-contributing-hash",
