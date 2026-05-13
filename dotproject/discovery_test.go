@@ -3,6 +3,7 @@ package dotproject
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"maintainerd/model"
@@ -32,6 +33,30 @@ func (f *fakeRepositoryClient) GetFile(_ context.Context, owner, repo, ref, path
 		return nil, ErrDotProjectFileNotFound
 	}
 	return file, nil
+}
+
+func (f *fakeRepositoryClient) ListFiles(_ context.Context, owner, repo, ref, path string) ([]ListedFile, error) {
+	if strings.TrimSpace(path) != "" {
+		return nil, ErrDotProjectFileNotFound
+	}
+	prefix := fmt.Sprintf("%s/%s@%s:", owner, repo, ref)
+	seen := make(map[string]struct{})
+	files := make([]ListedFile, 0, len(f.files))
+	for key := range f.files {
+		if !strings.HasPrefix(key, prefix) {
+			continue
+		}
+		relative := strings.TrimPrefix(key, prefix)
+		if relative == "" || strings.Contains(relative, "/") {
+			continue
+		}
+		if _, ok := seen[relative]; ok {
+			continue
+		}
+		seen[relative] = struct{}{}
+		files = append(files, ListedFile{Path: relative})
+	}
+	return files, nil
 }
 
 func TestDiscoverRepoMissing(t *testing.T) {
@@ -141,6 +166,41 @@ func TestDiscoverUnsupportedSchemaVersion(t *testing.T) {
 	assert.Equal(t, ParseStatusUnsupportedSchema, result.ProjectParseStatus)
 	assert.Contains(t, result.ProjectParseError, "unsupported schema version")
 	assert.Equal(t, "MAINTAINERS.yaml", result.MaintainersFilename)
+	require.NotNil(t, result.MaintainerCount)
+	assert.Equal(t, uint(1), *result.MaintainerCount)
+}
+
+func TestDiscoverMixedCaseMaintainersFile(t *testing.T) {
+	t.Parallel()
+
+	client := &fakeRepositoryClient{
+		defaultBranches: map[string]string{
+			"example-org/.project": "main",
+		},
+		files: map[string]*FetchedFile{
+			"example-org/.project@main:project.yaml": {
+				Path: "project.yaml",
+				Body: "schema_version: \"1.0.0\"\nname: Example\n",
+			},
+			"example-org/.project@main:Maintainers.YAML": {
+				Path: "Maintainers.YAML",
+				Body: `maintainers:
+  - teams:
+      - name: project-maintainers
+        members:
+          - alice
+`,
+			},
+		},
+	}
+
+	discoverer := &Discoverer{Client: client}
+	result, err := discoverer.Discover(context.Background(), model.Project{GitHubOrg: "example-org"})
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.True(t, result.MaintainersFile.Exists)
+	assert.Equal(t, "Maintainers.YAML", result.MaintainersFilename)
 	require.NotNil(t, result.MaintainerCount)
 	assert.Equal(t, uint(1), *result.MaintainerCount)
 }

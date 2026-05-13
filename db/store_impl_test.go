@@ -183,6 +183,7 @@ func TestDotProjectSyncState(t *testing.T) {
 			MaintainersFileETag:     "\"maintainers-etag\"",
 			ProjectFileBodyHash:     "abc123",
 			MaintainersFileBodyHash: "def456",
+			MaintainersFileBody:     strPtr("maintainers:\n  - teams: []\n"),
 			SecurityFileBodyHash:    "ghi789",
 			GovernanceFileBodyHash:  "jkl012",
 			LastCheckedAt:           &now,
@@ -202,6 +203,8 @@ func TestDotProjectSyncState(t *testing.T) {
 		assert.Equal(t, "MAINTAINERS.yaml", reloaded.MaintainersFilename)
 		assert.Equal(t, "1.0.0", reloaded.SchemaVersion)
 		assert.Equal(t, "dot-project-sync/v1", reloaded.ImporterVersion)
+		require.NotNil(t, reloaded.MaintainersFileBody)
+		assert.Equal(t, "maintainers:\n  - teams: []\n", *reloaded.MaintainersFileBody)
 		require.NotNil(t, reloaded.LastCheckedAt)
 		assert.True(t, reloaded.LastCheckedAt.Equal(now))
 		require.NotNil(t, reloaded.SyncError)

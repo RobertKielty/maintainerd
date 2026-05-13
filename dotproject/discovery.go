@@ -18,6 +18,7 @@ const (
 	DefaultRepoName        = ".project"
 	ImporterVersion        = "dot-project-discovery/v1"
 	SupportedSchemaVersion = "1.0.0"
+	maintainersFileName    = "maintainers.yaml"
 )
 
 var (
@@ -38,6 +39,7 @@ const (
 type RepositoryClient interface {
 	GetDefaultBranch(ctx context.Context, owner, repo string) (string, error)
 	GetFile(ctx context.Context, owner, repo, ref, path string) (*FetchedFile, error)
+	ListFiles(ctx context.Context, owner, repo, ref, path string) ([]ListedFile, error)
 }
 
 type FetchedFile struct {
@@ -46,6 +48,10 @@ type FetchedFile struct {
 	RawURL  string
 	ETag    string
 	Body    string
+}
+
+type ListedFile struct {
+	Path string
 }
 
 type FileDiscovery struct {
@@ -125,7 +131,7 @@ func (d *Discoverer) Discover(ctx context.Context, project model.Project) (*Disc
 			parseProjectYAML(result.ProjectFile)
 	}
 
-	maintainersFile, err := d.fetchFirstOptionalFile(ctx, org, defaultBranch, "MAINTAINERS.yaml", "maintainers.yaml")
+	maintainersFile, err := d.fetchMaintainersFile(ctx, org, defaultBranch)
 	if err != nil {
 		return nil, err
 	}
@@ -159,17 +165,29 @@ func (d *Discoverer) Discover(ctx context.Context, project model.Project) (*Disc
 	return result, nil
 }
 
-func (d *Discoverer) fetchFirstOptionalFile(ctx context.Context, org, ref string, paths ...string) (FileDiscovery, error) {
-	for _, path := range paths {
-		file, err := d.fetchOptionalFile(ctx, org, ref, path)
-		if err != nil {
-			return FileDiscovery{}, err
-		}
-		if file.Exists {
-			return file, nil
+func (d *Discoverer) fetchMaintainersFile(ctx context.Context, org, ref string) (FileDiscovery, error) {
+	path, ok, err := d.findMaintainersPath(ctx, org, ref)
+	if err != nil {
+		return FileDiscovery{}, err
+	}
+	if !ok {
+		return FileDiscovery{}, nil
+	}
+	return d.fetchOptionalFile(ctx, org, ref, path)
+}
+
+func (d *Discoverer) findMaintainersPath(ctx context.Context, org, ref string) (string, bool, error) {
+	files, err := d.Client.ListFiles(ctx, org, DefaultRepoName, ref, "")
+	if err != nil {
+		return "", false, fmt.Errorf("list %s/%s root: %w", org, DefaultRepoName, err)
+	}
+	for _, file := range files {
+		path := strings.TrimSpace(file.Path)
+		if strings.EqualFold(path, maintainersFileName) {
+			return path, true, nil
 		}
 	}
-	return FileDiscovery{}, nil
+	return "", false, nil
 }
 
 func (d *Discoverer) fetchOptionalFile(ctx context.Context, org, ref, path string) (FileDiscovery, error) {
@@ -325,6 +343,27 @@ func (c *GitHubRepositoryClient) GetFile(ctx context.Context, owner, repo, ref, 
 		fetched.RawURL = rawRef(owner, ref, path)
 	}
 	return fetched, nil
+}
+
+func (c *GitHubRepositoryClient) ListFiles(ctx context.Context, owner, repo, ref, path string) ([]ListedFile, error) {
+	if c == nil || c.Client == nil {
+		return nil, errors.New("github client is required")
+	}
+	_, dir, resp, err := c.Client.Repositories.GetContents(ctx, owner, repo, path, &github.RepositoryContentGetOptions{Ref: ref})
+	if err != nil {
+		if isGitHubNotFound(resp, err) {
+			return nil, ErrDotProjectFileNotFound
+		}
+		return nil, err
+	}
+	files := make([]ListedFile, 0, len(dir))
+	for _, entry := range dir {
+		if entry == nil {
+			continue
+		}
+		files = append(files, ListedFile{Path: strings.TrimSpace(entry.GetPath())})
+	}
+	return files, nil
 }
 
 func isGitHubNotFound(resp *github.Response, err error) bool {

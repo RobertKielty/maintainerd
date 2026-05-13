@@ -208,6 +208,10 @@ func buildSyncState(projectID uint, now time.Time, result *DiscoveryResult) *mod
 	state.GovernanceFileETag = strings.TrimSpace(result.GovernanceFile.ETag)
 	state.ProjectFileBodyHash = strings.TrimSpace(result.ProjectFile.BodyHash)
 	state.MaintainersFileBodyHash = strings.TrimSpace(result.MaintainersFile.BodyHash)
+	if result.MaintainersFile.Exists {
+		body := result.MaintainersFile.Body
+		state.MaintainersFileBody = &body
+	}
 	state.SecurityFileBodyHash = strings.TrimSpace(result.SecurityFile.BodyHash)
 	state.ContributingFileBodyHash = strings.TrimSpace(result.ContributingFile.BodyHash)
 	state.GovernanceFileBodyHash = strings.TrimSpace(result.GovernanceFile.BodyHash)

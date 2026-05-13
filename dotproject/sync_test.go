@@ -73,7 +73,7 @@ func TestSyncProjectPersistsAdoptedDiscovery(t *testing.T) {
 					RepoRef:                "https://github.com/example-org/.project",
 					DefaultBranch:          "main",
 					ProjectFile:            FileDiscovery{Exists: true, BlobURL: "https://github.com/example-org/.project/blob/main/project.yaml", ETag: "\"project\"", BodyHash: "hash-project"},
-					MaintainersFile:        FileDiscovery{Exists: true, Path: "MAINTAINERS.yaml", BlobURL: "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml", ETag: "\"maintainers\"", BodyHash: "hash-maintainers"},
+					MaintainersFile:        FileDiscovery{Exists: true, Path: "MAINTAINERS.yaml", BlobURL: "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml", ETag: "\"maintainers\"", BodyHash: "hash-maintainers", Body: "maintainers:\n  - teams: []\n"},
 					SecurityFile:           FileDiscovery{Exists: true, BlobURL: "https://github.com/example-org/.project/blob/main/SECURITY.md", ETag: "\"security\"", BodyHash: "hash-security"},
 					ContributingFile:       FileDiscovery{Exists: true, BlobURL: "https://github.com/example-org/.project/blob/main/CONTRIBUTING.md", ETag: "\"contributing\"", BodyHash: "hash-contributing"},
 					GovernanceFile:         FileDiscovery{Exists: true, BlobURL: "https://github.com/example-org/.project/blob/main/GOVERNANCE.md", ETag: "\"governance\"", BodyHash: "hash-governance"},
@@ -112,6 +112,8 @@ func TestSyncProjectPersistsAdoptedDiscovery(t *testing.T) {
 	assert.Equal(t, "MAINTAINERS.yaml", persisted.state.MaintainersFilename)
 	assert.Equal(t, "1.0.0", persisted.state.SchemaVersion)
 	assert.Equal(t, ImporterVersion, persisted.state.ImporterVersion)
+	require.NotNil(t, persisted.state.MaintainersFileBody)
+	assert.Equal(t, "maintainers:\n  - teams: []\n", *persisted.state.MaintainersFileBody)
 	require.NotNil(t, persisted.state.LastCheckedAt)
 	assert.True(t, persisted.state.LastCheckedAt.Equal(now))
 	assert.Nil(t, persisted.state.ParseError)

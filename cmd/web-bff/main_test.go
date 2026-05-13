@@ -282,6 +282,76 @@ func TestMaintainerCanAccessAllProjectsAndMaintainers(t *testing.T) {
 	})
 }
 
+func TestProjectDetailIncludesDotProjectMaintainerCache(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	project := model.Project{
+		Name:                    "Project Cache",
+		Maturity:                model.Graduated,
+		GitHubOrg:               "project-cache",
+		DotProjectRepoRef:       "https://github.com/project-cache/.project",
+		DotProjectMaintainerRef: "https://github.com/project-cache/.project/blob/main/Maintainers.YAML",
+	}
+	require.NoError(t, dbConn.Create(&project).Error)
+
+	body := "maintainers:\n  - teams:\n      - name: project-maintainers\n        members:\n          - alice-example\n"
+	syncState := model.DotProjectSyncState{
+		ProjectID:               project.ID,
+		RepoExists:              true,
+		MaintainersFileExists:   true,
+		MaintainersFilename:     "Maintainers.YAML",
+		MaintainersFileETag:     "\"maintainers-etag\"",
+		MaintainersFileBodyHash: "abc123def456",
+		MaintainersFileBody:     &body,
+		LastCheckedAt:           &now,
+	}
+	require.NoError(t, dbConn.Create(&syncState).Error)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+	}
+
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/projects/%d", project.ID), nil)
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+	rec := httptest.NewRecorder()
+	handler := s.requireSession(http.HandlerFunc(s.handleProject))
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var response projectDetailResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.NotNil(t, response.DotProjectSyncState)
+	assert.Equal(t, "Maintainers.YAML", response.DotProjectSyncState.MaintainersFilename)
+	require.NotNil(t, response.DotProjectMaintainerCache)
+	assert.Equal(t, "Maintainers.YAML", response.DotProjectMaintainerCache.Filename)
+	assert.Equal(t, "\"maintainers-etag\"", response.DotProjectMaintainerCache.ETag)
+	assert.Equal(t, "abc123def456", response.DotProjectMaintainerCache.BodyHash)
+	assert.Equal(t, body, response.DotProjectMaintainerCache.Body)
+	require.NotNil(t, response.DotProjectMaintainerCache.LastCheckedAt)
+	assert.True(t, response.DotProjectMaintainerCache.LastCheckedAt.Equal(now))
+}
+
 func TestMaintainerServiceAssociationsForStaff(t *testing.T) {
 	dbConn := setupPostgresTestDB(t)
 	store := db.NewSQLStore(dbConn)

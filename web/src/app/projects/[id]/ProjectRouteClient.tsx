@@ -40,6 +40,14 @@ type DotProjectSyncState = {
   parseError?: string;
 };
 
+type DotProjectMaintainerCache = {
+  filename?: string;
+  etag?: string;
+  bodyHash?: string;
+  body?: string;
+  lastCheckedAt?: string | null;
+};
+
 type ProjectDetail = {
   id: number;
   name: string;
@@ -57,6 +65,7 @@ type ProjectDetail = {
   dotProjectLastSyncedAt?: string | null;
   dotProjectAdoptionStatus?: string;
   dotProjectSyncState?: DotProjectSyncState | null;
+  dotProjectMaintainerCache?: DotProjectMaintainerCache | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -156,6 +165,11 @@ const projectDataHasChanged = (current: ProjectDetail | null, next: ProjectDetai
     current.dotProjectSyncState?.lastCheckedAt !== next.dotProjectSyncState?.lastCheckedAt ||
     current.dotProjectSyncState?.syncError !== next.dotProjectSyncState?.syncError ||
     current.dotProjectSyncState?.parseError !== next.dotProjectSyncState?.parseError ||
+    current.dotProjectMaintainerCache?.filename !== next.dotProjectMaintainerCache?.filename ||
+    current.dotProjectMaintainerCache?.etag !== next.dotProjectMaintainerCache?.etag ||
+    current.dotProjectMaintainerCache?.bodyHash !== next.dotProjectMaintainerCache?.bodyHash ||
+    current.dotProjectMaintainerCache?.body !== next.dotProjectMaintainerCache?.body ||
+    current.dotProjectMaintainerCache?.lastCheckedAt !== next.dotProjectMaintainerCache?.lastCheckedAt ||
     current.maintainerRefStatus.status !== next.maintainerRefStatus.status ||
     current.maintainerRefStatus.url !== next.maintainerRefStatus.url ||
     current.maintainerRefStatus.checkedAt !== next.maintainerRefStatus.checkedAt ||
@@ -443,6 +457,7 @@ export default function ProjectRouteClient({ children }: ProjectRouteClientProps
                 dotProjectLastSyncedAt={project.dotProjectLastSyncedAt}
                 dotProjectAdoptionStatus={project.dotProjectAdoptionStatus}
                 dotProjectSyncState={project.dotProjectSyncState}
+                dotProjectMaintainerCache={project.dotProjectMaintainerCache}
                 maintainerRefStatus={project.maintainerRefStatus}
                 maintainerRefBody={project.legacyMaintainerRefBody}
                 refOnlyGitHub={project.refOnlyGitHub}
