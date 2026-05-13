@@ -999,6 +999,19 @@ export default function ProjectReconciliationCard({
           </div>
           <DotProjectMaintainerFileViewer
             filename={dotProjectMaintainerCacheFilename}
+            maintainers={maintainers}
+            canEdit={canEdit}
+            onAddMissingMaintainer={(handle, refLine) => {
+              setDraft({
+                githubHandle: handle,
+                name: "",
+                email: "",
+                company: "",
+                companyMode: "select",
+                refLine,
+              });
+              setModalOpen(true);
+            }}
             source={dotProjectMaintainerCacheBody}
           />
         </div>

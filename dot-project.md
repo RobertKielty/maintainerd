@@ -613,6 +613,32 @@ Operational goals:
 - Move missing-maintainer feedback into the rendered file itself.
 - Keep the interaction clearly focused on the standardized `project-maintainers` team.
 
+#### Implementation report
+
+Commit D is complete.
+
+What changed:
+
+- Added maintainer-d awareness to the formatted dot-project maintainer-file viewer.
+- Matched `project-maintainers` members case-insensitively against active project maintainer records.
+- Rendered matched handles as links to their maintainer routes.
+- Rendered unmatched `project-maintainers` handles with a red wavy underline.
+- Wired unmatched handle clicks to the existing `Add Maintainer to CNCF INTERNAL DB` modal, prefilled with the GitHub handle and source line.
+- Added a validation message when the cached file does not contain a `project-maintainers` team.
+- Extended the web BDD fixture with an unmapped dot-project handle and covered the matched-link and add-modal paths.
+
+Operational details:
+
+- The inline awareness is intentionally limited to the standardized `project-maintainers` team.
+- The file view remains read-only; DB-vs-file diffing and PR generation are still deferred to later commits.
+
+Verification:
+
+- `npm --prefix web run lint`
+- `npm --prefix web run typecheck`
+- `GOCACHE=/tmp/go-build go test ./cmd/web-bff-seed`
+- `WEB_BDD_USE_MICROCKS=true BDD_FEATURE=../features/web/project_routes.feature make test-web`
+
 ### Commit E: Add DB-vs-File Diff Summary and PR Preview
 
 - Compare active project maintainers in maintainer-d against the members of the `project-maintainers` team only.

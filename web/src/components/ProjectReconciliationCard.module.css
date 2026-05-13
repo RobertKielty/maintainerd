@@ -679,6 +679,16 @@
   line-height: 1.5;
 }
 
+.dotProjectYamlValidation {
+  border: 1px solid #f4d08a;
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: #6d4d00;
+  background: #fff7e6;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .dotProjectTeamGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -724,6 +734,37 @@
   background: rgba(11, 61, 46, 0.06);
   font-size: 12px;
   font-weight: 600;
+}
+
+.dotProjectMaintainerLink {
+  color: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.dotProjectMissingMaintainer,
+.dotProjectMissingMaintainerButton {
+  color: #b91c1c;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: #ef4444;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
+.dotProjectMissingMaintainerButton {
+  appearance: none;
+  border: none;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
+
+.dotProjectMissingMaintainerButton:hover {
+  color: #7f1d1d;
 }
 
 .dotProjectSource {
@@ -992,6 +1033,21 @@
   border-color: rgba(74, 222, 128, 0.28);
   color: #86efac;
   background: rgba(74, 222, 128, 0.12);
+}
+
+[data-theme="dark"] .dotProjectMissingMaintainer,
+[data-theme="dark"] .dotProjectMissingMaintainerButton {
+  color: #fca5a5;
+}
+
+[data-theme="dark"] .dotProjectMissingMaintainerButton:hover {
+  color: #fecaca;
+}
+
+[data-theme="dark"] .dotProjectYamlValidation {
+  border-color: rgba(251, 191, 36, 0.35);
+  color: #fde68a;
+  background: rgba(251, 191, 36, 0.12);
 }
 
 [data-theme="dark"] .tableWrap {
