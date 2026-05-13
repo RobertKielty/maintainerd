@@ -576,6 +576,30 @@ Operational goals:
 - Establish a strong file-viewing experience before adding inline diff and PR behaviors.
 - Preserve enough source fidelity that later edit/PR generation can patch the original file cleanly.
 
+#### Implementation report
+
+Commit C is complete.
+
+What changed:
+
+- Added a dedicated formatted maintainer-file viewer for the dot-project route.
+- Parses the cached YAML with an AST-backed renderer path before deriving team and member structure.
+- Shows a read-only structured team/member summary above the source view.
+- Renders the cached source text with YAML-aware coloring while preserving whitespace and comments.
+- Stopped trimming the cached maintainer-file body before rendering, so source fidelity is retained for later patch/diff work.
+- Added route-level BDD coverage for the formatted cached maintainer-file view.
+
+Operational details:
+
+- The view remains read-only; maintainer-d matching, inline validation, diffing, and PR behavior are left for later commits.
+- The source of truth remains the cached body populated by `dot-project-sync`, not a live GitHub fetch during page render.
+
+Verification:
+
+- `npm --prefix web run lint`
+- `npm --prefix web run typecheck`
+- `GOCACHE=/tmp/go-build go test ./cmd/web-bff-seed`
+
 ### Commit D: Add Inline Maintainer-D Awareness to the Rendered YAML
 
 - Match GitHub handles case-insensitively against active maintainer records in maintainer-d.
