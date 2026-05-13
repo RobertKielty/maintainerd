@@ -205,10 +205,10 @@ func TestSyncAllSummarizesStatuses(t *testing.T) {
 	now := time.Date(2026, 5, 9, 10, 11, 12, 0, time.UTC)
 	store := &fakeSyncStore{
 		projects: []model.Project{
-			{Model: gorm.Model{ID: 1}, GitHubOrg: "org-one"},
-			{Model: gorm.Model{ID: 2}, GitHubOrg: "org-two"},
-			{Model: gorm.Model{ID: 3}, GitHubOrg: "org-three"},
-			{Model: gorm.Model{ID: 4}, GitHubOrg: "org-four"},
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+			{Model: gorm.Model{ID: 3}, Name: "Project Three", GitHubOrg: "org-three"},
+			{Model: gorm.Model{ID: 4}, Name: "Project Four", GitHubOrg: "org-four"},
 		},
 	}
 	syncer := &Syncer{
@@ -237,6 +237,7 @@ func TestSyncAllSummarizesStatuses(t *testing.T) {
 	assert.Equal(t, 1, summary.Adopted)
 	assert.Equal(t, 0, summary.Partial)
 	assert.Len(t, summary.ErrorSummaries, 1)
+	assert.Contains(t, summary.ErrorSummaries[0], "Project Four")
 	assert.Contains(t, summary.ErrorSummaries[0], "boom")
 }
 

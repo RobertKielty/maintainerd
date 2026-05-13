@@ -499,6 +499,7 @@ What changed:
   - summarized run errors
 - Added a run-level audit-log entry with action `DOT_PROJECT_SYNC_RUN`.
 - Included GitHub/rate-limit failures in the audit metadata summary.
+- Prefixed each sync error in the audit metadata with the project name so the log can be traced back to the failing project directly.
 - Added post-sync Postgres size and coverage metrics to the same audit metadata summary:
   - total database size
   - `dot_project_sync_states` total relation size
