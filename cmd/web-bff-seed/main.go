@@ -242,7 +242,8 @@ func main() {
 		GovernanceFileETag:      "seed-governance",
 		ProjectFileBodyHash:     "seed-project-hash",
 		MaintainersFileBodyHash: "seed-maintainers-hash",
-		MaintainersFileBody: strPtr(`maintainers:
+		MaintainersFileBody: strPtr(`# Project Atlas dot-project maintainers
+maintainers:
   - teams:
       - name: project-maintainers
         members:

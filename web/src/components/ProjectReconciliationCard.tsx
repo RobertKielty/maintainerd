@@ -12,6 +12,7 @@ import Link from "next/link";
 import styles from "./ProjectReconciliationCard.module.css";
 import ProjectDiffControl from "./ProjectDiffControl";
 import ProjectAddMaintainerModal from "./ProjectAddMaintainerModal";
+import DotProjectMaintainerFileViewer from "./DotProjectMaintainerFileViewer";
 
 type MaintainerSummary = {
   id: number;
@@ -329,7 +330,7 @@ export default function ProjectReconciliationCard({
   const dotProjectLastCheckedAt = dotProjectSyncState?.lastCheckedAt || dotProjectLastSyncedAt || null;
   const dotProjectSchema = dotProjectSyncState?.schemaVersion || dotProjectSchemaVersion || "";
   const dotProjectMaintainersFilename = dotProjectSyncState?.maintainersFilename || "MAINTAINERS.yaml";
-  const dotProjectMaintainerCacheBody = dotProjectMaintainerCache?.body?.trim() ?? "";
+  const dotProjectMaintainerCacheBody = dotProjectMaintainerCache?.body ?? "";
   const dotProjectMaintainerCacheFilename =
     dotProjectMaintainerCache?.filename || dotProjectMaintainersFilename || "maintainers.yaml";
   const dotProjectMaintainerCacheCheckedAt =
@@ -973,7 +974,7 @@ export default function ProjectReconciliationCard({
           </table>
         </div>
       </div>
-      {dotProjectMaintainerCacheBody ? (
+      {dotProjectMaintainerCacheBody.trim() ? (
         <div className={styles.tableSection}>
           <div className={styles.tableHeader}>
             <h3 className={styles.tableTitle}>Cached maintainer file</h3>
@@ -996,16 +997,10 @@ export default function ProjectReconciliationCard({
               <span className={styles.secondary}>{shortenHash(dotProjectMaintainerCache?.bodyHash)}</span>
             </div>
           </div>
-          <div className={styles.refYaml}>
-            <SyntaxHighlighter
-              language="yaml"
-              style={atomDark}
-              customStyle={{ margin: 0, background: "transparent" }}
-              codeTagProps={{ style: { fontFamily: "var(--font-geist-mono)" } }}
-            >
-              {dotProjectMaintainerCacheBody}
-            </SyntaxHighlighter>
-          </div>
+          <DotProjectMaintainerFileViewer
+            filename={dotProjectMaintainerCacheFilename}
+            source={dotProjectMaintainerCacheBody}
+          />
         </div>
       ) : null}
       {dotProjectSyncState?.syncError || dotProjectSyncState?.parseError ? (

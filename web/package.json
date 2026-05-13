@@ -20,7 +20,8 @@
     "rehype-raw": "^7.0.0",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1",
-    "sass": "^1.97.1"
+    "sass": "^1.97.1",
+    "yaml": "^2.9.0"
   },
   "devDependencies": {
     "@cucumber/cucumber": "^12.5.0",

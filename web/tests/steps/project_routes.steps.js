@@ -114,3 +114,21 @@ Then("the dot-project roll call lists the tracked .project files", async functio
     });
   }
 });
+
+Then("the dot-project roll call renders the cached maintainer file as formatted YAML", async function () {
+  const contentColumn = this.page.locator('[class*="contentColumn"]');
+  const viewer = contentColumn.locator('[class*="dotProjectYamlViewer"]');
+
+  await expect(viewer.getByRole("heading", { name: "Formatted maintainer file", exact: true })).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(viewer.locator('[class*="dotProjectTeamName"]').getByText("project-maintainers")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(viewer.locator('[class*="dotProjectMemberChip"]').getByText("antonio-example")).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(viewer.locator('[class*="yamlTokenComment"]')).toContainText(
+    "# Project Atlas dot-project maintainers"
+  );
+});

@@ -34,3 +34,4 @@ Feature: Project route navigation
     And I open the DOT-PROJECT ROLL CALL route
     Then the dot-project roll call shows the persisted discovery summary
     And the dot-project roll call lists the tracked .project files
+    And the dot-project roll call renders the cached maintainer file as formatted YAML

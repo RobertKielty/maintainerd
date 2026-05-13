@@ -620,6 +620,160 @@
   color: var(--md-card-text-strong, #0b1220);
 }
 
+.dotProjectYamlViewer {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 14px;
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.1));
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--md-card-bg, #ffffff);
+}
+
+.dotProjectYamlHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
+.dotProjectYamlTitle {
+  margin: 0;
+  font-size: 14px;
+  color: var(--md-card-text-strong, #0b1220);
+}
+
+.dotProjectYamlSubtitle {
+  margin: 5px 0 0;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.65));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dotProjectYamlStats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--md-card-text-strong, #0b1220);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dotProjectYamlStats span {
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.12));
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: var(--md-surface, rgba(15, 23, 42, 0.04));
+}
+
+.dotProjectYamlParseError {
+  border: 1px solid var(--md-status-danger-border, #fca5a5);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--md-status-danger-text, #b91c1c);
+  background: var(--md-status-danger-bg, #fee2e2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dotProjectTeamGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.dotProjectTeamCard {
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.1));
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--md-surface, rgba(15, 23, 42, 0.03));
+}
+
+.dotProjectTeamHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.dotProjectTeamName {
+  color: var(--md-card-text-strong, #0b1220);
+  font-weight: 700;
+}
+
+.dotProjectTeamMeta {
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.65));
+  font-size: 12px;
+}
+
+.dotProjectMemberList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.dotProjectMemberChip {
+  border: 1px solid rgba(11, 61, 46, 0.18);
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--md-link, #0b3d2e);
+  background: rgba(11, 61, 46, 0.06);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dotProjectSource {
+  overflow: auto;
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.1));
+  border-radius: 12px;
+  background: #0b1220;
+  color: #dbeafe;
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.dotProjectSourceLine {
+  display: grid;
+  grid-template-columns: 3rem minmax(max-content, 1fr);
+  min-width: max-content;
+}
+
+.dotProjectLineNumber {
+  user-select: none;
+  text-align: right;
+  padding: 0 10px;
+  color: rgba(203, 213, 225, 0.45);
+  border-right: 1px solid rgba(148, 163, 184, 0.22);
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.dotProjectLineCode {
+  padding: 0 12px;
+  white-space: pre;
+}
+
+.yamlTokenComment {
+  color: #94a3b8;
+  font-style: italic;
+}
+
+.yamlTokenKey {
+  color: #93c5fd;
+}
+
+.yamlTokenPunctuation {
+  color: #fbbf24;
+}
+
+.yamlTokenScalar {
+  color: #bbf7d0;
+}
+
 .tableWrap {
   border: 1px solid var(--md-border, rgba(15, 23, 42, 0.08));
   border-radius: 12px;
@@ -810,6 +964,34 @@
 
 [data-theme="dark"] .tableTitle {
   color: #f8fafc;
+}
+
+[data-theme="dark"] .dotProjectYamlViewer {
+  background: #0b1220;
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+[data-theme="dark"] .dotProjectYamlTitle,
+[data-theme="dark"] .dotProjectYamlStats,
+[data-theme="dark"] .dotProjectTeamName {
+  color: #f8fafc;
+}
+
+[data-theme="dark"] .dotProjectYamlSubtitle,
+[data-theme="dark"] .dotProjectTeamMeta {
+  color: rgba(226, 232, 240, 0.7);
+}
+
+[data-theme="dark"] .dotProjectYamlStats span,
+[data-theme="dark"] .dotProjectTeamCard {
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+[data-theme="dark"] .dotProjectMemberChip {
+  border-color: rgba(74, 222, 128, 0.28);
+  color: #86efac;
+  background: rgba(74, 222, 128, 0.12);
 }
 
 [data-theme="dark"] .tableWrap {
