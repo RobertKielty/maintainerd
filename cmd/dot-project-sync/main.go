@@ -19,16 +19,28 @@ import (
 	"gorm.io/gorm"
 )
 
-const defaultDBPath = "/data/maintainers.db"
+type postSyncMetrics struct {
+	DBSizeBytes              int64
+	DotProjectSyncStateBytes int64
+	CachedFiles              int64
+	MaintainersBodyBytes     int64
+	AvgMaintainersBodyBytes  int64
+	MaxMaintainersBodyBytes  int64
+	ProjectsTotal            int64
+	ReposFound               int64
+	CachedBodies             int64
+}
 
 func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
-	dbDriver := envOr("MD_DB_DRIVER", "sqlite")
+	dbDriver := envOr("MD_DB_DRIVER", "postgres")
+	if dbDriver != "postgres" {
+		log.Fatalf("dot-project-sync requires MD_DB_DRIVER=postgres, got %q", dbDriver)
+	}
 	dbDSN := envOr("MD_DB_DSN", "")
-	dbPath := envOr("MD_DB_PATH", defaultDBPath)
-	if dbDriver == "postgres" && dbDSN == "" {
+	if dbDSN == "" {
 		log.Fatal("MD_DB_DSN is required when MD_DB_DRIVER=postgres")
 	}
 
@@ -37,12 +49,7 @@ func main() {
 		log.Fatal("GITHUB_API_TOKEN is required")
 	}
 
-	dsn := dbPath
-	if dbDriver == "postgres" {
-		dsn = dbDSN
-	}
-
-	dbConn, err := db.OpenGorm(dbDriver, dsn, &gorm.Config{})
+	dbConn, err := db.OpenGorm(dbDriver, dbDSN, &gorm.Config{})
 	if err != nil {
 		log.Fatalf("failed to open DB: %v", err)
 	}
@@ -64,8 +71,13 @@ func main() {
 		log.Fatalf("dot-project sync failed: %v", err)
 	}
 
+	metrics, metricsErr := collectPostSyncMetrics(ctx, store)
+	if metricsErr != nil {
+		log.Printf("dot-project sync post-sync metrics failed: %v", metricsErr)
+	}
+
 	logger := zap.NewNop().Sugar()
-	if err := store.LogAuditEvent(logger, buildAuditEvent(summary)); err != nil {
+	if err := store.LogAuditEvent(logger, buildAuditEvent(summary, metrics, metricsErr)); err != nil {
 		log.Printf("dot-project sync audit log failed: %v", err)
 	}
 
@@ -94,7 +106,73 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-func buildAuditEvent(summary dotproject.SyncSummary) model.AuditLog {
+func collectPostSyncMetrics(ctx context.Context, store *db.SQLStore) (*postSyncMetrics, error) {
+	if store == nil || store.DB() == nil {
+		return nil, fmt.Errorf("sql store is not initialized")
+	}
+	if store.DB().Name() != "postgres" {
+		return nil, fmt.Errorf("dot-project-sync post-sync metrics require postgres, got %q", store.DB().Name())
+	}
+
+	metrics := &postSyncMetrics{}
+
+	sizeRow := struct {
+		DBSizeBytes              int64
+		DotProjectSyncStateBytes int64
+	}{}
+	if err := store.DB().WithContext(ctx).Raw(`
+		select
+			pg_database_size(current_database()) as db_size_bytes,
+			pg_total_relation_size('dot_project_sync_states') as dot_project_sync_state_bytes
+	`).Scan(&sizeRow).Error; err != nil {
+		return metrics, err
+	}
+	metrics.DBSizeBytes = sizeRow.DBSizeBytes
+	metrics.DotProjectSyncStateBytes = sizeRow.DotProjectSyncStateBytes
+
+	bodyRow := struct {
+		CachedFiles             int64
+		MaintainersBodyBytes    int64
+		AvgMaintainersBodyBytes int64
+		MaxMaintainersBodyBytes int64
+	}{}
+	if err := store.DB().WithContext(ctx).Raw(`
+		select
+			count(*) filter (where maintainers_file_body is not null) as cached_files,
+			coalesce(sum(pg_column_size(maintainers_file_body)), 0) as maintainers_body_bytes,
+			coalesce(avg(pg_column_size(maintainers_file_body))::bigint, 0) as avg_maintainers_body_bytes,
+			coalesce(max(pg_column_size(maintainers_file_body)), 0) as max_maintainers_body_bytes
+		from dot_project_sync_states
+	`).Scan(&bodyRow).Error; err != nil {
+		return metrics, err
+	}
+	metrics.CachedFiles = bodyRow.CachedFiles
+	metrics.MaintainersBodyBytes = bodyRow.MaintainersBodyBytes
+	metrics.AvgMaintainersBodyBytes = bodyRow.AvgMaintainersBodyBytes
+	metrics.MaxMaintainersBodyBytes = bodyRow.MaxMaintainersBodyBytes
+
+	coverageRow := struct {
+		ProjectsTotal int64
+		ReposFound    int64
+		CachedBodies  int64
+	}{}
+	if err := store.DB().WithContext(ctx).Raw(`
+		select
+			count(*) as projects_total,
+			count(*) filter (where repo_exists) as repos_found,
+			count(*) filter (where maintainers_file_body is not null) as cached_bodies
+		from dot_project_sync_states
+	`).Scan(&coverageRow).Error; err != nil {
+		return metrics, err
+	}
+	metrics.ProjectsTotal = coverageRow.ProjectsTotal
+	metrics.ReposFound = coverageRow.ReposFound
+	metrics.CachedBodies = coverageRow.CachedBodies
+
+	return metrics, nil
+}
+
+func buildAuditEvent(summary dotproject.SyncSummary, metrics *postSyncMetrics, metricsErr error) model.AuditLog {
 	metadata := map[string]any{
 		"loaded":                 summary.Loaded,
 		"scanned":                summary.Total,
@@ -112,6 +190,20 @@ func buildAuditEvent(summary dotproject.SyncSummary) model.AuditLog {
 	}
 	if len(summary.ErrorSummaries) > 0 {
 		metadata["errors"] = summary.ErrorSummaries
+	}
+	if metrics != nil {
+		metadata["db_size_bytes"] = metrics.DBSizeBytes
+		metadata["dot_project_sync_state_bytes"] = metrics.DotProjectSyncStateBytes
+		metadata["cached_files"] = metrics.CachedFiles
+		metadata["maintainers_body_bytes"] = metrics.MaintainersBodyBytes
+		metadata["avg_maintainers_body_bytes"] = metrics.AvgMaintainersBodyBytes
+		metadata["max_maintainers_body_bytes"] = metrics.MaxMaintainersBodyBytes
+		metadata["projects_total"] = metrics.ProjectsTotal
+		metadata["repos_found"] = metrics.ReposFound
+		metadata["cached_bodies"] = metrics.CachedBodies
+	}
+	if metricsErr != nil {
+		metadata["db_metrics_error"] = strings.TrimSpace(metricsErr.Error())
 	}
 	body, err := json.MarshalIndent(metadata, "", "  ")
 	if err != nil {

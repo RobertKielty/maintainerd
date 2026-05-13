@@ -79,6 +79,14 @@ type DotProjectSyncStateSummary = {
   parseError?: string | null;
 };
 
+type DotProjectMaintainerCacheSummary = {
+  filename?: string | null;
+  etag?: string | null;
+  bodyHash?: string | null;
+  body?: string | null;
+  lastCheckedAt?: string | null;
+};
+
 type SortDirection = "asc" | "desc";
 
 type SortState<Key extends string> = {
@@ -129,6 +137,7 @@ type ProjectReconciliationCardProps = {
   dotProjectLastSyncedAt?: string | null;
   dotProjectAdoptionStatus?: string | null;
   dotProjectSyncState?: DotProjectSyncStateSummary | null;
+  dotProjectMaintainerCache?: DotProjectMaintainerCacheSummary | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -253,6 +262,17 @@ const isYamlRef = (value: string) => /\.(ya?ml)(\?|#|$)/i.test(value);
 const buildStatusBadgeClassName = (stylesMap: Record<string, string>, found: boolean) =>
   `${stylesMap.statusBadge} ${found ? stylesMap.statusOk : stylesMap.statusWarn}`;
 
+const shortenHash = (value?: string | null) => {
+  const trimmed = value?.trim() ?? "";
+  if (trimmed === "") {
+    return "Unavailable";
+  }
+  if (trimmed.length <= 16) {
+    return trimmed;
+  }
+  return `${trimmed.slice(0, 16)}…`;
+};
+
 export default function ProjectReconciliationCard({
   projectId,
   name,
@@ -269,6 +289,7 @@ export default function ProjectReconciliationCard({
   dotProjectLastSyncedAt,
   dotProjectAdoptionStatus,
   dotProjectSyncState,
+  dotProjectMaintainerCache,
   maintainerRefStatus,
   maintainerRefBody,
   refLines,
@@ -308,6 +329,11 @@ export default function ProjectReconciliationCard({
   const dotProjectLastCheckedAt = dotProjectSyncState?.lastCheckedAt || dotProjectLastSyncedAt || null;
   const dotProjectSchema = dotProjectSyncState?.schemaVersion || dotProjectSchemaVersion || "";
   const dotProjectMaintainersFilename = dotProjectSyncState?.maintainersFilename || "MAINTAINERS.yaml";
+  const dotProjectMaintainerCacheBody = dotProjectMaintainerCache?.body?.trim() ?? "";
+  const dotProjectMaintainerCacheFilename =
+    dotProjectMaintainerCache?.filename || dotProjectMaintainersFilename || "maintainers.yaml";
+  const dotProjectMaintainerCacheCheckedAt =
+    dotProjectMaintainerCache?.lastCheckedAt || dotProjectLastCheckedAt || null;
   const dotProjectFiles = [
     {
       label: ".project repo",
@@ -947,6 +973,41 @@ export default function ProjectReconciliationCard({
           </table>
         </div>
       </div>
+      {dotProjectMaintainerCacheBody ? (
+        <div className={styles.tableSection}>
+          <div className={styles.tableHeader}>
+            <h3 className={styles.tableTitle}>Cached maintainer file</h3>
+          </div>
+          <div className={styles.dotProjectSummaryGrid}>
+            <div className={styles.dotProjectSummaryCard}>
+              <span className={styles.detailLabel}>Filename</span>
+              <span className={styles.secondary}>{dotProjectMaintainerCacheFilename}</span>
+            </div>
+            <div className={styles.dotProjectSummaryCard}>
+              <span className={styles.detailLabel}>Cached at</span>
+              <span className={styles.secondary}>{formatDateTime(dotProjectMaintainerCacheCheckedAt)}</span>
+            </div>
+            <div className={styles.dotProjectSummaryCard}>
+              <span className={styles.detailLabel}>ETag</span>
+              <span className={styles.secondary}>{dotProjectMaintainerCache?.etag?.trim() || "Unavailable"}</span>
+            </div>
+            <div className={styles.dotProjectSummaryCard}>
+              <span className={styles.detailLabel}>Body hash</span>
+              <span className={styles.secondary}>{shortenHash(dotProjectMaintainerCache?.bodyHash)}</span>
+            </div>
+          </div>
+          <div className={styles.refYaml}>
+            <SyntaxHighlighter
+              language="yaml"
+              style={atomDark}
+              customStyle={{ margin: 0, background: "transparent" }}
+              codeTagProps={{ style: { fontFamily: "var(--font-geist-mono)" } }}
+            >
+              {dotProjectMaintainerCacheBody}
+            </SyntaxHighlighter>
+          </div>
+        </div>
+      ) : null}
       {dotProjectSyncState?.syncError || dotProjectSyncState?.parseError ? (
         <div className={styles.statusCallout}>
           <div className={styles.statusCalloutTitle}>Recorded sync issues</div>

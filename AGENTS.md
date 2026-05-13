@@ -2,8 +2,12 @@
 This document gives agents instructions and tips for working in this repository. It applies to the entire repo.
 
 ## Purpose & Overview
-- `maintainer-d` is a Go service with a SQLite-backed data layer that processes GitHub webhooks and onboards projects to services (e.g., FOSSA).
+- `maintainer-d` is a Go service with a Postgres-backed data layer that processes GitHub webhooks and onboards projects to services (e.g., FOSSA).
 - Deployment uses plain Kubernetes manifests under `deploy/manifests` (production only).
+
+## Database Constraint
+- Treat this repository as Postgres-only for production changes and new operational code.
+- Do not add new SQLite-specific behavior, fallbacks, or documentation for new work unless the user explicitly asks for it.
 
 ## Deploy Rules
 - Apply manifests in `deploy/manifests` with `kubectl -n maintainerd apply -f deploy/manifests`.

@@ -78,7 +78,7 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 		status, err := s.SyncProject(ctx, project)
 		if err != nil {
 			summary.Errored++
-			summary.recordError(err)
+			summary.recordError(projectLabel(project), err)
 			continue
 		}
 		summary.Synced++
@@ -96,7 +96,7 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 	return summary, nil
 }
 
-func (s *SyncSummary) recordError(err error) {
+func (s *SyncSummary) recordError(projectLabel string, err error) {
 	if err == nil {
 		return
 	}
@@ -110,6 +110,11 @@ func (s *SyncSummary) recordError(err error) {
 	if message == "" {
 		return
 	}
+	label := strings.TrimSpace(projectLabel)
+	if label == "" {
+		label = "unknown project"
+	}
+	message = fmt.Sprintf("%s: %s", label, message)
 	for _, existing := range s.ErrorSummaries {
 		if existing == message {
 			return
@@ -119,6 +124,13 @@ func (s *SyncSummary) recordError(err error) {
 		return
 	}
 	s.ErrorSummaries = append(s.ErrorSummaries, message)
+}
+
+func projectLabel(project model.Project) string {
+	if name := strings.TrimSpace(project.Name); name != "" {
+		return name
+	}
+	return fmt.Sprintf("project %d", project.ID)
 }
 
 func (s *Syncer) SyncProject(ctx context.Context, project model.Project) (string, error) {
@@ -208,6 +220,10 @@ func buildSyncState(projectID uint, now time.Time, result *DiscoveryResult) *mod
 	state.GovernanceFileETag = strings.TrimSpace(result.GovernanceFile.ETag)
 	state.ProjectFileBodyHash = strings.TrimSpace(result.ProjectFile.BodyHash)
 	state.MaintainersFileBodyHash = strings.TrimSpace(result.MaintainersFile.BodyHash)
+	if result.MaintainersFile.Exists {
+		body := result.MaintainersFile.Body
+		state.MaintainersFileBody = &body
+	}
 	state.SecurityFileBodyHash = strings.TrimSpace(result.SecurityFile.BodyHash)
 	state.ContributingFileBodyHash = strings.TrimSpace(result.ContributingFile.BodyHash)
 	state.GovernanceFileBodyHash = strings.TrimSpace(result.GovernanceFile.BodyHash)

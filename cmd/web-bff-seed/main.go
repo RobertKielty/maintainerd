@@ -223,25 +223,33 @@ func main() {
 		projectMap[projects[i].Name] = &projects[i]
 	}
 	atlasSyncState := model.DotProjectSyncState{
-		ProjectID:                projectMap["Project Atlas"].ID,
-		RepoExists:               true,
-		ProjectFileExists:        true,
-		MaintainersFileExists:    true,
-		SecurityFileExists:       true,
-		ContributingFileExists:   true,
-		GovernanceFileExists:     true,
-		DefaultBranch:            "main",
-		MaintainersFilename:      "MAINTAINERS.yaml",
-		SchemaVersion:            "1.0.0",
-		ImporterVersion:          "seed",
-		LastCheckedAt:            atlasSyncedAt,
-		ProjectFileETag:          "seed-project",
-		MaintainersFileETag:      "seed-maintainers",
-		SecurityFileETag:         "seed-security",
-		ContributingFileETag:     "seed-contributing",
-		GovernanceFileETag:       "seed-governance",
-		ProjectFileBodyHash:      "seed-project-hash",
-		MaintainersFileBodyHash:  "seed-maintainers-hash",
+		ProjectID:               projectMap["Project Atlas"].ID,
+		RepoExists:              true,
+		ProjectFileExists:       true,
+		MaintainersFileExists:   true,
+		SecurityFileExists:      true,
+		ContributingFileExists:  true,
+		GovernanceFileExists:    true,
+		DefaultBranch:           "main",
+		MaintainersFilename:     "MAINTAINERS.yaml",
+		SchemaVersion:           "1.0.0",
+		ImporterVersion:         "seed",
+		LastCheckedAt:           atlasSyncedAt,
+		ProjectFileETag:         "seed-project",
+		MaintainersFileETag:     "seed-maintainers",
+		SecurityFileETag:        "seed-security",
+		ContributingFileETag:    "seed-contributing",
+		GovernanceFileETag:      "seed-governance",
+		ProjectFileBodyHash:     "seed-project-hash",
+		MaintainersFileBodyHash: "seed-maintainers-hash",
+		MaintainersFileBody: strPtr(`maintainers:
+  - teams:
+      - name: project-maintainers
+        members:
+          - antonio-example
+          - renee-sample
+          - alex-example
+`),
 		SecurityFileBodyHash:     "seed-security-hash",
 		ContributingFileBodyHash: "seed-contributing-hash",
 		GovernanceFileBodyHash:   "seed-governance-hash",

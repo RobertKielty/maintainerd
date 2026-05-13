@@ -499,12 +499,20 @@ What changed:
   - summarized run errors
 - Added a run-level audit-log entry with action `DOT_PROJECT_SYNC_RUN`.
 - Included GitHub/rate-limit failures in the audit metadata summary.
+- Prefixed each sync error in the audit metadata with the project name so the log can be traced back to the failing project directly.
+- Added post-sync Postgres size and coverage metrics to the same audit metadata summary:
+  - total database size
+  - `dot_project_sync_states` total relation size
+  - cached maintainer-body count
+  - cached maintainer-body bytes, average bytes, and max bytes
+  - sync-state coverage counts for total rows, repos found, and cached bodies
 
 Operational details:
 
 - The older generic `maintainer-sync` CronJob and image remain unchanged.
 - The dot-project sync deployment is intentionally separate so it can evolve independently from the Kubernetes resource sync job.
 - The run summary is now visible through the existing audit log view instead of only through pod logs.
+- The post-sync DB size metrics are collected directly from the production Postgres database used by maintainer-d.
 
 Verification:
 
@@ -517,6 +525,39 @@ Verification:
 - Accept any filename casing variant, but keep the file plural: `maintainers.yaml`.
 - Prefer cached file bodies in the web UI instead of fetching GitHub live on page load.
 - Expose the cached maintainer-file body and related metadata through the project detail API.
+
+#### Implementation report
+
+Commit B is complete.
+
+What changed:
+
+- Extended `dot_project_sync_states` to persist the raw cached maintainer-file body alongside the existing maintainer-file hash and ETag.
+- Updated dot-project discovery to accept any root-level filename casing variant of `maintainers.yaml` while preserving the actual filename found.
+- Persisted the cached maintainer-file body during `dot-project-sync`.
+- Exposed the cached maintainer-file payload through the project detail API, including:
+  - filename
+  - ETag
+  - body hash
+  - cached body
+  - last checked time
+- Updated the dot-project roll call UI to render the cached maintainer file from persisted state instead of relying on a live GitHub fetch.
+- Seeded cached maintainer-file body data for the web test fixture and added focused tests for:
+  - mixed-case maintainer filename discovery
+  - persisted maintainer-file body storage
+  - project detail API exposure of cached maintainer-file metadata
+
+Operational details:
+
+- The new cache is persisted only for the dot-project maintainer file, not for the other recommended `.project` files.
+- The sync path remains authoritative: the web UI renders the cached maintainer body captured by the background sync job.
+- Filename matching is case-insensitive for discovery, but the implementation still treats the plural filename `maintainers.yaml` as the supported contract.
+
+Verification:
+
+- `GOCACHE=/tmp/go-build go test ./dotproject ./db ./cmd/web-bff ./cmd/dot-project-sync`
+- `npm --prefix web run lint`
+- `npm --prefix web run typecheck`
 
 Operational goals:
 

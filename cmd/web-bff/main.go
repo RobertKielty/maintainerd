@@ -678,6 +678,7 @@ type projectDetailResponse struct {
 	DotProjectLastSyncedAt    *time.Time                     `json:"dotProjectLastSyncedAt,omitempty"`
 	DotProjectAdoptionStatus  string                         `json:"dotProjectAdoptionStatus,omitempty"`
 	DotProjectSyncState       *dotProjectSyncStateResponse   `json:"dotProjectSyncState,omitempty"`
+	DotProjectMaintainerCache *dotProjectMaintainerCacheBody `json:"dotProjectMaintainerCache,omitempty"`
 	RefStatus                 maintainerRefStatus            `json:"maintainerRefStatus"`
 	LegacyMaintainerRefBody   string                         `json:"legacyMaintainerRefBody,omitempty"`
 	RefOnlyGitHub             []string                       `json:"refOnlyGitHub"`
@@ -711,6 +712,14 @@ type dotProjectSyncStateResponse struct {
 	LastCheckedAt          *time.Time `json:"lastCheckedAt,omitempty"`
 	SyncError              string     `json:"syncError,omitempty"`
 	ParseError             string     `json:"parseError,omitempty"`
+}
+
+type dotProjectMaintainerCacheBody struct {
+	Filename      string     `json:"filename,omitempty"`
+	ETag          string     `json:"etag,omitempty"`
+	BodyHash      string     `json:"bodyHash,omitempty"`
+	Body          string     `json:"body,omitempty"`
+	LastCheckedAt *time.Time `json:"lastCheckedAt,omitempty"`
 }
 
 func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -1412,6 +1421,18 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 			syncState.ParseError = strings.TrimSpace(*dotProjectSyncState.ParseError)
 		}
 		response.DotProjectSyncState = syncState
+		if dotProjectSyncState.MaintainersFileBody != nil || dotProjectSyncState.MaintainersFilename != "" || dotProjectSyncState.MaintainersFileETag != "" || dotProjectSyncState.MaintainersFileBodyHash != "" {
+			maintainerCache := &dotProjectMaintainerCacheBody{
+				Filename:      strings.TrimSpace(dotProjectSyncState.MaintainersFilename),
+				ETag:          strings.TrimSpace(dotProjectSyncState.MaintainersFileETag),
+				BodyHash:      strings.TrimSpace(dotProjectSyncState.MaintainersFileBodyHash),
+				LastCheckedAt: dotProjectSyncState.LastCheckedAt,
+			}
+			if dotProjectSyncState.MaintainersFileBody != nil {
+				maintainerCache.Body = *dotProjectSyncState.MaintainersFileBody
+			}
+			response.DotProjectMaintainerCache = maintainerCache
+		}
 	}
 	if project.OnboardingIssue != nil {
 		onboardingIssue := strings.TrimSpace(*project.OnboardingIssue)

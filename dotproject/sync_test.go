@@ -73,7 +73,7 @@ func TestSyncProjectPersistsAdoptedDiscovery(t *testing.T) {
 					RepoRef:                "https://github.com/example-org/.project",
 					DefaultBranch:          "main",
 					ProjectFile:            FileDiscovery{Exists: true, BlobURL: "https://github.com/example-org/.project/blob/main/project.yaml", ETag: "\"project\"", BodyHash: "hash-project"},
-					MaintainersFile:        FileDiscovery{Exists: true, Path: "MAINTAINERS.yaml", BlobURL: "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml", ETag: "\"maintainers\"", BodyHash: "hash-maintainers"},
+					MaintainersFile:        FileDiscovery{Exists: true, Path: "MAINTAINERS.yaml", BlobURL: "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml", ETag: "\"maintainers\"", BodyHash: "hash-maintainers", Body: "maintainers:\n  - teams: []\n"},
 					SecurityFile:           FileDiscovery{Exists: true, BlobURL: "https://github.com/example-org/.project/blob/main/SECURITY.md", ETag: "\"security\"", BodyHash: "hash-security"},
 					ContributingFile:       FileDiscovery{Exists: true, BlobURL: "https://github.com/example-org/.project/blob/main/CONTRIBUTING.md", ETag: "\"contributing\"", BodyHash: "hash-contributing"},
 					GovernanceFile:         FileDiscovery{Exists: true, BlobURL: "https://github.com/example-org/.project/blob/main/GOVERNANCE.md", ETag: "\"governance\"", BodyHash: "hash-governance"},
@@ -112,6 +112,8 @@ func TestSyncProjectPersistsAdoptedDiscovery(t *testing.T) {
 	assert.Equal(t, "MAINTAINERS.yaml", persisted.state.MaintainersFilename)
 	assert.Equal(t, "1.0.0", persisted.state.SchemaVersion)
 	assert.Equal(t, ImporterVersion, persisted.state.ImporterVersion)
+	require.NotNil(t, persisted.state.MaintainersFileBody)
+	assert.Equal(t, "maintainers:\n  - teams: []\n", *persisted.state.MaintainersFileBody)
 	require.NotNil(t, persisted.state.LastCheckedAt)
 	assert.True(t, persisted.state.LastCheckedAt.Equal(now))
 	assert.Nil(t, persisted.state.ParseError)
@@ -203,10 +205,10 @@ func TestSyncAllSummarizesStatuses(t *testing.T) {
 	now := time.Date(2026, 5, 9, 10, 11, 12, 0, time.UTC)
 	store := &fakeSyncStore{
 		projects: []model.Project{
-			{Model: gorm.Model{ID: 1}, GitHubOrg: "org-one"},
-			{Model: gorm.Model{ID: 2}, GitHubOrg: "org-two"},
-			{Model: gorm.Model{ID: 3}, GitHubOrg: "org-three"},
-			{Model: gorm.Model{ID: 4}, GitHubOrg: "org-four"},
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+			{Model: gorm.Model{ID: 3}, Name: "Project Three", GitHubOrg: "org-three"},
+			{Model: gorm.Model{ID: 4}, Name: "Project Four", GitHubOrg: "org-four"},
 		},
 	}
 	syncer := &Syncer{
@@ -235,6 +237,7 @@ func TestSyncAllSummarizesStatuses(t *testing.T) {
 	assert.Equal(t, 1, summary.Adopted)
 	assert.Equal(t, 0, summary.Partial)
 	assert.Len(t, summary.ErrorSummaries, 1)
+	assert.Contains(t, summary.ErrorSummaries[0], "Project Four")
 	assert.Contains(t, summary.ErrorSummaries[0], "boom")
 }
 
