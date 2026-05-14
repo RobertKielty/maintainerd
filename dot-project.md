@@ -644,12 +644,29 @@ Verification:
 - Compare active project maintainers in maintainer-d against the members of the `project-maintainers` team only.
 - Show active maintainers that exist in maintainer-d but are missing from `maintainers.yaml`.
 - Add a `Create Pull Request` action that patches the rendered file in the UI preview with the missing GitHub handles.
-- Render a suggested updated `maintainers.yaml` preview that respects the existing comments, formatting, and ordering as much as possible.
+- Render a suggested updated `maintainers.yaml` preview that respects the existing comments, formatting, and ordering as much as possible. Have the suggested update appear in a side-by-side presentation of the proposed changes. For lines that are to be added to by the PR give those line numbers a green backgroud on the proposed PR, for lines being deleted from the file, make the line numbers background red on the existing file. As much as possible make the side-by-side presentation intuitive for a human read to proposed PR improves the file.
 
 Operational goals:
 
 - Replicate the existing roll-call diff behavior for dot-project, but in a better UI.
 - Keep the preview faithful to the original file so maintainers can trust the generated patch.
+
+Implementation report:
+
+- The formatted maintainer-file viewer now compares active maintainer-d project maintainers against the `project-maintainers` team parsed from cached `maintainers.yaml`.
+- When active maintainer-d maintainers are missing from the file, the UI shows a DB-vs-file summary and a side-by-side PR preview.
+- The preview inserts the missing GitHub handles into the existing `members:` list without rewriting the rest of the file, preserving comments, formatting, and surrounding line order.
+- The proposed patch is rendered side-by-side with line numbers; added proposed lines are highlighted green and the existing side leaves aligned blank rows for readability.
+- The seeded web BDD fixture now includes one maintainer-d active maintainer missing from `MAINTAINERS.yaml` so the preview path is covered.
+
+Layout follow-up:
+
+- Make the cached `maintainers.yaml` body the primary focus of the DOT-PROJECT ROLL CALL page.
+- Render the maintainer file before discovery and tracked-file implementation details.
+- Remove the prototype-oriented `Persisted dot-project roll call` callout from the end-user route.
+- Hide cache metadata such as ETag and body hash from the primary page layout.
+- Show the proposed PR diff by default whenever maintainer-d has active maintainers missing from the `project-maintainers` team.
+- Keep GitHub PR creation out of this layout step; the button must not claim to create a PR until Commit F wires the backend write path.
 
 ### Commit F: Submit Pull Request Workflow
 
@@ -657,11 +674,23 @@ Operational goals:
 - Create a branch and PR against the project’s `.project` repository using maintainer-d’s service credentials.
 - Record the PR creation in the audit log.
 - Show PR result details back in the UI.
+- Replace the current preview-only `Create Pull Request` control with a real submit action.
 
 Operational goals:
 
 - Turn missing-maintainer detection into an actionable remediation workflow.
 - Keep the write path bot-driven first rather than depending on each end user’s GitHub OAuth identity.
+
+### Commit F.1: Add Maintainer File Provenance
+
+- Show provenance for each rendered `maintainers.yaml` line when available.
+- Link line provenance to the upstream commit or pull request that last introduced or changed that line.
+- Prefer GitHub blame/commit metadata from the project’s `.project` repository over local audit data, because provenance must refer to the source file history.
+
+Operational goals:
+
+- Help LF support staff validate maintainer identity through source-history evidence.
+- Keep the main maintainer view human-centered while still allowing a trust trail for online-only support interactions.
 
 ### Commit G: Return to Deferred `project.yaml` Metadata Import
 

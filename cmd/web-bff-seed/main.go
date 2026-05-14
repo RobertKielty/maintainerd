@@ -168,7 +168,7 @@ func main() {
 			DotProjectContributingRef: "https://github.com/project-atlas/.project/blob/main/CONTRIBUTING.md",
 			DotProjectGovernanceRef:   "https://github.com/project-atlas/.project/blob/main/GOVERNANCE.md",
 			DotProjectSchemaVersion:   "1.0.0",
-			DotProjectMaintainerCount: uintPtr(4),
+			DotProjectMaintainerCount: uintPtr(3),
 			DotProjectLastSyncedAt:    atlasSyncedAt,
 			DotProjectAdoptionStatus:  "adopted",
 		},
@@ -228,8 +228,8 @@ func main() {
 		ProjectFileExists:       true,
 		MaintainersFileExists:   true,
 		SecurityFileExists:      true,
-		ContributingFileExists:  true,
-		GovernanceFileExists:    true,
+		ContributingFileExists:  false,
+		GovernanceFileExists:    false,
 		DefaultBranch:           "main",
 		MaintainersFilename:     "MAINTAINERS.yaml",
 		SchemaVersion:           "1.0.0",
@@ -249,7 +249,6 @@ maintainers:
         members:
           - antonio-example
           - renee-sample
-          - alex-example
           - unmapped-dotproject
 `),
 		SecurityFileBodyHash:     "seed-security-hash",

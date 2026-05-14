@@ -89,30 +89,46 @@ Then("the project route navigation shows a green tick on DOT-PROJECT ROLL CALL",
 
 Then("the dot-project roll call shows the persisted discovery summary", async function () {
   const contentColumn = this.page.locator('[class*="contentColumn"]');
-  await expect(contentColumn.getByText("Persisted dot-project roll call", { exact: true })).toBeVisible({
+  await expect(contentColumn.getByText("Discovery details", { exact: true })).toBeVisible({
     timeout: 15000,
   });
   await expect(contentColumn.getByText("Schema version", { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(contentColumn.getByText("1.0.0", { exact: true })).toBeVisible({ timeout: 15000 });
   await expect(contentColumn.getByText("Maintainer count", { exact: true })).toBeVisible({ timeout: 15000 });
-  await expect(contentColumn.getByText("4 maintainers", { exact: true })).toBeVisible({ timeout: 15000 });
+  await expect(
+    contentColumn.locator('[class*="dotProjectSummaryCard"]').filter({ hasText: "Maintainer count" }).getByText("3", {
+      exact: true,
+    })
+  ).toBeVisible({ timeout: 15000 });
 });
 
 Then("the dot-project roll call lists the tracked .project files", async function () {
   const contentColumn = this.page.locator('[class*="contentColumn"]');
   const trackedFilesTable = contentColumn.locator("table").first();
-  for (const label of [
-    ".project repo",
-    "project.yaml",
-    "MAINTAINERS.yaml",
-    "SECURITY.md",
-    "CONTRIBUTING.md",
-    "GOVERNANCE.md",
-  ]) {
-    await expect(trackedFilesTable.getByRole("cell", { name: label, exact: true })).toBeVisible({
-      timeout: 15000,
-    });
+  await expect(trackedFilesTable.getByRole("columnheader", { name: "Artifact", exact: true })).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(trackedFilesTable.getByRole("columnheader", { name: "Notes", exact: true })).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(trackedFilesTable.getByRole("columnheader", { name: "Status", exact: true })).toHaveCount(0);
+  await expect(trackedFilesTable.getByRole("columnheader", { name: "Link", exact: true })).toHaveCount(0);
+  for (const label of [".project repo", "project.yaml", "MAINTAINERS.yaml", "SECURITY.md"]) {
+    const link = trackedFilesTable.getByRole("link", { name: new RegExp(label.replace(".", "\\.")) });
+    await expect(link).toBeVisible({ timeout: 15000 });
+    await expect(link).toHaveAttribute("href", /https:\/\/github\.com\/project-atlas\/\.project/);
   }
+  await expect(
+    trackedFilesTable
+      .getByRole("row", { name: /\.project repo/ })
+      .getByText("https://github.com/project-atlas/.project", { exact: true })
+  ).toBeVisible({ timeout: 15000 });
+  await expect(trackedFilesTable.getByRole("cell", { name: /CONTRIBUTING\.md NOT FOUND/ })).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(trackedFilesTable.getByRole("cell", { name: /GOVERNANCE\.md NOT FOUND/ })).toBeVisible({
+    timeout: 15000,
+  });
 });
 
 Then("the dot-project roll call renders the cached maintainer file as formatted YAML", async function () {
@@ -143,7 +159,23 @@ Then("the dot-project roll call renders the cached maintainer file as formatted 
   });
   await expect(modal.getByLabel("GitHub Handle")).toHaveValue("unmapped-dotproject", { timeout: 15000 });
   await modal.getByRole("button", { name: "Close" }).click();
-  await expect(viewer.locator('[class*="yamlTokenComment"]')).toContainText(
+  await expect(viewer.getByLabel("MAINTAINERS.yaml source").locator('[class*="yamlTokenComment"]')).toContainText(
     "# Project Atlas dot-project maintainers"
   );
+  const missingDbMaintainer = viewer.getByRole("link", { name: /Alex Example @alex-example/ });
+  await expect(missingDbMaintainer).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(missingDbMaintainer).toHaveAttribute("href", /\/maintainers\/3$/);
+  await expect(missingDbMaintainer).toHaveAttribute("title", "Alex Example");
+  await expect(viewer.getByRole("button", { name: "Hide PR Preview" })).toBeVisible({ timeout: 15000 });
+  const preview = viewer.locator('[aria-label="Pull request preview"]');
+  await expect(preview.getByText("Existing MAINTAINERS.yaml")).toBeVisible({ timeout: 15000 });
+  await expect(preview.getByText("Proposed MAINTAINERS.yaml")).toBeVisible({ timeout: 15000 });
+  await expect(preview.locator('[class*="dotProjectLineNumberAdded"]').getByText("9", { exact: true })).toBeVisible({
+    timeout: 15000,
+  });
+  await expect(preview.locator('[class*="dotProjectDiffLineAdded"]').getByText("alex-example")).toBeVisible({
+    timeout: 15000,
+  });
 });

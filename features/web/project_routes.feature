@@ -13,7 +13,7 @@ Feature: Project route navigation
     Then the project route navigation exposes these routes
       | label                         | path-suffix            | heading                       | body-snippet                                                                     |
       | LEGACY ROLL CALL              | /github                | LEGACY ROLL CALL              | This project has a maintainer file in its .project repo.                         |
-      | DOT-PROJECT ROLL CALL         | /dot-project           | DOT-PROJECT ROLL CALL         | Review the persisted .project discovery state captured by the background sync job. |
+      | DOT-PROJECT ROLL CALL         | /dot-project           | DOT-PROJECT ROLL CALL         | Formatted maintainer file                                                       |
       | LICENSE CHECKER - FOSSA       | /fossa                 | LICENSE CHECKER - FOSSA       | This project has not selected a license checker.                                 |
       | MAILING LISTS / MAINTAINERS   | /mailing-maintainers   | MAILING LISTS / MAINTAINERS   | Placeholder for maintainer mailing list references                               |
       | MAILING LISTS / SECURITY      | /mailing-security      | MAILING LISTS / SECURITY      | Placeholder for security mailing list references.                                |
