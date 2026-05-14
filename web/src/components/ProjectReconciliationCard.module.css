@@ -620,6 +620,57 @@
   color: var(--md-card-text-strong, #0b1220);
 }
 
+.dotProjectArtifactLink {
+  display: inline-grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  color: var(--md-card-text-strong, #0b1220);
+  text-decoration: none;
+}
+
+.dotProjectArtifactLink:hover .dotProjectArtifactName,
+.dotProjectArtifactLink:hover .dotProjectArtifactUrl {
+  color: #d62293;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.dotProjectArtifactUrl {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.65));
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.externalLinkIcon {
+  color: #d62293;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.dotProjectMissingArtifact {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .dotProjectYamlViewer {
   display: flex;
   flex-direction: column;
@@ -687,6 +738,112 @@
   background: #fff7e6;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.dotProjectYamlSuccess {
+  border: 1px solid var(--md-status-success-border, #86efac);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--md-status-success-text, #166534);
+  background: var(--md-status-success-bg, #dcfce7);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dotProjectDiffSummary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  border: 1px solid #f4d08a;
+  border-radius: 12px;
+  padding: 12px;
+  color: #6d4d00;
+  background: #fff7e6;
+}
+
+.dotProjectDiffSummaryTitle {
+  margin: 0;
+  color: inherit;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.dotProjectDiffSummaryBody {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dotProjectDiffMaintainerList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.githubHandle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid rgba(214, 34, 147, 0.28);
+  border-radius: 999px;
+  padding: 5px 9px;
+  background: rgba(214, 34, 147, 0.08);
+  color: #d62293;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.githubHandle:hover,
+.githubHandle:focus-visible {
+  background: rgba(214, 34, 147, 0.14);
+  box-shadow: 0 0 0 2px rgba(214, 34, 147, 0.12);
+}
+
+.githubHandleTooltip {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  z-index: 20;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(4px);
+  opacity: 0;
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.14));
+  border-radius: 8px;
+  padding: 5px 8px;
+  background: var(--md-card-text-strong, #0b1220);
+  color: var(--md-card-bg, #ffffff);
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.githubHandle:hover .githubHandleTooltip,
+.githubHandle:focus-visible .githubHandleTooltip {
+  transform: translateX(-50%) translateY(0);
+  opacity: 1;
+}
+
+.dotProjectPreviewButton {
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 999px;
+  padding: 8px 12px;
+  background: #d62293;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 120ms ease, box-shadow 120ms ease;
+}
+
+.dotProjectPreviewButton:hover {
+  opacity: 0.92;
+  box-shadow: 0 6px 14px rgba(214, 34, 147, 0.35);
 }
 
 .dotProjectTeamGrid {
@@ -796,6 +953,74 @@
 .dotProjectLineCode {
   padding: 0 12px;
   white-space: pre;
+}
+
+.dotProjectPatchPreview {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-top: 1px solid var(--md-border, rgba(15, 23, 42, 0.1));
+  padding-top: 14px;
+}
+
+.dotProjectPatchHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.dotProjectDiffGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+}
+
+.dotProjectDiffPane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.dotProjectDiffPaneHeader {
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.1));
+  border-bottom: none;
+  border-radius: 12px 12px 0 0;
+  padding: 8px 10px;
+  background: var(--md-surface, rgba(15, 23, 42, 0.04));
+  color: var(--md-card-text-strong, #0b1220);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.dotProjectDiffPane .dotProjectSource {
+  flex: 1 1 auto;
+  border-radius: 0 0 12px 12px;
+}
+
+.dotProjectDiffLineAdded {
+  background: rgba(22, 163, 74, 0.16);
+}
+
+.dotProjectDiffLineDeleted {
+  background: rgba(220, 38, 38, 0.16);
+}
+
+.dotProjectDiffLineEmpty {
+  opacity: 0.65;
+}
+
+.dotProjectLineNumberAdded {
+  color: #052e16;
+  background: #86efac;
+  border-right-color: rgba(22, 101, 52, 0.45);
+}
+
+.dotProjectLineNumberDeleted {
+  color: #450a0a;
+  background: #fca5a5;
+  border-right-color: rgba(153, 27, 27, 0.45);
 }
 
 .yamlTokenComment {
@@ -1367,6 +1592,25 @@
   color: #e0c6ff;
 }
 
+[data-theme="dark"] .dotProjectYamlValidation,
+[data-theme="dark"] .dotProjectDiffSummary {
+  background: rgba(120, 83, 13, 0.26);
+  border-color: rgba(251, 191, 36, 0.5);
+  color: #fde68a;
+}
+
+[data-theme="dark"] .dotProjectLineNumberAdded {
+  color: #052e16;
+  background: #4ade80;
+  border-right-color: rgba(187, 247, 208, 0.55);
+}
+
+[data-theme="dark"] .dotProjectLineNumberDeleted {
+  color: #450a0a;
+  background: #f87171;
+  border-right-color: rgba(254, 202, 202, 0.55);
+}
+
 [data-theme="dark"] .refMissing {
   background: #2a2012;
   border-color: #5b3c1b;
@@ -1411,6 +1655,14 @@
   .menuItem {
     flex: 1 1 45%;
     text-align: center;
+  }
+
+  .dotProjectDiffGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .dotProjectDiffSummary {
+    flex-direction: column;
   }
 }
 

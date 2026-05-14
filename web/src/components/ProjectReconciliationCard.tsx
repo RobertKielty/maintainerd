@@ -263,17 +263,6 @@ const isYamlRef = (value: string) => /\.(ya?ml)(\?|#|$)/i.test(value);
 const buildStatusBadgeClassName = (stylesMap: Record<string, string>, found: boolean) =>
   `${stylesMap.statusBadge} ${found ? stylesMap.statusOk : stylesMap.statusWarn}`;
 
-const shortenHash = (value?: string | null) => {
-  const trimmed = value?.trim() ?? "";
-  if (trimmed === "") {
-    return "Unavailable";
-  }
-  if (trimmed.length <= 16) {
-    return trimmed;
-  }
-  return `${trimmed.slice(0, 16)}…`;
-};
-
 export default function ProjectReconciliationCard({
   projectId,
   name,
@@ -333,8 +322,6 @@ export default function ProjectReconciliationCard({
   const dotProjectMaintainerCacheBody = dotProjectMaintainerCache?.body ?? "";
   const dotProjectMaintainerCacheFilename =
     dotProjectMaintainerCache?.filename || dotProjectMaintainersFilename || "maintainers.yaml";
-  const dotProjectMaintainerCacheCheckedAt =
-    dotProjectMaintainerCache?.lastCheckedAt || dotProjectLastCheckedAt || null;
   const dotProjectFiles = [
     {
       label: ".project repo",
@@ -895,19 +882,38 @@ export default function ProjectReconciliationCard({
 
   const dotProjectSection = (
     <div className={styles.section}>
-      <div className={styles.statusCallout}>
-        <div className={styles.statusCalloutTitle}>Persisted dot-project roll call</div>
-        <div className={styles.statusCalloutBody}>
-          Review the persisted <code>.project</code> discovery state captured by the background sync job.
+      {dotProjectMaintainerCacheBody.trim() ? (
+        <div className={styles.tableSection}>
+          <div className={styles.tableHeader}>
+            <h3 className={styles.tableTitle}>{dotProjectMaintainerCacheFilename}</h3>
+            {dotProjectMaintainerRef ? (
+              <a className={styles.link} href={dotProjectMaintainerRef} target="_blank" rel="noreferrer">
+                Open source file
+              </a>
+            ) : null}
+          </div>
+          <DotProjectMaintainerFileViewer
+            filename={dotProjectMaintainerCacheFilename}
+            maintainers={maintainers}
+            canEdit={canEdit}
+            onAddMissingMaintainer={(handle, refLine) => {
+              setDraft({
+                githubHandle: handle,
+                name: "",
+                email: "",
+                company: "",
+                companyMode: "select",
+                refLine,
+              });
+              setModalOpen(true);
+            }}
+            source={dotProjectMaintainerCacheBody}
+          />
         </div>
-        <div className={styles.statusCalloutMeta}>
-          Status: <strong>{dotProjectAdoptionStatus || "not_checked"}</strong>
-          {dotProjectLastCheckedAt ? ` · Last checked ${formatDateTime(dotProjectLastCheckedAt)}` : ""}
-        </div>
-      </div>
+      ) : null}
       <div className={styles.tableSection}>
         <div className={styles.tableHeader}>
-          <h3 className={styles.tableTitle}>Discovery summary</h3>
+          <h3 className={styles.tableTitle}>Discovery details</h3>
         </div>
         <div className={styles.dotProjectSummaryGrid}>
           <div className={styles.dotProjectSummaryCard}>
@@ -930,8 +936,8 @@ export default function ProjectReconciliationCard({
             </span>
           </div>
           <div className={styles.dotProjectSummaryCard}>
-            <span className={styles.detailLabel}>Maintainer filename</span>
-            <span className={styles.secondary}>{dotProjectMaintainersFilename}</span>
+            <span className={styles.detailLabel}>Last checked</span>
+            <span className={styles.secondary}>{formatDateTime(dotProjectLastCheckedAt)}</span>
           </div>
         </div>
       </div>
@@ -944,78 +950,36 @@ export default function ProjectReconciliationCard({
             <thead>
               <tr>
                 <th>Artifact</th>
-                <th>Status</th>
                 <th>Notes</th>
-                <th>Link</th>
               </tr>
             </thead>
             <tbody>
               {dotProjectFiles.map((file) => (
                 <tr key={file.label}>
-                  <td className={styles.dotProjectArtifactName}>{file.label}</td>
                   <td>
-                    <span className={buildStatusBadgeClassName(styles, file.present)}>
-                      {file.present ? "FOUND" : "MISSING"}
-                    </span>
-                  </td>
-                  <td>{file.detail}</td>
-                  <td>
-                    {file.href ? (
-                      <a className={styles.link} href={file.href} target="_blank" rel="noreferrer">
-                        Open
+                    {file.present && file.href ? (
+                      <a className={styles.dotProjectArtifactLink} href={file.href} target="_blank" rel="noreferrer">
+                        <span className={styles.dotProjectArtifactName}>{file.label}</span>
+                        <span className={styles.dotProjectArtifactUrl}>{file.href}</span>
+                        <span className={styles.externalLinkIcon} aria-hidden="true">
+                          ↗
+                        </span>
+                        <span className={styles.srOnly}>Opens on GitHub</span>
                       </a>
                     ) : (
-                      <span className={styles.secondary}>—</span>
+                      <span className={styles.dotProjectMissingArtifact}>
+                        <span className={styles.dotProjectArtifactName}>{file.label}</span>
+                        <span className={`${styles.statusBadge} ${styles.statusWarn}`}>NOT FOUND</span>
+                      </span>
                     )}
                   </td>
+                  <td>{file.detail}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
-      {dotProjectMaintainerCacheBody.trim() ? (
-        <div className={styles.tableSection}>
-          <div className={styles.tableHeader}>
-            <h3 className={styles.tableTitle}>Cached maintainer file</h3>
-          </div>
-          <div className={styles.dotProjectSummaryGrid}>
-            <div className={styles.dotProjectSummaryCard}>
-              <span className={styles.detailLabel}>Filename</span>
-              <span className={styles.secondary}>{dotProjectMaintainerCacheFilename}</span>
-            </div>
-            <div className={styles.dotProjectSummaryCard}>
-              <span className={styles.detailLabel}>Cached at</span>
-              <span className={styles.secondary}>{formatDateTime(dotProjectMaintainerCacheCheckedAt)}</span>
-            </div>
-            <div className={styles.dotProjectSummaryCard}>
-              <span className={styles.detailLabel}>ETag</span>
-              <span className={styles.secondary}>{dotProjectMaintainerCache?.etag?.trim() || "Unavailable"}</span>
-            </div>
-            <div className={styles.dotProjectSummaryCard}>
-              <span className={styles.detailLabel}>Body hash</span>
-              <span className={styles.secondary}>{shortenHash(dotProjectMaintainerCache?.bodyHash)}</span>
-            </div>
-          </div>
-          <DotProjectMaintainerFileViewer
-            filename={dotProjectMaintainerCacheFilename}
-            maintainers={maintainers}
-            canEdit={canEdit}
-            onAddMissingMaintainer={(handle, refLine) => {
-              setDraft({
-                githubHandle: handle,
-                name: "",
-                email: "",
-                company: "",
-                companyMode: "select",
-                refLine,
-              });
-              setModalOpen(true);
-            }}
-            source={dotProjectMaintainerCacheBody}
-          />
-        </div>
-      ) : null}
       {dotProjectSyncState?.syncError || dotProjectSyncState?.parseError ? (
         <div className={styles.statusCallout}>
           <div className={styles.statusCalloutTitle}>Recorded sync issues</div>

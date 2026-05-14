@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { isMap, isScalar, isSeq, parseDocument, type Node } from "yaml";
+import GitHubHandle from "./GitHubHandle";
 import styles from "./ProjectReconciliationCard.module.css";
 
 type KnownMaintainer = {
   id: number;
+  name: string;
   github: string;
   status?: string;
 };
@@ -27,6 +29,21 @@ type SourceToken = {
   text: string;
   tone?: "comment" | "key" | "punctuation" | "scalar";
   maintainerHandle?: string;
+};
+
+type PatchPreviewLine = {
+  key: string;
+  text: string;
+  lineNumber: number | null;
+  tone: "context" | "added" | "deleted" | "empty";
+};
+
+type PatchPreview = {
+  existing: PatchPreviewLine[];
+  proposed: PatchPreviewLine[];
+  addedCount: number;
+  deletedCount: number;
+  error?: string;
 };
 
 const scalarText = (node: unknown): string => {
@@ -185,6 +202,193 @@ const tokenClassName = (token: SourceToken): string | undefined => {
   }
 };
 
+const activeMaintainerHandles = (maintainers: KnownMaintainer[]): KnownMaintainer[] => {
+  const seen = new Set<string>();
+  const active: KnownMaintainer[] = [];
+
+  for (const maintainer of maintainers) {
+    if ((maintainer.status || "").toLowerCase() !== "active") {
+      continue;
+    }
+    const normalized = normalizeHandle(maintainer.github);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    active.push(maintainer);
+  }
+
+  return active;
+};
+
+const leadingWhitespaceLength = (line: string): number => line.match(/^\s*/)?.[0].length ?? 0;
+
+const isProjectMaintainersNameLine = (line: string): boolean =>
+  /^\s*(?:-\s*)?name:\s*["']?project-maintainers["']?\s*(?:#.*)?$/i.test(line);
+
+const isMembersLine = (line: string): boolean => /^\s*members:\s*(?:#.*)?$/i.test(line);
+
+const isSequenceItemLine = (line: string): boolean => /^\s*-\s*\S/.test(line);
+
+const splitSourceLines = (source: string): string[] =>
+  source.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+
+const buildPatchRows = (
+  originalLines: string[],
+  proposedLines: string[],
+  insertedAt: number,
+  insertedCount: number,
+): PatchPreview => {
+  const existing: PatchPreviewLine[] = [];
+  const proposed: PatchPreviewLine[] = [];
+
+  for (let index = 0; index <= originalLines.length; index += 1) {
+    if (index === insertedAt) {
+      for (let offset = 0; offset < insertedCount; offset += 1) {
+        const proposedIndex = insertedAt + offset;
+        existing.push({
+          key: `existing-added-${offset}`,
+          text: "",
+          lineNumber: null,
+          tone: "empty",
+        });
+        proposed.push({
+          key: `proposed-added-${offset}`,
+          text: proposedLines[proposedIndex] ?? "",
+          lineNumber: proposedIndex + 1,
+          tone: "added",
+        });
+      }
+    }
+
+    if (index >= originalLines.length) {
+      continue;
+    }
+    const proposedIndex = index + (index >= insertedAt ? insertedCount : 0);
+    existing.push({
+      key: `existing-${index}`,
+      text: originalLines[index],
+      lineNumber: index + 1,
+      tone: "context",
+    });
+    proposed.push({
+      key: `proposed-${proposedIndex}`,
+      text: proposedLines[proposedIndex] ?? "",
+      lineNumber: proposedIndex + 1,
+      tone: "context",
+    });
+  }
+
+  return {
+    existing,
+    proposed,
+    addedCount: insertedCount,
+    deletedCount: 0,
+  };
+};
+
+const buildMaintainerPatchPreview = (source: string, missingHandles: string[]): PatchPreview => {
+  const uniqueMissingHandles = Array.from(
+    new Map(missingHandles.map((handle) => [normalizeHandle(handle), handle.trim()])).values(),
+  ).filter(Boolean);
+
+  if (uniqueMissingHandles.length === 0) {
+    return {
+      existing: [],
+      proposed: [],
+      addedCount: 0,
+      deletedCount: 0,
+    };
+  }
+
+  const originalLines = splitSourceLines(source);
+  const teamNameIndex = originalLines.findIndex(isProjectMaintainersNameLine);
+
+  if (teamNameIndex < 0) {
+    return {
+      existing: [],
+      proposed: [],
+      addedCount: 0,
+      deletedCount: 0,
+      error: "Cannot generate a patch preview because the project-maintainers team was not found.",
+    };
+  }
+
+  const teamIndent = leadingWhitespaceLength(originalLines[teamNameIndex]);
+  let membersIndex = -1;
+
+  for (let index = teamNameIndex + 1; index < originalLines.length; index += 1) {
+    const line = originalLines[index];
+    const trimmed = line.trim();
+    if (trimmed && leadingWhitespaceLength(line) <= teamIndent && isSequenceItemLine(line)) {
+      break;
+    }
+    if (isMembersLine(line)) {
+      membersIndex = index;
+      break;
+    }
+  }
+
+  const proposedLines = [...originalLines];
+
+  if (membersIndex < 0) {
+    const insertLines = [`${" ".repeat(teamIndent + 2)}members:`, ...uniqueMissingHandles.map((handle) => `${" ".repeat(teamIndent + 4)}- ${handle}`)];
+    const insertedAt = teamNameIndex + 1;
+    proposedLines.splice(insertedAt, 0, ...insertLines);
+    return buildPatchRows(originalLines, proposedLines, insertedAt, insertLines.length);
+  }
+
+  const membersIndent = leadingWhitespaceLength(originalLines[membersIndex]);
+  let insertAt = membersIndex + 1;
+  let itemIndent = " ".repeat(membersIndent + 2);
+
+  for (let index = membersIndex + 1; index < originalLines.length; index += 1) {
+    const line = originalLines[index];
+    const trimmed = line.trim();
+    if (!trimmed) {
+      continue;
+    }
+    const lineIndent = leadingWhitespaceLength(line);
+    if (lineIndent <= membersIndent) {
+      break;
+    }
+    if (isSequenceItemLine(line)) {
+      itemIndent = line.match(/^\s*/)?.[0] ?? itemIndent;
+      insertAt = index + 1;
+      continue;
+    }
+    insertAt = index + 1;
+  }
+
+  const insertLines = uniqueMissingHandles.map((handle) => `${itemIndent}- ${handle}`);
+  proposedLines.splice(insertAt, 0, ...insertLines);
+  return buildPatchRows(originalLines, proposedLines, insertAt, insertLines.length);
+};
+
+const diffLineClassName = (tone: PatchPreviewLine["tone"]): string => {
+  switch (tone) {
+    case "added":
+      return `${styles.dotProjectSourceLine} ${styles.dotProjectDiffLineAdded}`;
+    case "deleted":
+      return `${styles.dotProjectSourceLine} ${styles.dotProjectDiffLineDeleted}`;
+    case "empty":
+      return `${styles.dotProjectSourceLine} ${styles.dotProjectDiffLineEmpty}`;
+    default:
+      return styles.dotProjectSourceLine;
+  }
+};
+
+const diffLineNumberClassName = (tone: PatchPreviewLine["tone"]): string => {
+  switch (tone) {
+    case "added":
+      return `${styles.dotProjectLineNumber} ${styles.dotProjectLineNumberAdded}`;
+    case "deleted":
+      return `${styles.dotProjectLineNumber} ${styles.dotProjectLineNumberDeleted}`;
+    default:
+      return styles.dotProjectLineNumber;
+  }
+};
+
 export default function DotProjectMaintainerFileViewer({
   source,
   filename,
@@ -192,21 +396,20 @@ export default function DotProjectMaintainerFileViewer({
   canEdit = false,
   onAddMissingMaintainer,
 }: DotProjectMaintainerFileViewerProps) {
+  const [showPatchPreview, setShowPatchPreview] = useState(true);
   const parsed = useMemo(() => parseMaintainerTeams(source), [source]);
-  const lines = useMemo(() => source.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n"), [source]);
+  const lines = useMemo(() => splitSourceLines(source), [source]);
+  const activeMaintainers = useMemo(() => activeMaintainerHandles(maintainers), [maintainers]);
   const activeMaintainersByHandle = useMemo(() => {
     const known = new Map<string, KnownMaintainer>();
-    for (const maintainer of maintainers) {
-      if ((maintainer.status || "").toLowerCase() !== "active") {
-        continue;
-      }
+    for (const maintainer of activeMaintainers) {
       const normalized = normalizeHandle(maintainer.github);
       if (normalized) {
         known.set(normalized, maintainer);
       }
     }
     return known;
-  }, [maintainers]);
+  }, [activeMaintainers]);
   const projectMaintainerTeam = parsed.teams.find((team) => normalizeHandle(team.name) === "project-maintainers");
   const projectMaintainerHandles = useMemo(
     () => new Set((projectMaintainerTeam?.members ?? []).map(normalizeHandle).filter(Boolean)),
@@ -216,6 +419,30 @@ export default function DotProjectMaintainerFileViewer({
   const missingProjectMaintainers = (projectMaintainerTeam?.members ?? []).filter(
     (member) => !activeMaintainersByHandle.has(normalizeHandle(member)),
   );
+  const missingFileMaintainers = activeMaintainers.filter(
+    (maintainer) => !projectMaintainerHandles.has(normalizeHandle(maintainer.github)),
+  );
+  const patchPreview = useMemo(
+    () => buildMaintainerPatchPreview(source, missingFileMaintainers.map((maintainer) => maintainer.github)),
+    [source, missingFileMaintainers],
+  );
+
+  const renderYamlLine = (line: string, keyPrefix: string) => {
+    const tokens = tokenizeYamlLine(line, projectMaintainerHandles);
+    return tokens.length > 0
+      ? tokens.map((token, tokenIndex) =>
+          token.maintainerHandle ? (
+            <span className={tokenClassName(token)} key={`${keyPrefix}-${tokenIndex}-${token.text}`}>
+              {renderMaintainerHandle(token.text, line)}
+            </span>
+          ) : (
+            <span className={tokenClassName(token)} key={`${keyPrefix}-${tokenIndex}-${token.text}`}>
+              {token.text}
+            </span>
+          ),
+        )
+      : "\u00a0";
+  };
 
   const renderMaintainerHandle = (handle: string, refLine: string) => {
     const normalized = normalizeHandle(handle);
@@ -272,6 +499,40 @@ export default function DotProjectMaintainerFileViewer({
           {missingProjectMaintainers.length === 1 ? " is" : "s are"} not active in maintainer-d.
         </div>
       ) : null}
+      {missingFileMaintainers.length > 0 ? (
+        <div className={styles.dotProjectDiffSummary}>
+          <div>
+            <h5 className={styles.dotProjectDiffSummaryTitle}>DB-vs-file diff</h5>
+            <p className={styles.dotProjectDiffSummaryBody}>
+              {missingFileMaintainers.length} active maintainer-d maintainer
+              {missingFileMaintainers.length === 1 ? " is" : "s are"} missing from the{" "}
+              <strong>project-maintainers</strong> team in <code>{filename}</code>:
+            </p>
+            <div className={styles.dotProjectDiffMaintainerList}>
+              {missingFileMaintainers.map((maintainer) => (
+                <GitHubHandle
+                  github={maintainer.github}
+                  id={maintainer.id}
+                  key={maintainer.github}
+                  name={maintainer.name}
+                  prefixName
+                />
+              ))}
+            </div>
+          </div>
+          <button
+            className={styles.dotProjectPreviewButton}
+            type="button"
+            onClick={() => setShowPatchPreview((current) => !current)}
+          >
+            {showPatchPreview ? "Hide PR Preview" : "Show PR Preview"}
+          </button>
+        </div>
+      ) : projectMaintainerTeam ? (
+        <div className={styles.dotProjectYamlSuccess}>
+          All active maintainer-d maintainers are present in the project-maintainers team.
+        </div>
+      ) : null}
 
       {parsed.teams.length > 0 ? (
         <div className={styles.dotProjectTeamGrid}>
@@ -299,29 +560,59 @@ export default function DotProjectMaintainerFileViewer({
 
       <div className={styles.dotProjectSource} aria-label={`${filename} source`}>
         {lines.map((line, lineIndex) => {
-          const tokens = tokenizeYamlLine(line, projectMaintainerHandles);
           return (
             <div className={styles.dotProjectSourceLine} key={`${lineIndex}-${line}`}>
               <span className={styles.dotProjectLineNumber}>{lineIndex + 1}</span>
-              <code className={styles.dotProjectLineCode}>
-                {tokens.length > 0
-                  ? tokens.map((token, tokenIndex) =>
-                      token.maintainerHandle ? (
-                        <span className={tokenClassName(token)} key={`${tokenIndex}-${token.text}`}>
-                          {renderMaintainerHandle(token.text, line)}
-                        </span>
-                      ) : (
-                        <span className={tokenClassName(token)} key={`${tokenIndex}-${token.text}`}>
-                          {token.text}
-                        </span>
-                      ),
-                    )
-                  : "\u00a0"}
-              </code>
+              <code className={styles.dotProjectLineCode}>{renderYamlLine(line, `source-${lineIndex}`)}</code>
             </div>
           );
         })}
       </div>
+
+      {showPatchPreview ? (
+        <section className={styles.dotProjectPatchPreview} aria-label="Pull request preview">
+          <div className={styles.dotProjectPatchHeader}>
+            <div>
+              <h4 className={styles.dotProjectYamlTitle}>Pull request preview</h4>
+              <p className={styles.dotProjectYamlSubtitle}>
+                Review the maintainer-d generated patch before a follow-up workflow submits it to GitHub.
+              </p>
+            </div>
+            <div className={styles.dotProjectYamlStats}>
+              <span>+{patchPreview.addedCount}</span>
+              <span>-{patchPreview.deletedCount}</span>
+            </div>
+          </div>
+          {patchPreview.error ? (
+            <div className={styles.dotProjectYamlParseError}>{patchPreview.error}</div>
+          ) : (
+            <div className={styles.dotProjectDiffGrid}>
+              <div className={styles.dotProjectDiffPane}>
+                <div className={styles.dotProjectDiffPaneHeader}>Existing {filename}</div>
+                <div className={styles.dotProjectSource}>
+                  {patchPreview.existing.map((line) => (
+                    <div className={diffLineClassName(line.tone)} key={line.key}>
+                      <span className={diffLineNumberClassName(line.tone)}>{line.lineNumber ?? ""}</span>
+                      <code className={styles.dotProjectLineCode}>{renderYamlLine(line.text, line.key)}</code>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              <div className={styles.dotProjectDiffPane}>
+                <div className={styles.dotProjectDiffPaneHeader}>Proposed {filename}</div>
+                <div className={styles.dotProjectSource}>
+                  {patchPreview.proposed.map((line) => (
+                    <div className={diffLineClassName(line.tone)} key={line.key}>
+                      <span className={diffLineNumberClassName(line.tone)}>{line.lineNumber ?? ""}</span>
+                      <code className={styles.dotProjectLineCode}>{renderYamlLine(line.text, line.key)}</code>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      ) : null}
     </div>
   );
 }
