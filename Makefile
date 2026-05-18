@@ -612,14 +612,13 @@ test-web:
 	bff_pid=""; web_pid=""; microcks_started=""; \
 	cleanup() { \
 		status=$$?; \
-		if [ -n "$$web_pid" ] || [ -n "$$bff_pid" ]; then \
-			kill $$web_pid $$bff_pid >/dev/null 2>&1 || true; \
-		fi; \
+		if [ -n "$$bff_pid" ]; then kill -TERM -$$bff_pid >/dev/null 2>&1 || true; fi; \
+		if [ -n "$$web_pid" ]; then kill -TERM -$$web_pid >/dev/null 2>&1 || true; fi; \
 		if [ -n "$$microcks_started" ]; then \
-			CONTAINER_TOOL="$${CONTAINER_TOOL:-podman}" scripts/microcks-down.sh >/dev/null 2>&1 || true; \
+			CONTAINER_TOOL="$${CONTAINER_TOOL:-podman}" timeout 30 scripts/microcks-down.sh >/dev/null 2>&1 || true; \
 		fi; \
 		if command -v lsof >/dev/null 2>&1; then \
-			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill >/dev/null 2>&1 || true; \
+			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill -9 >/dev/null 2>&1 || true; \
 		fi; \
 		if [ "$$TESTDATA_DIR" != "$$HOST_LOG_DIR" ]; then \
 			mkdir -p "$$HOST_LOG_DIR"; \
@@ -694,7 +693,7 @@ test-web:
 	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_ALLOW_LIVE_FOSSA="$$USE_MICROCKS" BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
 	WEB_APP_BASE_URL=http://localhost:4001 GITHUB_OAUTH_REDIRECT_URL=http://localhost:9001/auth/callback \
 	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test FOSSA_API_BASE="$${FOSSA_API_BASE:-}" FOSSA_API_TOKEN="$${FOSSA_API_TOKEN:-}" \
-	go run ./cmd/web-bff > >(tee "$$TESTDATA_DIR/web-bff-test.log") 2>&1 & \
+	setsid go run ./cmd/web-bff </dev/null >"$$TESTDATA_DIR/web-bff-test.log" 2>&1 & \
 	bff_pid=$$!; \
 	mkdir -p "$$TESTDATA_DIR/tmp" web/tmp || true; \
 	NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
@@ -702,7 +701,7 @@ test-web:
 	npm --prefix web run build > "$$TESTDATA_DIR/web-build-test.log" 2>&1; \
 	PORT=4001 NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
 	NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false TURBOPACK_ROOT="$$(pwd)/web" OUTPUT_FILE_TRACING_ROOT="$$(pwd)/web" \
-	npm --prefix web run start > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
+	setsid npm --prefix web run start </dev/null > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
 	web_pid=$$!; \
 	npx --prefix web wait-on http://localhost:9001/healthz http://localhost:4001 > /dev/null 2>&1; \
 	BDD_FEATURE_PATH="$${BDD_FEATURE:-}"; \
@@ -722,11 +721,10 @@ test-web-license-checker:
 	bff_pid=""; web_pid=""; \
 	cleanup() { \
 		status=$$?; \
-		if [ -n "$$web_pid" ] || [ -n "$$bff_pid" ]; then \
-			kill $$web_pid $$bff_pid >/dev/null 2>&1 || true; \
-		fi; \
+		if [ -n "$$bff_pid" ]; then kill -TERM -$$bff_pid >/dev/null 2>&1 || true; fi; \
+		if [ -n "$$web_pid" ]; then kill -TERM -$$web_pid >/dev/null 2>&1 || true; fi; \
 		if command -v lsof >/dev/null 2>&1; then \
-			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill >/dev/null 2>&1 || true; \
+			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill -9 >/dev/null 2>&1 || true; \
 		fi; \
 		if [ "$$TESTDATA_DIR" != "$$HOST_LOG_DIR" ]; then \
 			mkdir -p "$$HOST_LOG_DIR"; \
@@ -789,7 +787,7 @@ test-web-license-checker:
 	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
 	WEB_APP_BASE_URL=http://localhost:4001 GITHUB_OAUTH_REDIRECT_URL=http://localhost:9001/auth/callback \
 	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test \
-	go run ./cmd/web-bff > >(tee "$$TESTDATA_DIR/web-bff-test.log") 2>&1 & \
+	setsid go run ./cmd/web-bff </dev/null >"$$TESTDATA_DIR/web-bff-test.log" 2>&1 & \
 	bff_pid=$$!; \
 	mkdir -p "$$TESTDATA_DIR/tmp" web/tmp || true; \
 	NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
@@ -797,7 +795,7 @@ test-web-license-checker:
 	npm --prefix web run build > "$$TESTDATA_DIR/web-build-test.log" 2>&1; \
 	PORT=4001 NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
 	NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false TURBOPACK_ROOT="$$(pwd)/web" OUTPUT_FILE_TRACING_ROOT="$$(pwd)/web" \
-	npm --prefix web run start > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
+	setsid npm --prefix web run start </dev/null > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
 	web_pid=$$!; \
 	npx --prefix web wait-on http://localhost:9001/healthz http://localhost:4001 > /dev/null 2>&1; \
 	cd web && WEB_BASE_URL=http://localhost:4001 BFF_BASE_URL=http://localhost:9001 TEST_STAFF_LOGIN=staff-tester \
@@ -1572,35 +1570,43 @@ ci-local:
 		gofmt -s -l $$GOFILES; \
 		exit 1; \
 	fi
-	@echo "→ Running go vet..."
-	@GOCACHE=$(GOCACHE_DIR) go vet ./...
-	@echo "→ Running staticcheck..."
-	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck not installed. Run: go install honnef.co/go/tools/cmd/staticcheck@latest"; exit 1; }
-	@GOCACHE=$(GOCACHE_DIR) staticcheck ./...
-	@echo "→ Running golangci-lint..."
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; exit 1; }
-	@GOLANGCI_LINT_CACHE=/tmp/golangci-lint GOCACHE=$(GOCACHE_DIR) golangci-lint run ./...
-	@echo "→ Running go tests..."
-	@GOCACHE=$(GOCACHE_DIR) go test ./...
-	@echo "→ Running web eslint..."
 	@rm -rf web/work/testdata/next-dist web/testdata/next-dist web/tmp || true
-	@npm --prefix web run lint -- --max-warnings=$(ESLINT_MAX_WARNINGS)
-	@echo "→ Running web typecheck..."
-	@npm --prefix web run typecheck
-	@echo "→ Running web BDD..."
 	@bash -c 'set -euo pipefail; \
 	if [ -z "$${MD_DB_DSN:-}" ]; then \
 		echo "MD_DB_DSN is required for ci-local web BDD (Postgres only)."; \
 		echo "Example: MD_DB_DSN=\"host=localhost port=5432 user=maintainerd password=maintainerd dbname=maintainerd_test sslmode=disable\""; \
 		exit 1; \
 	fi; \
-	env MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" WEB_BDD_USE_MICROCKS=true $(MAKE) web-bdd; \
+	command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck not installed. Run: go install honnef.co/go/tools/cmd/staticcheck@latest"; exit 1; }; \
+	command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; exit 1; }; \
+	NPROC=$$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4); \
+	export GOCACHE=$(GOCACHE_DIR); \
+	export GOLANGCI_LINT_CACHE=/tmp/golangci-lint; \
+	echo "→ Running all checks in parallel on $$NPROC cores..."; \
+	pids=""; \
+	run() { \
+		local name="$$1"; shift; \
+		( "$$@" && echo "✓ $$name" || { echo "✗ $$name FAILED"; exit 1; } ) & \
+		pids="$$pids $$!"; \
+	}; \
+	run "go vet"        go vet ./...; \
+	run "staticcheck"   staticcheck ./...; \
+	run "golangci-lint" golangci-lint run ./...; \
+	run "go test -race" go test -race -p "$$NPROC" -coverprofile=coverage.out -covermode=atomic ./...; \
+	run "web lint"      npm --prefix web run lint -- --max-warnings=$(ESLINT_MAX_WARNINGS); \
+	run "web typecheck" npm --prefix web run typecheck; \
+	( MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" WEB_BDD_USE_MICROCKS=true NO_BDD_OPEN=1 $(MAKE) web-bdd \
+		&& echo "✓ web BDD" || { echo "✗ web BDD FAILED"; exit 1; } ) & \
+	pids="$$pids $$!"; \
+	fail=0; \
+	for pid in $$pids; do \
+		wait "$$pid" || fail=1; \
+	done; \
+	[ $$fail -eq 0 ] || { echo "❌ One or more CI checks failed"; exit 1; }; \
+	echo "→ Coverage report:"; \
+	go tool cover -func=coverage.out | tail -n 1; \
+	echo "✅ All CI checks passed!"; \
 	'
-	@echo "→ Running tests with race detector..."
-	@GOCACHE=$(GOCACHE_DIR) go test -race -coverprofile=coverage.out -covermode=atomic ./...
-	@echo "→ Coverage report:"
-	@GOCACHE=$(GOCACHE_DIR) go tool cover -func=coverage.out | tail -n 1
-	@echo "✅ All CI checks passed!"
 
 .PHONY: lint
 lint:
