@@ -14,6 +14,7 @@ This repo now includes a separate web frontend and a Go BFF layer.
 - `GITHUB_OAUTH_CLIENT_ID` (required)
 - `GITHUB_OAUTH_CLIENT_SECRET` (required)
 - `GITHUB_OAUTH_REDIRECT_URL` (default `http://localhost:8000/auth/callback`)
+- GitHub OAuth requests `read:user` and `public_repo` so staff can submit dot-project PRs from project-prefixed forks under their own GitHub account.
 - `WEB_APP_BASE_URL` (default `http://localhost:3000`)
 - `SESSION_COOKIE_NAME` (default `md_session`)
 - `SESSION_COOKIE_DOMAIN` (optional, e.g., `github-events.cncf.io`)

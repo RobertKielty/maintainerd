@@ -95,7 +95,7 @@ type server struct {
 	fetchIssueTitle             func(ctx context.Context, owner, repo string, number int) (string, error)
 	onboardingCache             *onboardingIssueCache
 	fetchIssues                 func(ctx context.Context) ([]onboardingIssueSummary, error)
-	createDotProjectPullRequest func(ctx context.Context, input dotProjectPullRequestInput) (*dotProjectPullRequestResponse, error)
+	createDotProjectPullRequest func(ctx context.Context, input dotProjectPullRequestInput, githubToken string) (*dotProjectPullRequestResponse, error)
 	fossaTeamCacheMu            sync.RWMutex
 	fossaTeamCache              map[uint]cachedFossaTeam
 }
@@ -106,11 +106,12 @@ type cachedFossaTeam struct {
 }
 
 type session struct {
-	ID        string
-	Login     string
-	Role      string
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	ID          string
+	Login       string
+	Role        string
+	AccessToken string
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
 }
 
 type sessionStore struct {
@@ -243,7 +244,7 @@ func main() {
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 			RedirectURL:  redirectURL,
-			Scopes:       []string{"read:user"},
+			Scopes:       []string{"read:user", "public_repo"},
 			Endpoint:     ghoauth.Endpoint,
 		},
 		store:          store,
@@ -413,7 +414,7 @@ func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.createSession(login, role, w); err != nil {
+	if err := s.createSession(login, role, token.AccessToken, w); err != nil {
 		http.Error(w, "failed to establish session", http.StatusInternalServerError)
 		return
 	}
@@ -450,7 +451,7 @@ func (s *server) handleTestLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.createSession(login, role, w); err != nil {
+	if err := s.createSession(login, role, "", w); err != nil {
 		http.Error(w, "failed to create session", http.StatusInternalServerError)
 		return
 	}
@@ -488,7 +489,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *server) createSession(login, role string, w http.ResponseWriter) error {
+func (s *server) createSession(login, role, accessToken string, w http.ResponseWriter) error {
 	sessionID, err := randomToken(48)
 	if err != nil {
 		return err
@@ -496,11 +497,12 @@ func (s *server) createSession(login, role string, w http.ResponseWriter) error 
 
 	now := time.Now()
 	s.sessions.Set(session{
-		ID:        sessionID,
-		Login:     login,
-		Role:      role,
-		CreatedAt: now,
-		ExpiresAt: now.Add(s.sessionTTL),
+		ID:          sessionID,
+		Login:       login,
+		Role:        role,
+		AccessToken: accessToken,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(s.sessionTTL),
 	})
 
 	s.logger.Printf("web-bff: login success user=%s role=%s", login, role)
@@ -1712,6 +1714,8 @@ type dotProjectPullRequestInput struct {
 	ProjectName          string
 	Owner                string
 	Repo                 string
+	ForkOwner            string
+	ForkRepo             string
 	FilePath             string
 	BaseBranch           string
 	HeadBranch           string
@@ -1730,6 +1734,8 @@ type dotProjectPullRequestResponse struct {
 	Number               int      `json:"number"`
 	Branch               string   `json:"branch"`
 	BaseBranch           string   `json:"baseBranch"`
+	ForkOwner            string   `json:"forkOwner,omitempty"`
+	ForkRepo             string   `json:"forkRepo,omitempty"`
 	FilePath             string   `json:"filePath"`
 	CommitSHA            string   `json:"commitSha,omitempty"`
 	AddedHandles         []string `json:"addedHandles"`
@@ -1812,6 +1818,8 @@ func (s *server) handleDotProjectPullRequest(w http.ResponseWriter, r *http.Requ
 		ProjectName:          project.Name,
 		Owner:                owner,
 		Repo:                 ".project",
+		ForkOwner:            session.Login,
+		ForkRepo:             dotProjectForkRepoName(project.Name, ".project"),
 		FilePath:             filePath,
 		BaseBranch:           baseBranch,
 		HeadBranch:           fmt.Sprintf("maintainer-d/%d/maintainers-%d", project.ID, time.Now().UTC().UnixNano()),
@@ -1829,7 +1837,11 @@ func (s *server) handleDotProjectPullRequest(w http.ResponseWriter, r *http.Requ
 	if submitter == nil {
 		submitter = s.createDotProjectMaintainerPullRequest
 	}
-	result, err := submitter(r.Context(), input)
+	if strings.TrimSpace(session.AccessToken) == "" && s.createDotProjectPullRequest == nil {
+		http.Error(w, "github oauth token is required; sign out and sign in again to approve repository access", http.StatusUnauthorized)
+		return
+	}
+	result, err := submitter(r.Context(), input, session.AccessToken)
 	if err != nil {
 		s.logger.Printf("web-bff: dot-project PR create failed project=%d owner=%s repo=%s file=%s err=%v", project.ID, owner, input.Repo, filePath, err)
 		http.Error(w, "failed to create dot-project pull request", http.StatusBadGateway)
@@ -1843,6 +1855,12 @@ func (s *server) handleDotProjectPullRequest(w http.ResponseWriter, r *http.Requ
 	}
 	if result.SubmittedBy == "" {
 		result.SubmittedBy = staffName
+	}
+	if result.ForkOwner == "" {
+		result.ForkOwner = input.ForkOwner
+	}
+	if result.ForkRepo == "" {
+		result.ForkRepo = input.ForkRepo
 	}
 	result.ProjectMaintainerRef = input.ProjectMaintainerRef
 
@@ -1858,6 +1876,10 @@ func (s *server) handleDotProjectPullRequest(w http.ResponseWriter, r *http.Requ
 			"branch":      result.Branch,
 			"base_branch": result.BaseBranch,
 			"commit_sha":  result.CommitSHA,
+		},
+		"fork": map[string]string{
+			"owner": result.ForkOwner,
+			"repo":  result.ForkRepo,
 		},
 		"repository": map[string]string{
 			"owner": owner,
@@ -5556,13 +5578,22 @@ func (s *server) fetchIssueTitleFromGitHub(ctx context.Context, owner, repo stri
 	return issue.GetTitle(), nil
 }
 
-func (s *server) createDotProjectMaintainerPullRequest(ctx context.Context, input dotProjectPullRequestInput) (*dotProjectPullRequestResponse, error) {
-	if strings.TrimSpace(s.githubToken) == "" {
-		return nil, fmt.Errorf("github service credentials are not configured")
+func (s *server) createDotProjectMaintainerPullRequest(ctx context.Context, input dotProjectPullRequestInput, githubToken string) (*dotProjectPullRequestResponse, error) {
+	githubToken = strings.TrimSpace(githubToken)
+	if githubToken == "" {
+		return nil, fmt.Errorf("github user credentials are not available")
 	}
 	client := github.NewClient(oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{
-		AccessToken: s.githubToken,
+		AccessToken: githubToken,
 	})))
+	forkOwner := strings.TrimSpace(input.ForkOwner)
+	if forkOwner == "" {
+		forkOwner = input.SubmittedByLogin
+	}
+	forkRepo := strings.TrimSpace(input.ForkRepo)
+	if forkRepo == "" {
+		forkRepo = dotProjectForkRepoName(input.ProjectName, input.Repo)
+	}
 
 	baseRef, _, err := client.Git.GetRef(ctx, input.Owner, input.Repo, "heads/"+input.BaseBranch)
 	if err != nil {
@@ -5589,28 +5620,39 @@ func (s *server) createDotProjectMaintainerPullRequest(ctx context.Context, inpu
 		return nil, fmt.Errorf("cached maintainer file is stale; run dot-project sync before submitting a pull request")
 	}
 
-	if _, _, err := client.Git.CreateRef(ctx, input.Owner, input.Repo, &github.Reference{
+	fork, err := ensureDotProjectFork(ctx, client, input.Owner, input.Repo, forkOwner, forkRepo)
+	if err != nil {
+		return nil, err
+	}
+	if fork.GetOwner().GetLogin() != "" {
+		forkOwner = fork.GetOwner().GetLogin()
+	}
+	if fork.GetName() != "" {
+		forkRepo = fork.GetName()
+	}
+
+	if _, _, err := client.Git.CreateRef(ctx, forkOwner, forkRepo, &github.Reference{
 		Ref: github.String("refs/heads/" + input.HeadBranch),
 		Object: &github.GitObject{
 			SHA: baseRef.Object.SHA,
 		},
 	}); err != nil {
-		return nil, fmt.Errorf("create branch: %w", err)
+		return nil, fmt.Errorf("create branch in fork %s/%s: %w", forkOwner, forkRepo, err)
 	}
 
-	contentResponse, _, err := client.Repositories.UpdateFile(ctx, input.Owner, input.Repo, input.FilePath, &github.RepositoryContentFileOptions{
+	contentResponse, _, err := client.Repositories.UpdateFile(ctx, forkOwner, forkRepo, input.FilePath, &github.RepositoryContentFileOptions{
 		Message: github.String(fmt.Sprintf("Update %s maintainers", input.ProjectName)),
 		Content: []byte(input.Proposed),
 		SHA:     github.String(content.GetSHA()),
 		Branch:  github.String(input.HeadBranch),
 	})
 	if err != nil {
-		return nil, fmt.Errorf("update maintainer file: %w", err)
+		return nil, fmt.Errorf("update maintainer file in fork %s/%s: %w", forkOwner, forkRepo, err)
 	}
 
 	pr, _, err := client.PullRequests.Create(ctx, input.Owner, input.Repo, &github.NewPullRequest{
 		Title:               github.String(fmt.Sprintf("Update %s maintainers.yaml", input.ProjectName)),
-		Head:                github.String(input.HeadBranch),
+		Head:                github.String(forkOwner + ":" + input.HeadBranch),
 		Base:                github.String(input.BaseBranch),
 		Body:                github.String(buildDotProjectPullRequestBody(input)),
 		MaintainerCanModify: github.Bool(true),
@@ -5628,12 +5670,130 @@ func (s *server) createDotProjectMaintainerPullRequest(ctx context.Context, inpu
 		Number:              pr.GetNumber(),
 		Branch:              input.HeadBranch,
 		BaseBranch:          input.BaseBranch,
+		ForkOwner:           forkOwner,
+		ForkRepo:            forkRepo,
 		FilePath:            input.FilePath,
 		CommitSHA:           commitSHA,
 		AddedHandles:        input.AddedHandles,
 		RemovedPlaceholders: input.RemovedPlaceholders,
 		SubmittedBy:         input.SubmittedByName,
 	}, nil
+}
+
+func ensureDotProjectFork(ctx context.Context, client *github.Client, owner, repo, forkOwner, forkRepo string) (*github.Repository, error) {
+	if forkOwner == "" {
+		return nil, fmt.Errorf("fork owner is required")
+	}
+	if forkRepo == "" {
+		return nil, fmt.Errorf("fork repo name is required")
+	}
+	if existing, _, err := client.Repositories.Get(ctx, forkOwner, forkRepo); err == nil {
+		if !repositoryIsForkOf(existing, owner, repo) {
+			return nil, fmt.Errorf("github repository %s/%s already exists but is not a fork of %s/%s", forkOwner, forkRepo, owner, repo)
+		}
+		return existing, nil
+	} else if !isGitHubNotFound(err) {
+		return nil, fmt.Errorf("check fork %s/%s: %w", forkOwner, forkRepo, err)
+	}
+
+	fork, _, err := client.Repositories.CreateFork(ctx, owner, repo, &github.RepositoryCreateForkOptions{
+		Name:              forkRepo,
+		DefaultBranchOnly: true,
+	})
+	if err != nil {
+		var accepted *github.AcceptedError
+		if !errors.As(err, &accepted) {
+			return nil, fmt.Errorf("create fork %s/%s from %s/%s: %w", forkOwner, forkRepo, owner, repo, err)
+		}
+	}
+	if fork != nil && fork.GetName() != "" {
+		forkRepo = fork.GetName()
+	}
+
+	readyFork, err := waitForDotProjectFork(ctx, client, forkOwner, forkRepo, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	return readyFork, nil
+}
+
+func waitForDotProjectFork(ctx context.Context, client *github.Client, forkOwner, forkRepo, upstreamOwner, upstreamRepo string) (*github.Repository, error) {
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		fork, _, err := client.Repositories.Get(ctx, forkOwner, forkRepo)
+		if err == nil {
+			if repositoryIsForkOf(fork, upstreamOwner, upstreamRepo) {
+				return fork, nil
+			}
+			lastErr = fmt.Errorf("github repository %s/%s exists but is not a fork of %s/%s", forkOwner, forkRepo, upstreamOwner, upstreamRepo)
+		} else if !isGitHubNotFound(err) {
+			lastErr = err
+		}
+
+		timer := time.NewTimer(time.Duration(attempt+1) * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("wait for fork %s/%s: %w", forkOwner, forkRepo, lastErr)
+	}
+	return nil, fmt.Errorf("fork %s/%s was not ready before timeout", forkOwner, forkRepo)
+}
+
+func repositoryIsForkOf(repo *github.Repository, upstreamOwner, upstreamRepo string) bool {
+	if repo == nil || !repo.GetFork() || repo.Parent == nil {
+		return false
+	}
+	return strings.EqualFold(repo.Parent.GetOwner().GetLogin(), upstreamOwner) && strings.EqualFold(repo.Parent.GetName(), upstreamRepo)
+}
+
+func isGitHubNotFound(err error) bool {
+	var githubErr *github.ErrorResponse
+	return errors.As(err, &githubErr) && githubErr.Response != nil && githubErr.Response.StatusCode == http.StatusNotFound
+}
+
+func dotProjectForkRepoName(projectName, sourceRepo string) string {
+	prefix := slugForGitHubRepoName(projectName)
+	if prefix == "" {
+		prefix = "project"
+	}
+	sourceRepo = strings.TrimSpace(sourceRepo)
+	if sourceRepo == "" {
+		sourceRepo = ".project"
+	}
+	name := prefix + sourceRepo
+	if len(name) <= 100 {
+		return name
+	}
+	suffix := "-" + sourceRepo
+	maxPrefix := 100 - len(suffix)
+	if maxPrefix < 1 {
+		return name[:100]
+	}
+	return strings.Trim(name[:maxPrefix], "-.") + suffix
+}
+
+func slugForGitHubRepoName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var builder strings.Builder
+	lastDash := false
+	for _, char := range value {
+		allowed := (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '.' || char == '_' || char == '-'
+		if allowed {
+			builder.WriteRune(char)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(builder.String(), "-.")
 }
 
 func buildDotProjectPullRequestBody(input dotProjectPullRequestInput) string {

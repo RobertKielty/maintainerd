@@ -414,13 +414,15 @@ func TestHandleDotProjectPullRequestCreatesAuditLog(t *testing.T) {
 		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
 		cookieName: defaultSessionCookieName,
 		logger:     log.New(io.Discard, "", 0),
-		createDotProjectPullRequest: func(_ context.Context, input dotProjectPullRequestInput) (*dotProjectPullRequestResponse, error) {
+		createDotProjectPullRequest: func(_ context.Context, input dotProjectPullRequestInput, _ string) (*dotProjectPullRequestResponse, error) {
 			captured = input
 			return &dotProjectPullRequestResponse{
 				URL:        "https://github.com/project-pr/.project/pull/42",
 				Number:     42,
 				Branch:     input.HeadBranch,
 				BaseBranch: input.BaseBranch,
+				ForkOwner:  input.ForkOwner,
+				ForkRepo:   input.ForkRepo,
 				FilePath:   input.FilePath,
 				CommitSHA:  "abc123",
 			}, nil
@@ -445,6 +447,8 @@ func TestHandleDotProjectPullRequestCreatesAuditLog(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	assert.Equal(t, "project-pr", captured.Owner)
 	assert.Equal(t, ".project", captured.Repo)
+	assert.Equal(t, "staff-tester", captured.ForkOwner)
+	assert.Equal(t, "project-pr-.project", captured.ForkRepo)
 	assert.Equal(t, "MAINTAINERS.yaml", captured.FilePath)
 	assert.Equal(t, []string{"bob"}, captured.AddedHandles)
 	assert.Equal(t, []string{"# TODO: Add maintainer GitHub handles", "- github-handle"}, captured.RemovedPlaceholders)
@@ -456,6 +460,8 @@ func TestHandleDotProjectPullRequestCreatesAuditLog(t *testing.T) {
 	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
 	assert.Equal(t, "https://github.com/project-pr/.project/pull/42", response.URL)
 	assert.Equal(t, 42, response.Number)
+	assert.Equal(t, "staff-tester", response.ForkOwner)
+	assert.Equal(t, "project-pr-.project", response.ForkRepo)
 	assert.Equal(t, []string{"bob"}, response.AddedHandles)
 
 	var audit model.AuditLog
@@ -464,6 +470,13 @@ func TestHandleDotProjectPullRequestCreatesAuditLog(t *testing.T) {
 	assert.Contains(t, audit.Message, "Staff Tester")
 	assert.Contains(t, audit.Metadata, "https://github.com/project-pr/.project/pull/42")
 	assert.Contains(t, audit.Metadata, "bob")
+}
+
+func TestDotProjectForkRepoNamePrefixesSourceRepoWithProjectSlug(t *testing.T) {
+	assert.Equal(t, "cohdi-.project", dotProjectForkRepoName("CoHDI", ".project"))
+	assert.Equal(t, "cadence-workflow-.project", dotProjectForkRepoName("Cadence Workflow", ".project"))
+	assert.Equal(t, "project-.project", dotProjectForkRepoName("...", ".project"))
+	assert.Equal(t, "project-roster", dotProjectForkRepoName("Project", "roster"))
 }
 
 func TestMaintainerServiceAssociationsForStaff(t *testing.T) {
