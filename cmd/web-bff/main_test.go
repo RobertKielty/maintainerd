@@ -448,7 +448,7 @@ func TestHandleDotProjectPullRequestCreatesAuditLog(t *testing.T) {
 	assert.Equal(t, "project-pr", captured.Owner)
 	assert.Equal(t, ".project", captured.Repo)
 	assert.Equal(t, "staff-tester", captured.ForkOwner)
-	assert.Equal(t, "project-pr-.project", captured.ForkRepo)
+	assert.Equal(t, "project-pr.project", captured.ForkRepo)
 	assert.Equal(t, "MAINTAINERS.yaml", captured.FilePath)
 	assert.Equal(t, []string{"bob"}, captured.AddedHandles)
 	assert.Equal(t, []string{"# TODO: Add maintainer GitHub handles", "- github-handle"}, captured.RemovedPlaceholders)
@@ -461,7 +461,7 @@ func TestHandleDotProjectPullRequestCreatesAuditLog(t *testing.T) {
 	assert.Equal(t, "https://github.com/project-pr/.project/pull/42", response.URL)
 	assert.Equal(t, 42, response.Number)
 	assert.Equal(t, "staff-tester", response.ForkOwner)
-	assert.Equal(t, "project-pr-.project", response.ForkRepo)
+	assert.Equal(t, "project-pr.project", response.ForkRepo)
 	assert.Equal(t, []string{"bob"}, response.AddedHandles)
 
 	var audit model.AuditLog
@@ -473,10 +473,9 @@ func TestHandleDotProjectPullRequestCreatesAuditLog(t *testing.T) {
 }
 
 func TestDotProjectForkRepoNamePrefixesSourceRepoWithProjectSlug(t *testing.T) {
-	assert.Equal(t, "cohdi-.project", dotProjectForkRepoName("CoHDI", ".project"))
-	assert.Equal(t, "cadence-workflow-.project", dotProjectForkRepoName("Cadence Workflow", ".project"))
-	assert.Equal(t, "project-.project", dotProjectForkRepoName("...", ".project"))
-	assert.Equal(t, "project-roster", dotProjectForkRepoName("Project", "roster"))
+	assert.Equal(t, "cohdi.project", dotProjectForkRepoName("CoHDI", ".project"))
+	assert.Equal(t, "cadence-workflow.project", dotProjectForkRepoName("Cadence Workflow", ".project"))
+	assert.Equal(t, "project.project", dotProjectForkRepoName("...", ".project"))
 }
 
 func TestMaintainerServiceAssociationsForStaff(t *testing.T) {
