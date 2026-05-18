@@ -846,6 +846,12 @@
   box-shadow: 0 6px 14px rgba(214, 34, 147, 0.35);
 }
 
+.dotProjectPreviewButton:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  box-shadow: none;
+}
+
 .dotProjectTeamGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
@@ -969,6 +975,14 @@
   justify-content: space-between;
   gap: 12px;
   flex-wrap: wrap;
+}
+
+.dotProjectPatchActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .dotProjectDiffGrid {

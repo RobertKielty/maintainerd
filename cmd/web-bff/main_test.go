@@ -352,6 +352,120 @@ func TestProjectDetailIncludesDotProjectMaintainerCache(t *testing.T) {
 	assert.True(t, response.DotProjectMaintainerCache.LastCheckedAt.Equal(now))
 }
 
+func TestHandleDotProjectPullRequestCreatesAuditLog(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	project := model.Project{
+		Name:                    "Project PR",
+		Maturity:                model.Sandbox,
+		GitHubOrg:               "project-pr",
+		DotProjectMaintainerRef: "https://github.com/project-pr/.project/blob/main/MAINTAINERS.yaml",
+	}
+	require.NoError(t, dbConn.Create(&project).Error)
+
+	alice := model.Maintainer{
+		Name:             "Alice Example",
+		Email:            "alice@example.org",
+		GitHubAccount:    "alice",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	bob := model.Maintainer{
+		Name:             "Bob Example",
+		Email:            "bob@example.org",
+		GitHubAccount:    "bob",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&alice).Error)
+	require.NoError(t, dbConn.Create(&bob).Error)
+	require.NoError(t, dbConn.Model(&project).Association("Maintainers").Append(&alice, &bob))
+
+	body := `maintainers:
+  - teams:
+      - name: project-maintainers
+        members:
+          # TODO: Add maintainer GitHub handles
+          - github-handle
+          - alice
+`
+	syncState := model.DotProjectSyncState{
+		ProjectID:               project.ID,
+		RepoExists:              true,
+		MaintainersFileExists:   true,
+		MaintainersFilename:     "MAINTAINERS.yaml",
+		MaintainersFileBodyHash: "body-hash",
+		MaintainersFileBody:     &body,
+		DefaultBranch:           "main",
+		LastCheckedAt:           &now,
+	}
+	require.NoError(t, dbConn.Create(&syncState).Error)
+
+	var captured dotProjectPullRequestInput
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		createDotProjectPullRequest: func(_ context.Context, input dotProjectPullRequestInput) (*dotProjectPullRequestResponse, error) {
+			captured = input
+			return &dotProjectPullRequestResponse{
+				URL:        "https://github.com/project-pr/.project/pull/42",
+				Number:     42,
+				Branch:     input.HeadBranch,
+				BaseBranch: input.BaseBranch,
+				FilePath:   input.FilePath,
+				CommitSHA:  "abc123",
+			}, nil
+		},
+	}
+
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/projects/%d/dot-project/pull-request", project.ID), nil)
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+	rec := httptest.NewRecorder()
+	handler := s.requireSession(http.HandlerFunc(s.handleProject))
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	assert.Equal(t, "project-pr", captured.Owner)
+	assert.Equal(t, ".project", captured.Repo)
+	assert.Equal(t, "MAINTAINERS.yaml", captured.FilePath)
+	assert.Equal(t, []string{"bob"}, captured.AddedHandles)
+	assert.Equal(t, []string{"# TODO: Add maintainer GitHub handles", "- github-handle"}, captured.RemovedPlaceholders)
+	assert.Contains(t, captured.Proposed, "          - bob")
+	assert.NotContains(t, captured.Proposed, "github-handle")
+	assert.NotContains(t, captured.Proposed, "TODO: Add maintainer")
+
+	var response dotProjectPullRequestResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	assert.Equal(t, "https://github.com/project-pr/.project/pull/42", response.URL)
+	assert.Equal(t, 42, response.Number)
+	assert.Equal(t, []string{"bob"}, response.AddedHandles)
+
+	var audit model.AuditLog
+	require.NoError(t, dbConn.Where("project_id = ? AND action = ?", project.ID, "DOT_PROJECT_MAINTAINER_PR_CREATE").First(&audit).Error)
+	assert.Equal(t, staff.ID, *audit.StaffID)
+	assert.Contains(t, audit.Message, "Staff Tester")
+	assert.Contains(t, audit.Metadata, "https://github.com/project-pr/.project/pull/42")
+	assert.Contains(t, audit.Metadata, "bob")
+}
+
 func TestMaintainerServiceAssociationsForStaff(t *testing.T) {
 	dbConn := setupPostgresTestDB(t)
 	store := db.NewSQLStore(dbConn)

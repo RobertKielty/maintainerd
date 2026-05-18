@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"maintainerd/db"
+	"maintainerd/dotproject"
 	"maintainerd/model"
 	"maintainerd/onboarding"
 	"maintainerd/plugins/fossa"
@@ -74,27 +76,28 @@ const (
 )
 
 type server struct {
-	oauthConfig      *oauth2.Config
-	store            *db.SQLStore
-	sessions         *sessionStore
-	oauthStates      *stateStore
-	cookieName       string
-	stateCookie      string
-	webBaseURL       string
-	cookieDomain     string
-	cookieSecure     bool
-	sessionTTL       time.Duration
-	webOrigin        string
-	testMode         bool
-	allowLiveFossa   bool
-	logger           *log.Logger
-	githubToken      string
-	fossaToken       string
-	fetchIssueTitle  func(ctx context.Context, owner, repo string, number int) (string, error)
-	onboardingCache  *onboardingIssueCache
-	fetchIssues      func(ctx context.Context) ([]onboardingIssueSummary, error)
-	fossaTeamCacheMu sync.RWMutex
-	fossaTeamCache   map[uint]cachedFossaTeam
+	oauthConfig                 *oauth2.Config
+	store                       *db.SQLStore
+	sessions                    *sessionStore
+	oauthStates                 *stateStore
+	cookieName                  string
+	stateCookie                 string
+	webBaseURL                  string
+	cookieDomain                string
+	cookieSecure                bool
+	sessionTTL                  time.Duration
+	webOrigin                   string
+	testMode                    bool
+	allowLiveFossa              bool
+	logger                      *log.Logger
+	githubToken                 string
+	fossaToken                  string
+	fetchIssueTitle             func(ctx context.Context, owner, repo string, number int) (string, error)
+	onboardingCache             *onboardingIssueCache
+	fetchIssues                 func(ctx context.Context) ([]onboardingIssueSummary, error)
+	createDotProjectPullRequest func(ctx context.Context, input dotProjectPullRequestInput) (*dotProjectPullRequestResponse, error)
+	fossaTeamCacheMu            sync.RWMutex
+	fossaTeamCache              map[uint]cachedFossaTeam
 }
 
 type cachedFossaTeam struct {
@@ -1108,6 +1111,10 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dot-project/pull-request") {
+		s.handleDotProjectPullRequest(w, r)
+		return
+	}
 	if r.Method == http.MethodPatch {
 		if strings.HasSuffix(r.URL.Path, "/maturity") {
 			s.handleProjectMaturityUpdate(w, r)
@@ -1652,12 +1659,234 @@ func lookupStaffID(store *db.SQLStore, login string) *uint {
 	return &staff.ID
 }
 
+func staffIdentityForSession(store *db.SQLStore, session *session) (*uint, string) {
+	if session == nil {
+		return nil, "Staff"
+	}
+	staffName := strings.TrimSpace(session.Login)
+	var staffID *uint
+	if session.Login != "" {
+		var staff model.StaffMember
+		if err := store.DB().
+			Where("LOWER(git_hub_account) = ?", strings.ToLower(session.Login)).
+			First(&staff).Error; err == nil {
+			staffID = &staff.ID
+			staffName = strings.TrimSpace(staff.Name)
+		}
+	}
+	if staffName == "" {
+		staffName = "Staff"
+	}
+	return staffID, staffName
+}
+
+func activeProjectMaintainerGitHubHandles(maintainers []model.Maintainer) []string {
+	handles := make([]string, 0, len(maintainers))
+	seen := map[string]struct{}{}
+	for _, maintainer := range maintainers {
+		if maintainer.MaintainerStatus != model.ActiveMaintainer {
+			continue
+		}
+		normalized := dotproject.NormalizeGitHubHandle(maintainer.GitHubAccount)
+		if normalized == "" || normalized == "github_missing" || normalized == "github-missing" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		handles = append(handles, normalized)
+	}
+	return handles
+}
+
 type projectMaintainerRefUpdateRequest struct {
 	LegacyMaintainerRef string `json:"legacyMaintainerRef"`
 }
 
 type projectMaturityUpdateRequest struct {
 	Maturity string `json:"maturity"`
+}
+
+type dotProjectPullRequestInput struct {
+	ProjectName          string
+	Owner                string
+	Repo                 string
+	FilePath             string
+	BaseBranch           string
+	HeadBranch           string
+	Original             string
+	Proposed             string
+	AddedHandles         []string
+	RemovedPlaceholders  []string
+	SubmittedByLogin     string
+	SubmittedByName      string
+	OriginalBodyHash     string
+	ProjectMaintainerRef string
+}
+
+type dotProjectPullRequestResponse struct {
+	URL                  string   `json:"url"`
+	Number               int      `json:"number"`
+	Branch               string   `json:"branch"`
+	BaseBranch           string   `json:"baseBranch"`
+	FilePath             string   `json:"filePath"`
+	CommitSHA            string   `json:"commitSha,omitempty"`
+	AddedHandles         []string `json:"addedHandles"`
+	RemovedPlaceholders  []string `json:"removedPlaceholders"`
+	SubmittedBy          string   `json:"submittedBy"`
+	ProjectMaintainerRef string   `json:"projectMaintainerRef,omitempty"`
+}
+
+func (s *server) handleDotProjectPullRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	id, err := parseProjectSubresourceID(r.URL.Path, "/dot-project/pull-request")
+	if err != nil {
+		http.Error(w, "invalid project id", http.StatusBadRequest)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	project, err := s.store.GetProjectByID(id)
+	if err != nil {
+		if errors.Is(err, db.ErrProjectNotFound) {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		s.logger.Printf("web-bff: load project for dot-project PR failed id=%d err=%v", id, err)
+		http.Error(w, "failed to load project", http.StatusInternalServerError)
+		return
+	}
+	syncState, err := s.store.GetDotProjectSyncState(project.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: load dot-project sync state for PR failed project=%d err=%v", project.ID, err)
+		http.Error(w, "failed to load dot-project state", http.StatusInternalServerError)
+		return
+	}
+	if syncState == nil || syncState.MaintainersFileBody == nil || strings.TrimSpace(*syncState.MaintainersFileBody) == "" {
+		http.Error(w, "cached maintainers file body is required", http.StatusConflict)
+		return
+	}
+
+	patch, err := dotproject.BuildMaintainerRosterPatch(*syncState.MaintainersFileBody, activeProjectMaintainerGitHubHandles(project.Maintainers))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if patch.Proposed == *syncState.MaintainersFileBody {
+		http.Error(w, "no dot-project maintainer file changes to submit", http.StatusConflict)
+		return
+	}
+
+	staffID, staffName := staffIdentityForSession(s.store, session)
+	filePath := strings.TrimSpace(syncState.MaintainersFilename)
+	if filePath == "" {
+		filePath = pathpkg.Base(strings.TrimSpace(project.DotProjectMaintainerRef))
+	}
+	if filePath == "." || filePath == "/" || filePath == "" {
+		filePath = "MAINTAINERS.yaml"
+	}
+	baseBranch := strings.TrimSpace(syncState.DefaultBranch)
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+	owner := strings.TrimSpace(project.GitHubOrg)
+	if owner == "" {
+		if parsedOwner, err := parseGitHubOrgFromURL(project.DotProjectMaintainerRef); err == nil {
+			owner = parsedOwner
+		}
+	}
+	if owner == "" {
+		http.Error(w, "project github org is required", http.StatusConflict)
+		return
+	}
+
+	input := dotProjectPullRequestInput{
+		ProjectName:          project.Name,
+		Owner:                owner,
+		Repo:                 ".project",
+		FilePath:             filePath,
+		BaseBranch:           baseBranch,
+		HeadBranch:           fmt.Sprintf("maintainer-d/%d/maintainers-%d", project.ID, time.Now().UTC().UnixNano()),
+		Original:             *syncState.MaintainersFileBody,
+		Proposed:             patch.Proposed,
+		AddedHandles:         patch.AddedHandles,
+		RemovedPlaceholders:  patch.RemovedPlaceholders,
+		SubmittedByLogin:     session.Login,
+		SubmittedByName:      staffName,
+		OriginalBodyHash:     strings.TrimSpace(syncState.MaintainersFileBodyHash),
+		ProjectMaintainerRef: strings.TrimSpace(project.DotProjectMaintainerRef),
+	}
+
+	submitter := s.createDotProjectPullRequest
+	if submitter == nil {
+		submitter = s.createDotProjectMaintainerPullRequest
+	}
+	result, err := submitter(r.Context(), input)
+	if err != nil {
+		s.logger.Printf("web-bff: dot-project PR create failed project=%d owner=%s repo=%s file=%s err=%v", project.ID, owner, input.Repo, filePath, err)
+		http.Error(w, "failed to create dot-project pull request", http.StatusBadGateway)
+		return
+	}
+	if result.AddedHandles == nil {
+		result.AddedHandles = patch.AddedHandles
+	}
+	if result.RemovedPlaceholders == nil {
+		result.RemovedPlaceholders = patch.RemovedPlaceholders
+	}
+	if result.SubmittedBy == "" {
+		result.SubmittedBy = staffName
+	}
+	result.ProjectMaintainerRef = input.ProjectMaintainerRef
+
+	metadata := map[string]any{
+		"actor": map[string]string{
+			"login": session.Login,
+			"role":  session.Role,
+			"name":  staffName,
+		},
+		"pull_request": map[string]any{
+			"url":         result.URL,
+			"number":      result.Number,
+			"branch":      result.Branch,
+			"base_branch": result.BaseBranch,
+			"commit_sha":  result.CommitSHA,
+		},
+		"repository": map[string]string{
+			"owner": owner,
+			"repo":  input.Repo,
+			"path":  filePath,
+		},
+		"added_handles":        patch.AddedHandles,
+		"removed_placeholders": patch.RemovedPlaceholders,
+		"original_body_hash":   input.OriginalBodyHash,
+	}
+	if metadataJSON, err := json.Marshal(metadata); err != nil {
+		s.logger.Printf("web-bff: dot-project PR audit metadata encode error: %v", err)
+	} else {
+		event := model.AuditLog{
+			ProjectID: &project.ID,
+			StaffID:   staffID,
+			Action:    "DOT_PROJECT_MAINTAINER_PR_CREATE",
+			Message:   fmt.Sprintf("Dot-project maintainer pull request submitted by %s", staffName),
+			Metadata:  string(metadataJSON),
+		}
+		if err := s.store.DB().Create(&event).Error; err != nil {
+			s.logger.Printf("web-bff: dot-project PR audit log failed: %v", err)
+		}
+	}
+
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		s.logger.Printf("web-bff: dot-project PR encode error: %v", err)
+	}
 }
 
 func (s *server) handleProjectMaintainerRefUpdate(w http.ResponseWriter, r *http.Request) {
@@ -5327,6 +5556,108 @@ func (s *server) fetchIssueTitleFromGitHub(ctx context.Context, owner, repo stri
 	return issue.GetTitle(), nil
 }
 
+func (s *server) createDotProjectMaintainerPullRequest(ctx context.Context, input dotProjectPullRequestInput) (*dotProjectPullRequestResponse, error) {
+	if strings.TrimSpace(s.githubToken) == "" {
+		return nil, fmt.Errorf("github service credentials are not configured")
+	}
+	client := github.NewClient(oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{
+		AccessToken: s.githubToken,
+	})))
+
+	baseRef, _, err := client.Git.GetRef(ctx, input.Owner, input.Repo, "heads/"+input.BaseBranch)
+	if err != nil {
+		return nil, fmt.Errorf("get base ref: %w", err)
+	}
+	if baseRef == nil || baseRef.Object == nil || baseRef.Object.SHA == nil || strings.TrimSpace(*baseRef.Object.SHA) == "" {
+		return nil, fmt.Errorf("base ref %q did not include a commit sha", input.BaseBranch)
+	}
+
+	content, _, _, err := client.Repositories.GetContents(ctx, input.Owner, input.Repo, input.FilePath, &github.RepositoryContentGetOptions{
+		Ref: input.BaseBranch,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get maintainer file content: %w", err)
+	}
+	if content == nil || strings.TrimSpace(content.GetSHA()) == "" {
+		return nil, fmt.Errorf("maintainer file %q did not include a content sha", input.FilePath)
+	}
+	currentContent, err := content.GetContent()
+	if err != nil {
+		return nil, fmt.Errorf("decode current maintainer file content: %w", err)
+	}
+	if currentContent != input.Original {
+		return nil, fmt.Errorf("cached maintainer file is stale; run dot-project sync before submitting a pull request")
+	}
+
+	if _, _, err := client.Git.CreateRef(ctx, input.Owner, input.Repo, &github.Reference{
+		Ref: github.String("refs/heads/" + input.HeadBranch),
+		Object: &github.GitObject{
+			SHA: baseRef.Object.SHA,
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("create branch: %w", err)
+	}
+
+	contentResponse, _, err := client.Repositories.UpdateFile(ctx, input.Owner, input.Repo, input.FilePath, &github.RepositoryContentFileOptions{
+		Message: github.String(fmt.Sprintf("Update %s maintainers", input.ProjectName)),
+		Content: []byte(input.Proposed),
+		SHA:     github.String(content.GetSHA()),
+		Branch:  github.String(input.HeadBranch),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update maintainer file: %w", err)
+	}
+
+	pr, _, err := client.PullRequests.Create(ctx, input.Owner, input.Repo, &github.NewPullRequest{
+		Title:               github.String(fmt.Sprintf("Update %s maintainers.yaml", input.ProjectName)),
+		Head:                github.String(input.HeadBranch),
+		Base:                github.String(input.BaseBranch),
+		Body:                github.String(buildDotProjectPullRequestBody(input)),
+		MaintainerCanModify: github.Bool(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create pull request: %w", err)
+	}
+
+	commitSHA := ""
+	if contentResponse != nil {
+		commitSHA = contentResponse.GetSHA()
+	}
+	return &dotProjectPullRequestResponse{
+		URL:                 pr.GetHTMLURL(),
+		Number:              pr.GetNumber(),
+		Branch:              input.HeadBranch,
+		BaseBranch:          input.BaseBranch,
+		FilePath:            input.FilePath,
+		CommitSHA:           commitSHA,
+		AddedHandles:        input.AddedHandles,
+		RemovedPlaceholders: input.RemovedPlaceholders,
+		SubmittedBy:         input.SubmittedByName,
+	}, nil
+}
+
+func buildDotProjectPullRequestBody(input dotProjectPullRequestInput) string {
+	lines := []string{
+		"Maintainer-D generated this pull request from the current project maintainer database.",
+		"",
+		"Changes:",
+	}
+	if len(input.AddedHandles) > 0 {
+		lines = append(lines, fmt.Sprintf("- Add active maintainer-d handles missing from `%s`: %s", input.FilePath, strings.Join(input.AddedHandles, ", ")))
+	}
+	if len(input.RemovedPlaceholders) > 0 {
+		lines = append(lines, fmt.Sprintf("- Remove placeholder maintainer lines: %s", strings.Join(input.RemovedPlaceholders, ", ")))
+	}
+	lines = append(lines,
+		"",
+		fmt.Sprintf("Submitted by: %s (%s)", input.SubmittedByName, input.SubmittedByLogin),
+	)
+	if input.OriginalBodyHash != "" {
+		lines = append(lines, fmt.Sprintf("Cached source body hash: `%s`", input.OriginalBodyHash))
+	}
+	return strings.Join(lines, "\n")
+}
+
 func groupCompanyDuplicates(companies []companyDetailResponse) []companyDuplicateGroup {
 	buckets := make(map[string][]companyDetailResponse)
 	for _, c := range companies {
@@ -5650,6 +5981,14 @@ func parseIDParam(path, prefix string) (uint, error) {
 		return 0, fmt.Errorf("invalid id")
 	}
 	return uint(value), nil
+}
+
+func parseProjectSubresourceID(path, suffix string) (uint, error) {
+	if !strings.HasSuffix(path, suffix) {
+		return 0, fmt.Errorf("missing suffix")
+	}
+	base := strings.TrimSuffix(path, suffix)
+	return parseIDParam(base, "/api/projects/")
 }
 
 func parseMaturity(value string) (model.Maturity, bool) {

@@ -170,6 +170,7 @@ Then("the dot-project roll call renders the cached maintainer file as formatted 
   await expect(missingDbMaintainer).toHaveAttribute("title", "Alex Example");
   await expect(viewer.getByRole("button", { name: "Hide PR Preview" })).toBeVisible({ timeout: 15000 });
   const preview = viewer.locator('[aria-label="Pull request preview"]');
+  await expect(preview.getByRole("button", { name: "Submit Pull Request" })).toBeVisible({ timeout: 15000 });
   await expect(preview.getByText("Existing MAINTAINERS.yaml")).toBeVisible({ timeout: 15000 });
   await expect(preview.getByText("Proposed MAINTAINERS.yaml")).toBeVisible({ timeout: 15000 });
   await expect(preview.locator('[class*="dotProjectLineNumberAdded"]').getByText("9", { exact: true })).toBeVisible({
