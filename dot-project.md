@@ -675,7 +675,7 @@ Layout follow-up:
   `# TODO: Add maintainer handles`
   `- github-handle`
   Automatically remove these lines from proposed pull-requests
-- Create a branch and PR against the project’s `.project` repository using maintainer-d’s service credentials.
+- Create a project-prefixed fork of the project’s `.project` repository under the signed-in staff member’s GitHub account, then open a PR from that fork.
 - Record the PR creation in the audit log recording the name of the person who submitted the pull-request
 - Show PR result details back in the UI.
 - Replace the current preview-only `Create Pull Request` control with a real submit action.
@@ -683,14 +683,16 @@ Layout follow-up:
 Operational goals:
 
 - Turn missing-maintainer detection into an actionable remediation workflow.
-- Keep the write path bot-driven first rather than depending on each end user’s GitHub OAuth identity.
+- Keep GitHub provenance human-centered by submitting the PR from the signed-in staff member’s GitHub account.
+- Name forks with a project prefix, for example `cohdi-.project`, so staff working on multiple `.project` repositories can distinguish their forks.
 
 Implementation report:
 
 - Added a staff-only `POST /api/projects/{id}/dot-project/pull-request` BFF endpoint.
 - The endpoint rebuilds the maintainer-file patch server-side from the cached `maintainers.yaml` body and active maintainer-d records before writing to GitHub.
 - The proposed PR removes placeholder lines such as `# TODO: Add maintainer GitHub handles` and `- github-handle`.
-- The GitHub write path uses maintainer-d service credentials to create a branch, update the maintainer file, and open a pull request against the project `.project` repository.
+- The GitHub write path uses the signed-in staff member’s OAuth token, creates or reuses a project-prefixed fork, updates the maintainer file on a generated branch in that fork, and opens a pull request against the upstream project `.project` repository.
+- The GitHub OAuth login scope now includes `public_repo`; existing sessions must sign out and sign in again before submitting dot-project PRs.
 - PR creation is recorded in the audit log with the submitting staff member and PR metadata.
 - The dot-project UI now exposes a real `Submit Pull Request` action from the preview and shows the resulting PR details.
 
