@@ -893,8 +893,10 @@ export default function ProjectReconciliationCard({
             ) : null}
           </div>
           <DotProjectMaintainerFileViewer
+            apiBaseUrl={apiBaseUrl}
             filename={dotProjectMaintainerCacheFilename}
             maintainers={maintainers}
+            projectId={projectId}
             canEdit={canEdit}
             onAddMissingMaintainer={(handle, refLine) => {
               setDraft({

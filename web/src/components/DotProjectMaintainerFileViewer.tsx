@@ -16,6 +16,8 @@ type DotProjectMaintainerFileViewerProps = {
   source: string;
   filename: string;
   maintainers: KnownMaintainer[];
+  projectId: number;
+  apiBaseUrl: string;
   canEdit?: boolean;
   onAddMissingMaintainer?: (handle: string, refLine: string) => void;
 };
@@ -44,6 +46,16 @@ type PatchPreview = {
   addedCount: number;
   deletedCount: number;
   error?: string;
+};
+
+type PullRequestResult = {
+  url: string;
+  number: number;
+  branch: string;
+  baseBranch: string;
+  filePath: string;
+  addedHandles: string[];
+  removedPlaceholders: string[];
 };
 
 const scalarText = (node: unknown): string => {
@@ -230,6 +242,11 @@ const isMembersLine = (line: string): boolean => /^\s*members:\s*(?:#.*)?$/i.tes
 
 const isSequenceItemLine = (line: string): boolean => /^\s*-\s*\S/.test(line);
 
+const isMaintainerPlaceholderLine = (line: string): boolean => {
+  const trimmed = line.trim();
+  return /^#\s*TODO:\s*Add maintainer GitHub handles\s*$/i.test(trimmed) || /^-\s*github-handle\s*(?:#.*)?$/i.test(trimmed);
+};
+
 const splitSourceLines = (source: string): string[] =>
   source.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
 
@@ -287,6 +304,79 @@ const buildPatchRows = (
   };
 };
 
+const buildPatchRowsWithDeleted = (
+  originalLines: string[],
+  proposedLines: string[],
+  insertedAt: number,
+  insertedCount: number,
+  deletedIndexes: number[],
+): PatchPreview => {
+  const existing: PatchPreviewLine[] = [];
+  const proposed: PatchPreviewLine[] = [];
+  const deleted = new Set(deletedIndexes);
+  let proposedIndex = 0;
+
+  for (let index = 0; index <= originalLines.length; index += 1) {
+    if (index === insertedAt) {
+      for (let offset = 0; offset < insertedCount; offset += 1) {
+        existing.push({
+          key: `existing-added-${offset}`,
+          text: "",
+          lineNumber: null,
+          tone: "empty",
+        });
+        proposed.push({
+          key: `proposed-added-${offset}`,
+          text: proposedLines[proposedIndex] ?? "",
+          lineNumber: proposedIndex + 1,
+          tone: "added",
+        });
+        proposedIndex += 1;
+      }
+    }
+
+    if (index >= originalLines.length) {
+      continue;
+    }
+    if (deleted.has(index)) {
+      existing.push({
+        key: `existing-deleted-${index}`,
+        text: originalLines[index],
+        lineNumber: index + 1,
+        tone: "deleted",
+      });
+      proposed.push({
+        key: `proposed-deleted-${index}`,
+        text: "",
+        lineNumber: null,
+        tone: "empty",
+      });
+      continue;
+    }
+
+    existing.push({
+      key: `existing-${index}`,
+      text: originalLines[index],
+      lineNumber: index + 1,
+      tone: "context",
+    });
+    proposed.push({
+      key: `proposed-${proposedIndex}`,
+      text: proposedLines[proposedIndex] ?? "",
+      lineNumber: proposedIndex + 1,
+      tone: "context",
+    });
+    proposedIndex += 1;
+  }
+
+  return {
+    existing,
+    proposed,
+    addedCount: insertedCount,
+    deletedCount: deletedIndexes.length,
+  };
+};
+
 const buildMaintainerPatchPreview = (source: string, missingHandles: string[]): PatchPreview => {
   const uniqueMissingHandles = Array.from(
     new Map(missingHandles.map((handle) => [normalizeHandle(handle), handle.trim()])).values(),
@@ -341,6 +431,7 @@ const buildMaintainerPatchPreview = (source: string, missingHandles: string[]): 
   const membersIndent = leadingWhitespaceLength(originalLines[membersIndex]);
   let insertAt = membersIndex + 1;
   let itemIndent = " ".repeat(membersIndent + 2);
+  const placeholderIndexes: number[] = [];
 
   for (let index = membersIndex + 1; index < originalLines.length; index += 1) {
     const line = originalLines[index];
@@ -352,6 +443,10 @@ const buildMaintainerPatchPreview = (source: string, missingHandles: string[]): 
     if (lineIndent <= membersIndent) {
       break;
     }
+    if (isMaintainerPlaceholderLine(line)) {
+      placeholderIndexes.push(index);
+      continue;
+    }
     if (isSequenceItemLine(line)) {
       itemIndent = line.match(/^\s*/)?.[0] ?? itemIndent;
       insertAt = index + 1;
@@ -360,9 +455,17 @@ const buildMaintainerPatchPreview = (source: string, missingHandles: string[]): 
     insertAt = index + 1;
   }
 
+  const originalInsertAt = insertAt;
+  for (const index of [...placeholderIndexes].reverse()) {
+    if (index < insertAt) {
+      insertAt -= 1;
+    }
+    proposedLines.splice(index, 1);
+  }
+
   const insertLines = uniqueMissingHandles.map((handle) => `${itemIndent}- ${handle}`);
   proposedLines.splice(insertAt, 0, ...insertLines);
-  return buildPatchRows(originalLines, proposedLines, insertAt, insertLines.length);
+  return buildPatchRowsWithDeleted(originalLines, proposedLines, originalInsertAt, insertLines.length, placeholderIndexes);
 };
 
 const diffLineClassName = (tone: PatchPreviewLine["tone"]): string => {
@@ -393,10 +496,15 @@ export default function DotProjectMaintainerFileViewer({
   source,
   filename,
   maintainers,
+  projectId,
+  apiBaseUrl,
   canEdit = false,
   onAddMissingMaintainer,
 }: DotProjectMaintainerFileViewerProps) {
   const [showPatchPreview, setShowPatchPreview] = useState(true);
+  const [submittingPullRequest, setSubmittingPullRequest] = useState(false);
+  const [pullRequestError, setPullRequestError] = useState<string | null>(null);
+  const [pullRequestResult, setPullRequestResult] = useState<PullRequestResult | null>(null);
   const parsed = useMemo(() => parseMaintainerTeams(source), [source]);
   const lines = useMemo(() => splitSourceLines(source), [source]);
   const activeMaintainers = useMemo(() => activeMaintainerHandles(maintainers), [maintainers]);
@@ -426,6 +534,28 @@ export default function DotProjectMaintainerFileViewer({
     () => buildMaintainerPatchPreview(source, missingFileMaintainers.map((maintainer) => maintainer.github)),
     [source, missingFileMaintainers],
   );
+
+  const submitPullRequest = async () => {
+    setSubmittingPullRequest(true);
+    setPullRequestError(null);
+    setPullRequestResult(null);
+    try {
+      const response = await fetch(`${apiBaseUrl}/projects/${projectId}/dot-project/pull-request`, {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!response.ok) {
+        const message = await response.text().catch(() => "");
+        throw new Error(message.trim() || "Unable to submit pull request.");
+      }
+      const payload = (await response.json()) as PullRequestResult;
+      setPullRequestResult(payload);
+    } catch (err) {
+      setPullRequestError(err instanceof Error ? err.message : "Unable to submit pull request.");
+    } finally {
+      setSubmittingPullRequest(false);
+    }
+  };
 
   const renderYamlLine = (line: string, keyPrefix: string) => {
     const tokens = tokenizeYamlLine(line, projectMaintainerHandles);
@@ -575,14 +705,36 @@ export default function DotProjectMaintainerFileViewer({
             <div>
               <h4 className={styles.dotProjectYamlTitle}>Pull request preview</h4>
               <p className={styles.dotProjectYamlSubtitle}>
-                Review the maintainer-d generated patch before a follow-up workflow submits it to GitHub.
+                Review the maintainer-d generated patch before submitting it to GitHub.
               </p>
             </div>
-            <div className={styles.dotProjectYamlStats}>
-              <span>+{patchPreview.addedCount}</span>
-              <span>-{patchPreview.deletedCount}</span>
+            <div className={styles.dotProjectPatchActions}>
+              <div className={styles.dotProjectYamlStats}>
+                <span>+{patchPreview.addedCount}</span>
+                <span>-{patchPreview.deletedCount}</span>
+              </div>
+              {canEdit && !patchPreview.error ? (
+                <button
+                  className={styles.dotProjectPreviewButton}
+                  disabled={submittingPullRequest}
+                  type="button"
+                  onClick={submitPullRequest}
+                >
+                  {submittingPullRequest ? "Submitting..." : "Submit Pull Request"}
+                </button>
+              ) : null}
             </div>
           </div>
+          {pullRequestError ? <div className={styles.dotProjectYamlParseError}>{pullRequestError}</div> : null}
+          {pullRequestResult ? (
+            <div className={styles.dotProjectYamlSuccess}>
+              Pull request submitted:{" "}
+              <a href={pullRequestResult.url} target="_blank" rel="noreferrer">
+                #{pullRequestResult.number}
+              </a>{" "}
+              from <code>{pullRequestResult.branch}</code> to <code>{pullRequestResult.baseBranch}</code>.
+            </div>
+          ) : null}
           {patchPreview.error ? (
             <div className={styles.dotProjectYamlParseError}>{patchPreview.error}</div>
           ) : (
