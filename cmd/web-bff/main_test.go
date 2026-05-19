@@ -15,6 +15,7 @@ import (
 	"maintainerd/db"
 	"maintainerd/model"
 
+	"github.com/google/go-github/v55/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -476,6 +477,34 @@ func TestDotProjectForkRepoNamePrefixesSourceRepoWithProjectSlug(t *testing.T) {
 	assert.Equal(t, "cohdi.project", dotProjectForkRepoName("CoHDI", ".project"))
 	assert.Equal(t, "cadence-workflow.project", dotProjectForkRepoName("Cadence Workflow", ".project"))
 	assert.Equal(t, "project.project", dotProjectForkRepoName("...", ".project"))
+}
+
+func TestDotProjectMaintainerCommitMessageIncludesDCOSignoff(t *testing.T) {
+	message := dotProjectMaintainerCommitMessage("CoHDI", &github.CommitAuthor{
+		Name:  github.String("Robert Kielty"),
+		Email: github.String("123+RobertKielty@users.noreply.github.com"),
+	})
+
+	assert.Equal(t, "Update CoHDI maintainers\n\nSigned-off-by: Robert Kielty <123+RobertKielty@users.noreply.github.com>", message)
+}
+
+func TestBuildDotProjectPullRequestBodyMentionsAddedMaintainers(t *testing.T) {
+	body := buildDotProjectPullRequestBody(dotProjectPullRequestInput{
+		FilePath:            "MAINTAINERS.yaml",
+		AddedHandles:        []string{"alice", "@Bob", "alice"},
+		RemovedPlaceholders: []string{"# TODO: Add maintainer handles"},
+		SubmittedByName:     "Staff Tester",
+		SubmittedByLogin:    "staff-tester",
+	})
+
+	assert.Contains(t, body, "Changes:\n- Add active maintainer-d handles missing from `MAINTAINERS.yaml`: @alice, @bob")
+	assert.Contains(t, body, "- Remove placeholder maintainer lines: # TODO: Add maintainer handles")
+	assert.NotContains(t, body, "@@")
+}
+
+func TestDotProjectMaintainerReviewersNormalizesHandles(t *testing.T) {
+	assert.Equal(t, []string{"alice", "bob"}, dotProjectMaintainerReviewers([]string{"@Alice", "bob", "alice", ""}))
+	assert.Equal(t, []string{"cncf-projects"}, dotProjectMaintainerTeamReviewers())
 }
 
 func TestMaintainerServiceAssociationsForStaff(t *testing.T) {

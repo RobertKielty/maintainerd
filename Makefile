@@ -1582,27 +1582,18 @@ ci-local:
 	NPROC=$$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4); \
 	export GOCACHE=$(GOCACHE_DIR); \
 	export GOLANGCI_LINT_CACHE=/tmp/golangci-lint; \
-	echo "→ Running all checks in parallel on $$NPROC cores..."; \
-	pids=""; \
-	run() { \
-		local name="$$1"; shift; \
-		( "$$@" && echo "✓ $$name" || { echo "✗ $$name FAILED"; exit 1; } ) & \
-		pids="$$pids $$!"; \
-	}; \
-	run "go vet"        go vet ./...; \
-	run "staticcheck"   staticcheck ./...; \
-	run "golangci-lint" golangci-lint run ./...; \
-	run "go test -race" go test -race -p "$$NPROC" -coverprofile=coverage.out -covermode=atomic ./...; \
-	run "web lint"      npm --prefix web run lint -- --max-warnings=$(ESLINT_MAX_WARNINGS); \
-	run "web typecheck" npm --prefix web run typecheck; \
-	( MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" WEB_BDD_USE_MICROCKS=true NO_BDD_OPEN=1 $(MAKE) web-bdd \
-		&& echo "✓ web BDD" || { echo "✗ web BDD FAILED"; exit 1; } ) & \
-	pids="$$pids $$!"; \
-	fail=0; \
-	for pid in $$pids; do \
-		wait "$$pid" || fail=1; \
-	done; \
-	[ $$fail -eq 0 ] || { echo "❌ One or more CI checks failed"; exit 1; }; \
+	echo "→ Running all checks sequentially..."; \
+	go vet ./...                  && echo "✓ go vet"; \
+	npm --prefix web run lint -- --max-warnings=$(ESLINT_MAX_WARNINGS) \
+	                              && echo "✓ web lint"; \
+	npm --prefix web run typecheck \
+	                              && echo "✓ web typecheck"; \
+	staticcheck ./...             && echo "✓ staticcheck"; \
+	golangci-lint run ./...       && echo "✓ golangci-lint"; \
+	go test -race -p "$$NPROC" -coverprofile=coverage.out -covermode=atomic ./... \
+	                              && echo "✓ go test -race"; \
+	MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" WEB_BDD_USE_MICROCKS=true NO_BDD_OPEN=1 $(MAKE) web-bdd \
+	                              && echo "✓ web BDD"; \
 	echo "→ Coverage report:"; \
 	go tool cover -func=coverage.out | tail -n 1; \
 	echo "✅ All CI checks passed!"; \

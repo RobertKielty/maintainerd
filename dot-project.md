@@ -693,6 +693,11 @@ Implementation report:
 - The proposed PR removes placeholder lines such as `# TODO: Add maintainer GitHub handles` and `- github-handle`.
 - The GitHub write path uses the signed-in staff member’s OAuth token, creates or reuses a project-prefixed fork, updates the maintainer file on a generated branch in that fork, and opens a pull request against the upstream project `.project` repository.
 - The GitHub OAuth login scope now includes `public_repo`; existing sessions must sign out and sign in again before submitting dot-project PRs.
+- Generated commits include a `Signed-off-by` trailer that matches the signed-in GitHub user so repository DCO checks can pass.
+- Refinements tracked in [cncf/maintainer-d#114](https://github.com/cncf/maintainer-d/issues/114):
+  - Added maintainer handles are rendered as GitHub mentions in the PR body `Changes:` section, for example `@alice`, so maintainers are notified and reviewers can open maintainer profiles directly.
+  - The GitHub write path requests review from each maintainer added to the update and from the `@cncf/cncf-projects` team.
+  - The proposed PR also removes the shorter placeholder comment `# TODO: Add maintainer handles` when it is present in the maintainer file.
 - PR creation is recorded in the audit log with the submitting staff member and PR metadata.
 - The dot-project UI now exposes a real `Submit Pull Request` action from the preview and shows the resulting PR details.
 

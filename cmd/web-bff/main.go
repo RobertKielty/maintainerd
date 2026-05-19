@@ -5640,11 +5640,17 @@ func (s *server) createDotProjectMaintainerPullRequest(ctx context.Context, inpu
 		return nil, fmt.Errorf("create branch in fork %s/%s: %w", forkOwner, forkRepo, err)
 	}
 
+	commitAuthor, err := dotProjectCommitAuthor(ctx, client, input)
+	if err != nil {
+		return nil, err
+	}
 	contentResponse, _, err := client.Repositories.UpdateFile(ctx, forkOwner, forkRepo, input.FilePath, &github.RepositoryContentFileOptions{
-		Message: github.String(fmt.Sprintf("Update %s maintainers", input.ProjectName)),
-		Content: []byte(input.Proposed),
-		SHA:     github.String(content.GetSHA()),
-		Branch:  github.String(input.HeadBranch),
+		Message:   github.String(dotProjectMaintainerCommitMessage(input.ProjectName, commitAuthor)),
+		Content:   []byte(input.Proposed),
+		SHA:       github.String(content.GetSHA()),
+		Branch:    github.String(input.HeadBranch),
+		Author:    commitAuthor,
+		Committer: commitAuthor,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("update maintainer file in fork %s/%s: %w", forkOwner, forkRepo, err)
@@ -5659,6 +5665,16 @@ func (s *server) createDotProjectMaintainerPullRequest(ctx context.Context, inpu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create pull request: %w", err)
+	}
+	reviewers := dotProjectMaintainerReviewers(input.AddedHandles)
+	teamReviewers := dotProjectMaintainerTeamReviewers()
+	if len(reviewers) > 0 || len(teamReviewers) > 0 {
+		if _, _, err := client.PullRequests.RequestReviewers(ctx, input.Owner, input.Repo, pr.GetNumber(), github.ReviewersRequest{
+			Reviewers:     reviewers,
+			TeamReviewers: teamReviewers,
+		}); err != nil {
+			return nil, fmt.Errorf("request maintainer reviews: %w", err)
+		}
 	}
 
 	commitSHA := ""
@@ -5744,6 +5760,44 @@ func waitForDotProjectFork(ctx context.Context, client *github.Client, forkOwner
 	return nil, fmt.Errorf("fork %s/%s was not ready before timeout", forkOwner, forkRepo)
 }
 
+func dotProjectCommitAuthor(ctx context.Context, client *github.Client, input dotProjectPullRequestInput) (*github.CommitAuthor, error) {
+	user, _, err := client.Users.Get(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("load github user for commit sign-off: %w", err)
+	}
+	name := strings.TrimSpace(user.GetName())
+	if name == "" {
+		name = strings.TrimSpace(input.SubmittedByName)
+	}
+	if name == "" {
+		name = strings.TrimSpace(input.SubmittedByLogin)
+	}
+	email := strings.TrimSpace(user.GetEmail())
+	if email == "" && user.GetID() > 0 && strings.TrimSpace(user.GetLogin()) != "" {
+		email = fmt.Sprintf("%d+%s@users.noreply.github.com", user.GetID(), strings.TrimSpace(user.GetLogin()))
+	}
+	if email == "" && strings.TrimSpace(input.SubmittedByLogin) != "" {
+		email = strings.TrimSpace(input.SubmittedByLogin) + "@users.noreply.github.com"
+	}
+	if name == "" || email == "" {
+		return nil, fmt.Errorf("github user name and email are required for commit sign-off")
+	}
+	return &github.CommitAuthor{
+		Name:  github.String(name),
+		Email: github.String(email),
+	}, nil
+}
+
+func dotProjectMaintainerCommitMessage(projectName string, author *github.CommitAuthor) string {
+	name := ""
+	email := ""
+	if author != nil {
+		name = strings.TrimSpace(author.GetName())
+		email = strings.TrimSpace(author.GetEmail())
+	}
+	return fmt.Sprintf("Update %s maintainers\n\nSigned-off-by: %s <%s>", strings.TrimSpace(projectName), name, email)
+}
+
 func repositoryIsForkOf(repo *github.Repository, upstreamOwner, upstreamRepo string) bool {
 	if repo == nil || !repo.GetFork() || repo.Parent == nil {
 		return false
@@ -5803,7 +5857,7 @@ func buildDotProjectPullRequestBody(input dotProjectPullRequestInput) string {
 		"Changes:",
 	}
 	if len(input.AddedHandles) > 0 {
-		lines = append(lines, fmt.Sprintf("- Add active maintainer-d handles missing from `%s`: %s", input.FilePath, strings.Join(input.AddedHandles, ", ")))
+		lines = append(lines, fmt.Sprintf("- Add active maintainer-d handles missing from `%s`: %s", input.FilePath, strings.Join(dotProjectMentionedMaintainers(input.AddedHandles), ", ")))
 	}
 	if len(input.RemovedPlaceholders) > 0 {
 		lines = append(lines, fmt.Sprintf("- Remove placeholder maintainer lines: %s", strings.Join(input.RemovedPlaceholders, ", ")))
@@ -5816,6 +5870,36 @@ func buildDotProjectPullRequestBody(input dotProjectPullRequestInput) string {
 		lines = append(lines, fmt.Sprintf("Cached source body hash: `%s`", input.OriginalBodyHash))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func dotProjectMentionedMaintainers(handles []string) []string {
+	reviewers := dotProjectMaintainerReviewers(handles)
+	mentions := make([]string, 0, len(reviewers))
+	for _, reviewer := range reviewers {
+		mentions = append(mentions, "@"+reviewer)
+	}
+	return mentions
+}
+
+func dotProjectMaintainerReviewers(handles []string) []string {
+	reviewers := make([]string, 0, len(handles))
+	seen := make(map[string]struct{}, len(handles))
+	for _, raw := range handles {
+		handle := dotproject.NormalizeGitHubHandle(raw)
+		if handle == "" {
+			continue
+		}
+		if _, ok := seen[handle]; ok {
+			continue
+		}
+		seen[handle] = struct{}{}
+		reviewers = append(reviewers, handle)
+	}
+	return reviewers
+}
+
+func dotProjectMaintainerTeamReviewers() []string {
+	return []string{"cncf-projects"}
 }
 
 func groupCompanyDuplicates(companies []companyDetailResponse) []companyDuplicateGroup {
