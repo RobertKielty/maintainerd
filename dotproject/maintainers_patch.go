@@ -18,7 +18,7 @@ var (
 	projectMaintainersNameRE = regexp.MustCompile(`(?i)^\s*(?:-\s*)?name:\s*["']?project-maintainers["']?\s*(?:#.*)?$`)
 	membersLineRE            = regexp.MustCompile(`(?i)^\s*members:\s*(?:#.*)?$`)
 	sequenceItemRE           = regexp.MustCompile(`^\s*-\s*(\S+)\s*(?:#.*)?$`)
-	todoMaintainerHandlesRE  = regexp.MustCompile(`(?i)^\s*#\s*TODO:\s*Add maintainer GitHub handles\s*$`)
+	todoMaintainerHandlesRE  = regexp.MustCompile(`(?i)^\s*#\s*TODO:\s*Add maintainer (?:GitHub )?handles\s*$`)
 )
 
 func BuildMaintainerRosterPatch(source string, activeHandles []string) (*MaintainerPatch, error) {
