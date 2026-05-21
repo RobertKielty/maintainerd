@@ -234,6 +234,14 @@
   border-radius: 4px;
 }
 
+.maintainerMatch a {
+  color: #0f172a;
+}
+
+:global([data-theme="dark"]) .maintainerMatch a {
+  color: #fff;
+}
+
 .empty {
   color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
   font-size: 14px;

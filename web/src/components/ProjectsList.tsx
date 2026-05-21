@@ -6,6 +6,15 @@ import { Pagination } from "clo-ui/components/Pagination";
 import styles from "./ProjectsList.module.css";
 import ProjectCard from "./ProjectCard";
 
+type MaintainerSummary = {
+  id: number;
+  name: string;
+  github: string;
+  country?: string;
+  location?: string;
+  timezone?: string;
+};
+
 type RecentProject = {
   id: number;
   name: string;
@@ -15,8 +24,36 @@ type RecentProject = {
   onboardingIssueStatus?: string;
   legacyMaintainerRef?: string;
   githubOrg?: string;
-  dotProjectYamlRef?: string;
-  maintainers?: { id: number; name: string }[];
+  dotProjectRepoRef?: string;
+  dotProjectProjectRef?: string;
+  dotProjectMaintainerRef?: string;
+  dotProjectSecurityRef?: string;
+  dotProjectContributingRef?: string;
+  dotProjectGovernanceRef?: string;
+  dotProjectSchemaVersion?: string;
+  dotProjectMaintainerCount?: number | null;
+  dotProjectLastSyncedAt?: string | null;
+  dotProjectAdoptionStatus?: string;
+  maintainers?: MaintainerSummary[];
+};
+
+const countryFlag = (iso?: string): string => {
+  if (!iso || iso.length !== 2) return "";
+  return [...iso.toUpperCase()]
+    .map((c) => String.fromCodePoint(c.charCodeAt(0) + 0x1f1a5))
+    .join("");
+};
+
+const maintainerMatchesFilter = (m: MaintainerSummary, filter: string): boolean => {
+  if (!filter) return false;
+  const lower = filter.toLowerCase();
+  return (
+    m.name.toLowerCase().includes(lower) ||
+    m.github.toLowerCase().includes(lower) ||
+    (m.country?.toLowerCase().includes(lower) ?? false) ||
+    (m.location?.toLowerCase().includes(lower) ?? false) ||
+    (m.timezone?.toLowerCase().includes(lower) ?? false)
+  );
 };
 
 type ProjectsListProps = {
@@ -32,6 +69,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
   const [sortBy, setSortBy] = useState<"created" | "name" | "obIssue">("created");
   const [direction, setDirection] = useState<"asc" | "desc">("desc");
   const [maturityFilter, setMaturityFilter] = useState("all");
+  const [dotProjectFilter, setDotProjectFilter] = useState("all");
   const [projectNameFilter, setProjectNameFilter] = useState("");
   const [maintainerFilter, setMaintainerFilter] = useState("");
   const [maintainerFileFilter, setMaintainerFileFilter] = useState("");
@@ -98,6 +136,9 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
         if (maturityFilter !== "all") {
           params.set("maturity", maturityFilter);
         }
+        if (dotProjectFilter !== "all") {
+          params.set("dotProject", dotProjectFilter);
+        }
         if (debouncedProjectNameFilter) {
           params.set("projectName", debouncedProjectNameFilter);
         }
@@ -146,6 +187,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
     page,
     sortBy,
     maturityFilter,
+    dotProjectFilter,
     debouncedProjectNameFilter,
     debouncedMaintainerFilter,
     debouncedMaintainerFileFilter,
@@ -319,6 +361,28 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
               </button>
             ))}
           </div>
+          <div className={styles.filterRow}>
+            <span className={styles.filterLabel}>Dot-project</span>
+            {[
+              { value: "all", label: "All" },
+              { value: "with", label: "adopted!" },
+              { value: "without", label: "legacy file" },
+            ].map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                className={`${styles.filterChip} ${
+                  dotProjectFilter === option.value ? styles.filterChipActive : ""
+                }`}
+                onClick={() => {
+                  setDotProjectFilter(option.value);
+                  setPage(1);
+                }}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
           <div className={styles.resultsRow}>
             <span className={styles.resultsInline}>
               {(page - 1) * limit + 1}-{Math.min(page * limit, total)} of {total}
@@ -359,7 +423,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                 <input
                   ref={maintainerRef}
                   className={styles.filterInput}
-                  placeholder="Filter maintainer"
+                  placeholder="Filter using a maintainer's, name location or GitHub profile" 
                   value={maintainerFilter}
                   onChange={(event) => {
                     const value = event.target.value;
@@ -462,7 +526,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                   <input
                     ref={maintainerRef}
                     className={styles.filterInput}
-                    placeholder="Filter maintainer"
+                    placeholder="Filter maintainer, location, or timezone"
                     value={maintainerFilter}
                     onChange={(event) => {
                       const value = event.target.value;
@@ -522,17 +586,25 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                     <td className={styles.maturityCol}>{project.maturity || "—"}</td>
                     <td className={styles.maintainersCol}>
                       {maintainers.length > 0
-                        ? maintainers.map((maintainer, index) => (
-                            <span key={maintainer.id}>
-                              <Link
-                                className={styles.link}
-                                href={`/maintainers/${maintainer.id}`}
+                        ? maintainers.map((maintainer, index) => {
+                            const isMatch = maintainerMatchesFilter(maintainer, debouncedMaintainerFilter);
+                            const flag = isMatch ? countryFlag(maintainer.country) : "";
+                            return (
+                              <span
+                                key={maintainer.id}
+                                className={isMatch ? styles.maintainerMatch : undefined}
                               >
-                                {highlightMatch(maintainer.name, maintainerFilter)}
-                              </Link>
-                              {index < maintainers.length - 1 ? ", " : ""}
-                            </span>
-                          ))
+                                <Link
+                                  className={styles.link}
+                                  href={`/maintainers/${maintainer.id}`}
+                                >
+                                  {highlightMatch(maintainer.name, maintainerFilter)}
+                                </Link>
+                                {flag ? <span title={maintainer.country}> {flag}</span> : null}
+                                {index < maintainers.length - 1 ? ", " : ""}
+                              </span>
+                            );
+                          })
                         : "—"}
                     </td>
                     <td className={styles.addedByCol}>{project.addedBy || "—"}</td>
@@ -553,7 +625,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                     </td>
                     <td className={styles.orgCol}>{orgLink(project.githubOrg)}</td>
                     <td className={styles.dotRepoCol}>
-                      {renderLink(project.dotProjectYamlRef)}
+                      {renderLink(project.dotProjectRepoRef, fileName(project.dotProjectRepoRef))}
                     </td>
                     </tr>
                   );
@@ -576,7 +648,7 @@ export default function ProjectsList({ limit = 10 }: ProjectsListProps) {
                     onboardingIssueStatus={project.onboardingIssueStatus}
                     legacyMaintainerRef={project.legacyMaintainerRef}
                     githubOrg={project.githubOrg}
-                    dotProjectYamlRef={project.dotProjectYamlRef}
+                    dotProjectRepoRef={project.dotProjectRepoRef}
                     maintainers={project.maintainers}
                     maintainerFilter={maintainerFilter}
                   />

@@ -63,9 +63,35 @@ When("I search globally for maintainer email {string}", async function (email) {
 ]);
 });
 
+When("I open the global search page", async function () {
+  await this.page.goto(`${this.baseUrl}/search`, { waitUntil: "domcontentloaded" });
+  await expect(
+    this.page.getByRole("heading", { name: "Global Search" })
+  ).toBeVisible({ timeout: 15000 });
+});
+
+When("I search from the search page for {string}", async function (query) {
+  const searchInput = this.page.getByPlaceholder(
+    "Search projects, maintainers, companies, or roster URLs"
+  );
+  await expect(searchInput).toBeVisible({ timeout: 15000 });
+  await searchInput.fill(query);
+  await searchInput.press("Enter");
+  await this.page.waitForURL(
+    new RegExp(`/search\\?query=${encodeURIComponent(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)
+  , { timeout: 15000 });
+});
+
 Then("I see maintainer {string} in the results", async function (name) {
   const section = getMaintainersSection(this.page);
   await expect(section.getByRole("link", { name })).toBeVisible({ timeout: 15000 });
+});
+
+Then("the search page URL includes query {string}", async function (query) {
+  await expect(this.page).toHaveURL(
+    new RegExp(`/search\\?query=${encodeURIComponent(query).replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+    { timeout: 15000 }
+  );
 });
 
 Then("the result shows the maintainer email {string}", async function (email) {

@@ -60,6 +60,7 @@ func migrate(_ context.Context, store *db.SQLStore) error {
 		&model.RemoteTeamUser{},
 		&model.ServiceInvitation{},
 		&model.MaintainerRefCache{},
+		&model.DotProjectSyncState{},
 	); err != nil {
 		return err
 	}

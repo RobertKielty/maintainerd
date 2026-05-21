@@ -34,13 +34,13 @@ KUBECONFIG=$(git rev-parse --show-toplevel)/tmp/kdp-cluster-cncf/kubeconfig-admi
                     name: cncf-staff-access # <- propose a better name
                   subjects:
                     - kind: User
-                      name: oidc:koray.oksay@gmail.com
+                      name: oidc:staff-one@example.test
                     - kind: User
-                      name: oidc:me@jeefy.dev
+                      name: oidc:staff-two@example.test
                     - kind: User
-                      name: oidc:robert.kielty@cncf.io # notice oidc: prefix, we should always have "odic"
+                      name: oidc:staff-three@example.test # notice oidc: prefix, we should always have "odic"
                     - kind: User
-                      name: oidc:wojciech.barczynski@kubermatic.com
+                      name: oidc:staff-four@example.test
                   roleRef:
                     apiGroup: rbac.authorization.k8s.io
                     kind: ClusterRole
@@ -95,7 +95,7 @@ metadata:
     kdp-workspaces.cncf.io/workspace-count: "247"
 spec:
   displayName: "Wojciech Barczynski"
-  primaryEmail: "wojciech.barczynski@kubermatic.com"
+  primaryEmail: "staff-one@example.test"
 ```
 
 **Update Logic in StaffMemberReconciler:**
@@ -175,9 +175,9 @@ metadata:
     managed-by: kdp-ws-operator
 subjects:
   - kind: User
-    name: oidc:wojciech.barczynski@kubermatic.com
+    name: oidc:staff-one@example.test
   - kind: User
-    name: oidc:robert.kielty@cncf.io
+    name: oidc:staff-two@example.test
   # ... (10 more staff members)
 roleRef:
   apiGroup: rbac.authorization.k8s.io
@@ -870,14 +870,14 @@ metadata:
   namespace: maintainerd
 spec:
   displayName: "Test Staff"
-  primaryEmail: "test@cncf.io"
+  primaryEmail: "test-staff@example.test"
 EOF
 
 # 3. Verify binding in workspace
 KUBECONFIG=$(git rev-parse --show-toplevel)/tmp/kdp-cluster-cncf/kubeconfig-admin \
   kubectl get clusterrolebinding cncf-staff-access -o yaml
 
-# 4. Check subjects include oidc:test@cncf.io and verify annotations
+# 4. Check subjects include oidc:test-staff@example.test and verify annotations
 KUBECONFIG=$(git rev-parse --show-toplevel)/tmp/kdp-cluster-cncf/kubeconfig-admin \
   kubectl get clusterrolebinding cncf-staff-access -o jsonpath='{.metadata.annotations}'
 

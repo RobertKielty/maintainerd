@@ -12,6 +12,7 @@ import Link from "next/link";
 import styles from "./ProjectReconciliationCard.module.css";
 import ProjectDiffControl from "./ProjectDiffControl";
 import ProjectAddMaintainerModal from "./ProjectAddMaintainerModal";
+import DotProjectMaintainerFileViewer from "./DotProjectMaintainerFileViewer";
 
 type MaintainerSummary = {
   id: number;
@@ -64,11 +65,52 @@ type FossaInviteCandidateSummary = {
   email: string;
 };
 
+type DotProjectSyncStateSummary = {
+  repoExists: boolean;
+  projectFileExists: boolean;
+  maintainersFileExists: boolean;
+  securityFileExists: boolean;
+  contributingFileExists: boolean;
+  governanceFileExists: boolean;
+  defaultBranch?: string | null;
+  maintainersFilename?: string | null;
+  schemaVersion?: string | null;
+  lastCheckedAt?: string | null;
+  syncError?: string | null;
+  parseError?: string | null;
+};
+
+type DotProjectMaintainerCacheSummary = {
+  filename?: string | null;
+  etag?: string | null;
+  bodyHash?: string | null;
+  body?: string | null;
+  lastCheckedAt?: string | null;
+};
+
 type SortDirection = "asc" | "desc";
 
 type SortState<Key extends string> = {
   key: Key;
   direction: SortDirection;
+};
+
+export type ProjectSectionId =
+  | "legacy"
+  | "dot-project"
+  | "license-checker"
+  | "mailing-maintainers"
+  | "mailing-security"
+  | "docs"
+  | "slack"
+  | "discord";
+
+type ProjectSectionNavItem = {
+  id: ProjectSectionId;
+  label: string;
+  href?: string;
+  statusTone?: "success" | "danger";
+  statusSymbol?: string;
 };
 
 export type AddMaintainerPayload = {
@@ -85,6 +127,18 @@ type ProjectReconciliationCardProps = {
   name: string;
   maturity: string;
   maintainerRef?: string | null;
+  dotProjectRepoRef?: string | null;
+  dotProjectProjectRef?: string | null;
+  dotProjectMaintainerRef?: string | null;
+  dotProjectSecurityRef?: string | null;
+  dotProjectContributingRef?: string | null;
+  dotProjectGovernanceRef?: string | null;
+  dotProjectSchemaVersion?: string | null;
+  dotProjectMaintainerCount?: number | null;
+  dotProjectLastSyncedAt?: string | null;
+  dotProjectAdoptionStatus?: string | null;
+  dotProjectSyncState?: DotProjectSyncStateSummary | null;
+  dotProjectMaintainerCache?: DotProjectMaintainerCacheSummary | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -114,6 +168,9 @@ type ProjectReconciliationCardProps = {
   onAddMaintainer?: (payload: AddMaintainerPayload) => Promise<void>;
   onUpdateMaintainerRef?: (ref: string) => Promise<void>;
   onBulkStatusChange?: (ids: number[], status: string) => Promise<void>;
+  activeSection?: ProjectSectionId;
+  sectionNavItems?: ProjectSectionNavItem[];
+  hideSectionMenu?: boolean;
 };
 
 const formatDate = (value?: string | null) => {
@@ -203,11 +260,26 @@ const maintainerRefSchema = {
 
 const isYamlRef = (value: string) => /\.(ya?ml)(\?|#|$)/i.test(value);
 
+const buildStatusBadgeClassName = (stylesMap: Record<string, string>, found: boolean) =>
+  `${stylesMap.statusBadge} ${found ? stylesMap.statusOk : stylesMap.statusWarn}`;
+
 export default function ProjectReconciliationCard({
   projectId,
   name,
   maturity,
   maintainerRef,
+  dotProjectRepoRef,
+  dotProjectProjectRef,
+  dotProjectMaintainerRef,
+  dotProjectSecurityRef,
+  dotProjectContributingRef,
+  dotProjectGovernanceRef,
+  dotProjectSchemaVersion,
+  dotProjectMaintainerCount,
+  dotProjectLastSyncedAt,
+  dotProjectAdoptionStatus,
+  dotProjectSyncState,
+  dotProjectMaintainerCache,
   maintainerRefStatus,
   maintainerRefBody,
   refLines,
@@ -231,11 +303,63 @@ export default function ProjectReconciliationCard({
   onAddMaintainer,
   onUpdateMaintainerRef,
   onBulkStatusChange,
+  activeSection: controlledSection,
+  sectionNavItems,
+  hideSectionMenu = false,
 }: ProjectReconciliationCardProps) {
   const refStatus = maintainerRefStatus?.status || "missing";
   const refCheckedAt = maintainerRefStatus?.checkedAt || null;
   const refUrl = maintainerRefStatus?.url || maintainerRef || "";
   const refBody = maintainerRefBody?.trim() ?? "";
+  const hasDotProjectMaintainerFile = Boolean(dotProjectMaintainerRef);
+  const hasDotProjectRepo = Boolean(dotProjectRepoRef);
+  const dotProjectMissing = dotProjectAdoptionStatus === "not_found";
+  const dotProjectPresent = !dotProjectMissing && hasDotProjectRepo;
+  const dotProjectRepoExists = dotProjectSyncState?.repoExists ?? dotProjectPresent;
+  const dotProjectLastCheckedAt = dotProjectSyncState?.lastCheckedAt || dotProjectLastSyncedAt || null;
+  const dotProjectSchema = dotProjectSyncState?.schemaVersion || dotProjectSchemaVersion || "";
+  const dotProjectMaintainersFilename = dotProjectSyncState?.maintainersFilename || "MAINTAINERS.yaml";
+  const dotProjectMaintainerCacheBody = dotProjectMaintainerCache?.body ?? "";
+  const dotProjectMaintainerCacheFilename =
+    dotProjectMaintainerCache?.filename || dotProjectMaintainersFilename || "maintainers.yaml";
+  const dotProjectFiles = [
+    {
+      label: ".project repo",
+      present: dotProjectRepoExists,
+      href: dotProjectRepoRef || "",
+      detail: dotProjectSyncState?.defaultBranch ? `Default branch: ${dotProjectSyncState.defaultBranch}` : "Repository root",
+    },
+    {
+      label: "project.yaml",
+      present: dotProjectSyncState?.projectFileExists ?? Boolean(dotProjectProjectRef),
+      href: dotProjectProjectRef || "",
+      detail: dotProjectSchema ? `Schema ${dotProjectSchema}` : "Core project metadata",
+    },
+    {
+      label: dotProjectMaintainersFilename,
+      present: dotProjectSyncState?.maintainersFileExists ?? hasDotProjectMaintainerFile,
+      href: dotProjectMaintainerRef || "",
+      detail: dotProjectMaintainerCount != null ? `${dotProjectMaintainerCount} maintainers` : "Maintainer roster",
+    },
+    {
+      label: "SECURITY.md",
+      present: dotProjectSyncState?.securityFileExists ?? Boolean(dotProjectSecurityRef),
+      href: dotProjectSecurityRef || "",
+      detail: "Security policy",
+    },
+    {
+      label: "CONTRIBUTING.md",
+      present: dotProjectSyncState?.contributingFileExists ?? Boolean(dotProjectContributingRef),
+      href: dotProjectContributingRef || "",
+      detail: "Contribution guidelines",
+    },
+    {
+      label: "GOVERNANCE.md",
+      present: dotProjectSyncState?.governanceFileExists ?? Boolean(dotProjectGovernanceRef),
+      href: dotProjectGovernanceRef || "",
+      detail: "Governance document",
+    },
+  ];
   const refMatchCount = maintainers.filter((maintainer) => maintainer.inMaintainerRef).length;
   const refMissingCount = maintainers.length - refMatchCount;
   const refOnlyCount = refOnlyGitHub.length;
@@ -402,7 +526,7 @@ export default function ProjectReconciliationCard({
   const [refInput, setRefInput] = useState("");
   const [refSaving, setRefSaving] = useState(false);
   const [refError, setRefError] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<string>("legacy");
+  const [activeSection, setActiveSection] = useState<ProjectSectionId>("legacy");
   const [refEditing, setRefEditing] = useState(false);
   const [maturityModalOpen, setMaturityModalOpen] = useState(false);
   const [maturitySaving, setMaturitySaving] = useState(false);
@@ -431,6 +555,7 @@ export default function ProjectReconciliationCard({
   });
   const [fossaChooseStatus, setFossaChooseStatus] = useState<"idle" | "loading" | "done" | "error">("idle");
   const [fossaChooseError, setFossaChooseError] = useState<string | null>(null);
+  const currentSection = controlledSection ?? activeSection;
 
   const toggleSort = useCallback(
     <Key extends string>(current: SortState<Key>, setter: (next: SortState<Key>) => void, key: Key) => {
@@ -598,30 +723,11 @@ export default function ProjectReconciliationCard({
   }, [apiBaseUrl, fossaTeamId, projectId]);
 
   useEffect(() => {
-    if (activeSection !== "license-checker" || !projectId || !fossaTeamId) {
+    if (currentSection !== "license-checker" || !projectId || !fossaTeamId) {
       return;
     }
     void loadFossaInvites();
-  }, [activeSection, fossaTeamId, loadFossaInvites, projectId]);
-  useEffect(() => {
-    if (eligibleInviteRows.length === 0) {
-      setSelectedMaintainers((prev) => (prev.size === 0 ? prev : new Set()));
-      return;
-    }
-    const next = new Set(eligibleInviteRows.map((row) => row.maintainer.id));
-    setSelectedMaintainers((prev) => {
-      if (prev.size !== next.size) {
-        return next;
-      }
-      for (const id of next) {
-        if (!prev.has(id)) {
-          return next;
-        }
-      }
-      return prev;
-    });
-  }, [eligibleInviteRows]);
-
+  }, [currentSection, fossaTeamId, loadFossaInvites, projectId]);
   const sendFossaInvites = async () => {
     if (!projectId || !fossaTeamId || selectedMaintainers.size === 0) {
       return;
@@ -776,12 +882,129 @@ export default function ProjectReconciliationCard({
 
   const dotProjectSection = (
     <div className={styles.section}>
-      <h3 className={styles.subSectionTitle}>Proposed dot project.yaml</h3>
-      <p className={styles.stub}>
-        Coming soon: this section will combine CNCF database fields and the Project Admin File to propose a standardized{" "}
-        <code>project.yaml</code> that projects can check in for GitOps-friendly maintainer rosters, mailing lists, and
-        service metadata.
-      </p>
+      {dotProjectMaintainerCacheBody.trim() ? (
+        <div className={styles.tableSection}>
+          <div className={styles.tableHeader}>
+            <h3 className={styles.tableTitle}>{dotProjectMaintainerCacheFilename}</h3>
+            {dotProjectMaintainerRef ? (
+              <a className={styles.link} href={dotProjectMaintainerRef} target="_blank" rel="noreferrer">
+                Open source file
+              </a>
+            ) : null}
+          </div>
+          <DotProjectMaintainerFileViewer
+            apiBaseUrl={apiBaseUrl}
+            filename={dotProjectMaintainerCacheFilename}
+            maintainers={maintainers}
+            projectId={projectId}
+            canEdit={canEdit}
+            onAddMissingMaintainer={(handle, refLine) => {
+              setDraft({
+                githubHandle: handle,
+                name: "",
+                email: "",
+                company: "",
+                companyMode: "select",
+                refLine,
+              });
+              setModalOpen(true);
+            }}
+            source={dotProjectMaintainerCacheBody}
+          />
+        </div>
+      ) : null}
+      <div className={styles.tableSection}>
+        <div className={styles.tableHeader}>
+          <h3 className={styles.tableTitle}>Discovery details</h3>
+        </div>
+        <div className={styles.dotProjectSummaryGrid}>
+          <div className={styles.dotProjectSummaryCard}>
+            <span className={styles.detailLabel}>Repo</span>
+            <div className={styles.statusRow}>
+              <span className={buildStatusBadgeClassName(styles, dotProjectRepoExists)}>
+                {dotProjectRepoExists ? "FOUND" : "MISSING"}
+              </span>
+              <span className={styles.secondary}>{dotProjectSyncState?.defaultBranch || "Branch unknown"}</span>
+            </div>
+          </div>
+          <div className={styles.dotProjectSummaryCard}>
+            <span className={styles.detailLabel}>Schema version</span>
+            <span className={styles.secondary}>{dotProjectSchema || "Unknown"}</span>
+          </div>
+          <div className={styles.dotProjectSummaryCard}>
+            <span className={styles.detailLabel}>Maintainer count</span>
+            <span className={styles.secondary}>
+              {dotProjectMaintainerCount != null ? String(dotProjectMaintainerCount) : "Not parsed"}
+            </span>
+          </div>
+          <div className={styles.dotProjectSummaryCard}>
+            <span className={styles.detailLabel}>Last checked</span>
+            <span className={styles.secondary}>{formatDateTime(dotProjectLastCheckedAt)}</span>
+          </div>
+        </div>
+      </div>
+      <div className={styles.tableSection}>
+        <div className={styles.tableHeader}>
+          <h3 className={styles.tableTitle}>Tracked files</h3>
+        </div>
+        <div className={styles.tableWrap}>
+          <table className={styles.dataTable}>
+            <thead>
+              <tr>
+                <th>Artifact</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dotProjectFiles.map((file) => (
+                <tr key={file.label}>
+                  <td>
+                    {file.present && file.href ? (
+                      <a className={styles.dotProjectArtifactLink} href={file.href} target="_blank" rel="noreferrer">
+                        <span className={styles.dotProjectArtifactName}>{file.label}</span>
+                        <span className={styles.dotProjectArtifactUrl}>{file.href}</span>
+                        <span className={styles.externalLinkIcon} aria-hidden="true">
+                          ↗
+                        </span>
+                        <span className={styles.srOnly}>Opens on GitHub</span>
+                      </a>
+                    ) : (
+                      <span className={styles.dotProjectMissingArtifact}>
+                        <span className={styles.dotProjectArtifactName}>{file.label}</span>
+                        <span className={`${styles.statusBadge} ${styles.statusWarn}`}>NOT FOUND</span>
+                      </span>
+                    )}
+                  </td>
+                  <td>{file.detail}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      {dotProjectSyncState?.syncError || dotProjectSyncState?.parseError ? (
+        <div className={styles.statusCallout}>
+          <div className={styles.statusCalloutTitle}>Recorded sync issues</div>
+          {dotProjectSyncState?.syncError ? (
+            <div className={styles.statusCalloutBody}>
+              Sync error: <strong>{dotProjectSyncState.syncError}</strong>
+            </div>
+          ) : null}
+          {dotProjectSyncState?.parseError ? (
+            <div className={styles.statusCalloutBody}>
+              Parse error: <strong>{dotProjectSyncState.parseError}</strong>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+      {!dotProjectSyncState && !dotProjectAdoptionStatus ? (
+        <div className={styles.statusCallout}>
+          <div className={styles.statusCalloutTitle}>No persisted sync state yet</div>
+          <div className={styles.statusCalloutBody}>
+            Run the dot-project background sync job to populate this roll call from the CNCF <code>.project</code> repo.
+          </div>
+        </div>
+        ) : null}
     </div>
   );
 
@@ -790,10 +1013,25 @@ export default function ProjectReconciliationCard({
 
   const legacyContent = (
     <div className={styles.legacyStack}>
-      <div className={styles.legacyIntro}>
-        Compare the Maintainer DB roster with the Legacy Maintainer File. Use ADD MAINTAINER to add any maintainers listed
-        in the project file who are missing from the DB.
-      </div>
+      {hasDotProjectMaintainerFile ? (
+        <div className={styles.statusCallout}>
+          <div className={styles.statusCalloutTitle}>Dot-project maintainer file detected</div>
+          <div className={styles.statusCalloutBody}>
+            This project has a maintainer file in its <code>.project</code> repo. Use DOT-PROJECT ROLL CALL to track the
+            migration from the legacy maintainer file.
+          </div>
+          <div className={styles.statusCalloutLinks}>
+            <a className={styles.link} href={dotProjectMaintainerRef!} target="_blank" rel="noreferrer">
+              Open maintainer file
+            </a>
+            {hasDotProjectRepo ? (
+              <a className={styles.link} href={dotProjectRepoRef!} target="_blank" rel="noreferrer">
+                Open .project repo
+              </a>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
       <div className={styles.legacyGrid}>
         <div className={styles.column}>
           <div className={styles.sectionHeader}>
@@ -965,9 +1203,19 @@ export default function ProjectReconciliationCard({
     </div>
   );
 
-  const menuItems = [
-    { id: "legacy", label: "MAINTAINER ROLL CALL" },
-    { id: "dot-project", label: "PROJECT RECORDS / DOT PROJECT YAML" },
+  const defaultMenuItems: ProjectSectionNavItem[] = [
+    {
+      id: "legacy",
+      label: "LEGACY ROLL CALL",
+      statusTone: dotProjectMissing ? "success" : dotProjectPresent ? "danger" : undefined,
+      statusSymbol: dotProjectMissing ? "✓" : dotProjectPresent ? "✕" : undefined,
+    },
+    {
+      id: "dot-project",
+      label: "DOT-PROJECT ROLL CALL",
+      statusTone: dotProjectPresent ? "success" : dotProjectMissing ? "danger" : undefined,
+      statusSymbol: dotProjectPresent ? "✓" : dotProjectMissing ? "✕" : undefined,
+    },
     { id: "license-checker", label: "SERVICES / LICENSE CHECKER" },
     { id: "mailing-maintainers", label: "SERVICES / MAILING LISTS / MAINTAINERS" },
     { id: "mailing-security", label: "SERVICES / MAILING LISTS / SECURITY" },
@@ -975,9 +1223,10 @@ export default function ProjectReconciliationCard({
     { id: "slack", label: "SERVICES / COLLABORATION / SLACK" },
     { id: "discord", label: "SERVICES / COLLABORATION / DISCORD" },
   ];
+  const menuItems = sectionNavItems ?? defaultMenuItems;
 
   const renderContent = () => {
-    switch (activeSection) {
+    switch (currentSection) {
       case "legacy":
         return (
           <>
@@ -1475,7 +1724,7 @@ export default function ProjectReconciliationCard({
                   setMaturityError(null);
                 }}
               >
-                Transition
+                MOVE LEVEL
               </button>
             ) : null}
           </div>
@@ -1483,24 +1732,76 @@ export default function ProjectReconciliationCard({
         </div>
 
         <div className={styles.bottomRow}>
-          <div className={styles.menuColumn}>
-            <div className={styles.projectMenu}>
-              {menuItems.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={`${styles.menuItem} ${activeSection === item.id ? styles.menuItemActive : ""}`}
-                  onClick={() => setActiveSection(item.id)}
-                >
-                  {item.label}
-                </button>
-              ))}
+          {!hideSectionMenu ? (
+            <div className={styles.menuColumn}>
+              <div className={styles.projectMenu}>
+                {menuItems.map((item) =>
+                  item.href ? (
+                    <Link
+                      key={item.id}
+                      href={item.href}
+                      className={`${styles.menuItem} ${currentSection === item.id ? styles.menuItemActive : ""}`}
+                    >
+                      <span className={styles.menuItemInner}>
+                        <span>{item.label}</span>
+                        {item.statusSymbol ? (
+                          <span
+                            aria-hidden="true"
+                            className={`${styles.menuStatus} ${
+                              item.statusTone === "success" ? styles.menuStatusSuccess : styles.menuStatusDanger
+                            }`}
+                          >
+                            {item.statusSymbol}
+                          </span>
+                        ) : null}
+                      </span>
+                    </Link>
+                  ) : (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`${styles.menuItem} ${currentSection === item.id ? styles.menuItemActive : ""}`}
+                      onClick={() => setActiveSection(item.id)}
+                    >
+                      <span className={styles.menuItemInner}>
+                        <span>{item.label}</span>
+                        {item.statusSymbol ? (
+                          <span
+                            aria-hidden="true"
+                            className={`${styles.menuStatus} ${
+                              item.statusTone === "success" ? styles.menuStatusSuccess : styles.menuStatusDanger
+                            }`}
+                          >
+                            {item.statusSymbol}
+                          </span>
+                        ) : null}
+                      </span>
+                    </button>
+                  )
+                )}
+              </div>
             </div>
-          </div>
+          ) : null}
           <div className={styles.contentColumn}>
             <div className={styles.nestedCard}>
               <div className={styles.collapsibleHeader}>
-                <h2 className={styles.sectionTitle}>{menuItems.find((m) => m.id === activeSection)?.label}</h2>
+                <h2 className={styles.sectionTitle}>
+                  <span className={styles.menuItemInner}>
+                    <span>{menuItems.find((m) => m.id === currentSection)?.label}</span>
+                    {menuItems.find((m) => m.id === currentSection)?.statusSymbol ? (
+                      <span
+                        aria-hidden="true"
+                        className={`${styles.menuStatus} ${
+                          menuItems.find((m) => m.id === currentSection)?.statusTone === "success"
+                            ? styles.menuStatusSuccess
+                            : styles.menuStatusDanger
+                        }`}
+                      >
+                        {menuItems.find((m) => m.id === currentSection)?.statusSymbol}
+                      </span>
+                    ) : null}
+                  </span>
+                </h2>
               </div>
               {renderContent()}
             </div>
@@ -1526,7 +1827,7 @@ export default function ProjectReconciliationCard({
           <div className={styles.modalOverlay} role="dialog" aria-modal="true">
             <div className={styles.modal}>
               <div className={styles.modalHeader}>
-                <h2 className={styles.modalTitle}>Transition Project Status</h2>
+                <h2 className={styles.modalTitle}>Move Project to new Level</h2>
                 <button
                   className={styles.modalClose}
                   type="button"

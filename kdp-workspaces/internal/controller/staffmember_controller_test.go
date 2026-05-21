@@ -133,8 +133,8 @@ func TestOIDCSubjectPrefix(t *testing.T) {
 		},
 		{
 			name:            "organizational email",
-			email:           "wojciech.barczynski@kubermatic.com",
-			expectedSubject: "oidc:wojciech.barczynski@kubermatic.com",
+			email:           "staff@example.test",
+			expectedSubject: "oidc:staff@example.test",
 		},
 	}
 

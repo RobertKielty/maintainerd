@@ -2,7 +2,9 @@ const { When, Then } = require("@cucumber/cucumber");
 const { expect } = require("@playwright/test");
 
 When("I search for {string}", async function (query) {
-  const searchInput = this.page.getByPlaceholder("Search projects");
+  const searchInput = this.page.getByPlaceholder(
+    "Search projects, maintainers, companies, or roster URLs"
+  );
   await searchInput.fill(query);
   await searchInput.press("Enter");
   await this.page.screenshot({
@@ -36,4 +38,8 @@ Then("I see the maintainer card for {string}", async function (name) {
   await expect(this.page.getByRole("heading", { name })).toBeVisible({
     timeout: 15000,
   });
+});
+
+Then("I see the maintainer location {string}", async function (location) {
+  await expect(this.page.getByText(location)).toBeVisible({ timeout: 10000 });
 });

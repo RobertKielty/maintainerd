@@ -9,6 +9,20 @@ Feature: Maintainer profile page
     And I click on maintainer "Antonio Example"
     Then I see the maintainer card for "Antonio Example"
 
+  Scenario: Maintainer card shows GitHub profile location
+    Given I am signed in as staff
+    When I search for "Antonio"
+    And I click on maintainer "Antonio Example"
+    Then I see the maintainer card for "Antonio Example"
+    And I see the maintainer location "Madrid, Spain"
+
+  Scenario: Maintainer card shows location for an Armenian maintainer
+    Given I am signed in as staff
+    When I search for "Sam"
+    And I click on maintainer "Sam NoEmail"
+    Then I see the maintainer card for "Sam NoEmail"
+    And I see the maintainer location "Yerevan, Armenia"
+
   Rule: Staff can inspect and repair maintainer service associations
     - The maintainer page shows what maintainer-d knows about a maintainer's association with remote services
     - The maintainer page shows which project service assignments imply that the maintainer should have remote service access
@@ -25,6 +39,7 @@ Feature: Maintainer profile page
     And I see which remote services the maintainer is associated with
     And I see which project service assignments imply that the maintainer should be associated with those services
 
+  @microcks
   Scenario: Staff can recheck remote service associations after updating a maintainer email
     Given I am signed in as a staff member
     And a maintainer exists in maintainer-d
@@ -46,6 +61,7 @@ Feature: Maintainer profile page
     Then I see that the maintainer is associated with CNCF FOSSA
     And I see that the maintainer is missing from the FOSSA team required by the project
 
+  @microcks
   Scenario: Staff can reconcile a known FOSSA user to all missing required project teams
     Given I am signed in as a staff member
     And a maintainer exists in maintainer-d
@@ -57,6 +73,7 @@ Feature: Maintainer profile page
     And the maintainer page shows the full set of required FOSSA teams for the maintainer
     And the maintainer page shows that the maintainer is now associated with those FOSSA teams
 
+  @microcks
   Scenario: Staff can invite a maintainer to CNCF FOSSA from the maintainer page
     Given I am signed in as a staff member
     And a maintainer exists in maintainer-d
@@ -66,6 +83,7 @@ Feature: Maintainer profile page
     Then maintainer-d sends a CNCF FOSSA invitation to the maintainer
     And the maintainer page shows that FOSSA onboarding is pending
 
+  @microcks
   Scenario: Staff can reconcile FOSSA access after a maintainer accepts an invitation
     Given I am signed in as a staff member
     And a maintainer exists in maintainer-d

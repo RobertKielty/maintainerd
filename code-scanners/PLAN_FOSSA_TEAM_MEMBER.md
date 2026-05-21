@@ -635,8 +635,8 @@ metadata:
 spec:
   projectName: argo
   fossaUserEmails:
-    - "maintainer1@argoproj.io"
-    - "maintainer2@argoproj.io"
+    - "maintainer1@example.dev"
+    - "maintainer2@example.dev"
 ```
 
 ### Example Status After Full Reconciliation
@@ -650,13 +650,13 @@ status:
     organizationId: 162
     url: https://app.fossa.com/account/settings/organization/teams/456
   userInvitations:
-    - email: "maintainer1@argoproj.io"
+    - email: "maintainer1@example.dev"
       status: AddedToTeam                        # Changed from Accepted
       invitedAt: "2026-02-01T10:00:00Z"
       acceptedAt: "2026-02-02T14:30:00Z"
       addedToTeamAt: "2026-02-02T14:35:00Z"      # NEW FIELD
       message: "User added to team"
-    - email: "maintainer2@argoproj.io"
+    - email: "maintainer2@example.dev"
       status: Accepted
       invitedAt: "2026-02-04T09:00:00Z"
       acceptedAt: "2026-02-04T15:20:00Z"

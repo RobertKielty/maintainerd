@@ -21,6 +21,13 @@ body {
   --md-modal-backdrop: rgba(15, 23, 42, 0.45);
   --md-modal-shadow: 0 20px 40px rgba(15, 23, 42, 0.2);
   --md-modal-z: 1100;
+  --md-status-success-bg: #dcfce7;
+  --md-status-success-border: #86efac;
+  --md-status-success-text: #166534;
+  --md-status-danger-bg: #fee2e2;
+  --md-status-danger-border: #fca5a5;
+  --md-status-danger-text: #b91c1c;
+  --md-callout-bg: linear-gradient(180deg, rgba(250, 250, 252, 1) 0%, rgba(245, 247, 250, 1) 100%);
 }
 
 [data-theme="dark"] {
@@ -39,6 +46,13 @@ body {
   --md-shadow: 0 12px 24px rgba(0, 0, 0, 0.45);
   --md-modal-backdrop: rgba(10, 12, 16, 0.7);
   --md-modal-shadow: 0 24px 48px rgba(0, 0, 0, 0.6);
+  --md-status-success-bg: rgba(34, 197, 94, 0.14);
+  --md-status-success-border: rgba(74, 222, 128, 0.4);
+  --md-status-success-text: #86efac;
+  --md-status-danger-bg: rgba(239, 68, 68, 0.14);
+  --md-status-danger-border: rgba(248, 113, 113, 0.4);
+  --md-status-danger-text: #fca5a5;
+  --md-callout-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.06) 100%);
 }
 
 body {

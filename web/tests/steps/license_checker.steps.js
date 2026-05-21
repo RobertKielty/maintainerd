@@ -30,7 +30,8 @@ const openProjectPage = async (world) => {
     throw new Error("No projectName set for license checker scenario.");
   }
   const id = await resolveProjectId(world, world.projectName);
-  await world.page.goto(`${world.baseUrl}/projects/${id}`, {
+  world.projectId = id;
+  await world.page.goto(`${world.baseUrl}/projects/${id}/github`, {
     waitUntil: "domcontentloaded",
   });
   await expect(world.page.getByRole("heading", { name: world.projectName })).toBeVisible({
@@ -39,12 +40,13 @@ const openProjectPage = async (world) => {
 };
 
 const openLicenseCheckerSection = async (world) => {
-  const menuButton = world.page.getByRole("button", {
-    name: "SERVICES / LICENSE CHECKER",
+  if (!world.projectId) {
+    world.projectId = await resolveProjectId(world, world.projectName);
+  }
+  await world.page.goto(`${world.baseUrl}/projects/${world.projectId}/fossa`, {
+    waitUntil: "domcontentloaded",
   });
-  await menuButton.waitFor({ state: "visible", timeout: 15000 });
-  await menuButton.click();
-  await expect(world.page.getByRole("heading", { name: "SERVICES / LICENSE CHECKER" })).toBeVisible({
+  await expect(world.page.getByRole("heading", { name: "LICENSE CHECKER - FOSSA" })).toBeVisible({
     timeout: 15000,
   });
 };
@@ -234,11 +236,7 @@ Then(
 
 When("the system checks FOSSA invitation status", async function () {
   await openProjectPage(this);
-  const menuButton = this.page.getByRole("button", {
-    name: "SERVICES / LICENSE CHECKER",
-  });
-  await menuButton.waitFor({ state: "visible", timeout: 15000 });
-  await menuButton.click();
+  await openLicenseCheckerSection(this);
 });
 
 Then(

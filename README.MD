@@ -59,7 +59,7 @@ We have CRDs for projects, maintainers and companies that are periodically synch
 
 ## Operations Guide
 
-Operational commands, deployment steps, and Make targets live in [OPS.MD](./OPS,MD).
+Operational commands, deployment steps, and Make targets live in [OPS.MD](./OPS.MD).
 
 ## Developer: Run the Web App Locally
 

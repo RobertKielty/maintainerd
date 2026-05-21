@@ -7,8 +7,113 @@
   gap: 32px;
 }
 
+.eyebrow {
+  margin: 0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: #d62293;
+}
+
+.hero {
+  min-height: calc(100vh - 280px);
+  display: grid;
+  place-items: center;
+}
+
+.heroPanel {
+  width: min(100%, 760px);
+  padding: 48px;
+  border-radius: 28px;
+  background:
+    radial-gradient(circle at top left, rgba(214, 34, 147, 0.14), transparent 38%),
+    linear-gradient(135deg, rgba(255, 255, 255, 0.96), rgba(247, 250, 252, 0.96));
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  box-shadow: 0 24px 64px rgba(15, 23, 42, 0.1);
+}
+
+.heroTitle {
+  margin: 12px 0 16px;
+  font-size: clamp(2.5rem, 5vw, 4.5rem);
+  line-height: 0.95;
+  letter-spacing: -0.04em;
+  max-width: 12ch;
+  color: var(--md-card-text, #0f172a);
+}
+
+.heroText {
+  margin: 0 0 24px;
+  max-width: 58ch;
+  font-size: 1rem;
+  line-height: 1.7;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.75));
+}
+
+.loginButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 18px;
+  border-radius: 999px;
+  background: #d62293;
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.loginButton:hover {
+  background: #b91c7a;
+  transform: translateY(-1px);
+}
+
+[data-theme="dark"] .eyebrow {
+  color: #ff5ec4;
+}
+
+[data-theme="dark"] .heroPanel {
+  background:
+    radial-gradient(circle at top left, rgba(255, 94, 196, 0.18), transparent 42%),
+    linear-gradient(135deg, rgba(22, 25, 31, 0.96), rgba(12, 16, 22, 0.98));
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="dark"] .heroTitle {
+  color: #f7f8fb;
+}
+
+[data-theme="dark"] .heroText {
+  color: rgba(236, 239, 244, 0.88);
+}
+
+[data-theme="dark"] .loginButton {
+  background: #ff4eb8;
+  color: #130814;
+}
+
+[data-theme="dark"] .loginButton:hover {
+  background: #ff79ca;
+}
+
 @media (max-width: 600px) {
   .main {
     padding: 24px 16px 48px;
+  }
+
+  .hero {
+    min-height: auto;
+  }
+
+  .heroPanel {
+    padding: 32px 24px;
+    border-radius: 20px;
+  }
+
+  .heroTitle {
+    max-width: none;
   }
 }

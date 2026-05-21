@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	pathpkg "path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -21,6 +22,7 @@ import (
 	"time"
 
 	"maintainerd/db"
+	"maintainerd/dotproject"
 	"maintainerd/model"
 	"maintainerd/onboarding"
 	"maintainerd/plugins/fossa"
@@ -74,27 +76,28 @@ const (
 )
 
 type server struct {
-	oauthConfig      *oauth2.Config
-	store            *db.SQLStore
-	sessions         *sessionStore
-	oauthStates      *stateStore
-	cookieName       string
-	stateCookie      string
-	webBaseURL       string
-	cookieDomain     string
-	cookieSecure     bool
-	sessionTTL       time.Duration
-	webOrigin        string
-	testMode         bool
-	allowLiveFossa   bool
-	logger           *log.Logger
-	githubToken      string
-	fossaToken       string
-	fetchIssueTitle  func(ctx context.Context, owner, repo string, number int) (string, error)
-	onboardingCache  *onboardingIssueCache
-	fetchIssues      func(ctx context.Context) ([]onboardingIssueSummary, error)
-	fossaTeamCacheMu sync.RWMutex
-	fossaTeamCache   map[uint]cachedFossaTeam
+	oauthConfig                 *oauth2.Config
+	store                       *db.SQLStore
+	sessions                    *sessionStore
+	oauthStates                 *stateStore
+	cookieName                  string
+	stateCookie                 string
+	webBaseURL                  string
+	cookieDomain                string
+	cookieSecure                bool
+	sessionTTL                  time.Duration
+	webOrigin                   string
+	testMode                    bool
+	allowLiveFossa              bool
+	logger                      *log.Logger
+	githubToken                 string
+	fossaToken                  string
+	fetchIssueTitle             func(ctx context.Context, owner, repo string, number int) (string, error)
+	onboardingCache             *onboardingIssueCache
+	fetchIssues                 func(ctx context.Context) ([]onboardingIssueSummary, error)
+	createDotProjectPullRequest func(ctx context.Context, input dotProjectPullRequestInput, githubToken string) (*dotProjectPullRequestResponse, error)
+	fossaTeamCacheMu            sync.RWMutex
+	fossaTeamCache              map[uint]cachedFossaTeam
 }
 
 type cachedFossaTeam struct {
@@ -103,11 +106,12 @@ type cachedFossaTeam struct {
 }
 
 type session struct {
-	ID        string
-	Login     string
-	Role      string
-	CreatedAt time.Time
-	ExpiresAt time.Time
+	ID          string
+	Login       string
+	Role        string
+	AccessToken string
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
 }
 
 type sessionStore struct {
@@ -240,7 +244,7 @@ func main() {
 			ClientID:     clientID,
 			ClientSecret: clientSecret,
 			RedirectURL:  redirectURL,
-			Scopes:       []string{"read:user"},
+			Scopes:       []string{"read:user", "public_repo"},
 			Endpoint:     ghoauth.Endpoint,
 		},
 		store:          store,
@@ -349,6 +353,7 @@ func (s *server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Expires:  time.Now().Add(s.oauthStates.ttl),
 	})
 
+	//nolint:gosec // Secure is intentionally configurable for local HTTP development and test mode; HttpOnly and SameSite are set.
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.stateCookie,
 		Value:    state,
@@ -409,7 +414,7 @@ func (s *server) handleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.createSession(login, role, w); err != nil {
+	if err := s.createSession(login, role, token.AccessToken, w); err != nil {
 		http.Error(w, "failed to establish session", http.StatusInternalServerError)
 		return
 	}
@@ -446,7 +451,7 @@ func (s *server) handleTestLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := s.createSession(login, role, w); err != nil {
+	if err := s.createSession(login, role, "", w); err != nil {
 		http.Error(w, "failed to create session", http.StatusInternalServerError)
 		return
 	}
@@ -470,6 +475,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	//nolint:gosec // Secure is intentionally configurable for local HTTP development and test mode; HttpOnly and SameSite are set.
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName,
 		Value:    "",
@@ -483,7 +489,7 @@ func (s *server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *server) createSession(login, role string, w http.ResponseWriter) error {
+func (s *server) createSession(login, role, accessToken string, w http.ResponseWriter) error {
 	sessionID, err := randomToken(48)
 	if err != nil {
 		return err
@@ -491,15 +497,17 @@ func (s *server) createSession(login, role string, w http.ResponseWriter) error 
 
 	now := time.Now()
 	s.sessions.Set(session{
-		ID:        sessionID,
-		Login:     login,
-		Role:      role,
-		CreatedAt: now,
-		ExpiresAt: now.Add(s.sessionTTL),
+		ID:          sessionID,
+		Login:       login,
+		Role:        role,
+		AccessToken: accessToken,
+		CreatedAt:   now,
+		ExpiresAt:   now.Add(s.sessionTTL),
 	})
 
 	s.logger.Printf("web-bff: login success user=%s role=%s", login, role)
 
+	//nolint:gosec // Secure is intentionally configurable for local HTTP development and test mode; HttpOnly and SameSite are set.
 	http.SetCookie(w, &http.Cookie{
 		Name:     s.cookieName,
 		Value:    sessionID,
@@ -549,17 +557,26 @@ type projectsResponse struct {
 }
 
 type recentProjectSummary struct {
-	ID                   uint                `json:"id"`
-	Name                 string              `json:"name"`
-	Maturity             string              `json:"maturity"`
-	AddedBy              string              `json:"addedBy"`
-	OnboardingIssue      string              `json:"onboardingIssue,omitempty"`
-	OnboardingIssueState string              `json:"onboardingIssueStatus,omitempty"`
-	LegacyMaintainerRef  string              `json:"legacyMaintainerRef,omitempty"`
-	GitHubOrg            string              `json:"githubOrg,omitempty"`
-	DotProjectYamlRef    string              `json:"dotProjectYamlRef,omitempty"`
-	CreatedAt            string              `json:"createdAt,omitempty"`
-	Maintainers          []maintainerSummary `json:"maintainers,omitempty"`
+	ID                        uint                `json:"id"`
+	Name                      string              `json:"name"`
+	Maturity                  string              `json:"maturity"`
+	AddedBy                   string              `json:"addedBy"`
+	OnboardingIssue           string              `json:"onboardingIssue,omitempty"`
+	OnboardingIssueState      string              `json:"onboardingIssueStatus,omitempty"`
+	LegacyMaintainerRef       string              `json:"legacyMaintainerRef,omitempty"`
+	GitHubOrg                 string              `json:"githubOrg,omitempty"`
+	DotProjectRepoRef         string              `json:"dotProjectRepoRef,omitempty"`
+	DotProjectProjectRef      string              `json:"dotProjectProjectRef,omitempty"`
+	DotProjectMaintainerRef   string              `json:"dotProjectMaintainerRef,omitempty"`
+	DotProjectSecurityRef     string              `json:"dotProjectSecurityRef,omitempty"`
+	DotProjectContributingRef string              `json:"dotProjectContributingRef,omitempty"`
+	DotProjectGovernanceRef   string              `json:"dotProjectGovernanceRef,omitempty"`
+	DotProjectSchemaVersion   string              `json:"dotProjectSchemaVersion,omitempty"`
+	DotProjectMaintainerCount *uint               `json:"dotProjectMaintainerCount,omitempty"`
+	DotProjectLastSyncedAt    *time.Time          `json:"dotProjectLastSyncedAt,omitempty"`
+	DotProjectAdoptionStatus  string              `json:"dotProjectAdoptionStatus,omitempty"`
+	CreatedAt                 string              `json:"createdAt,omitempty"`
+	Maintainers               []maintainerSummary `json:"maintainers,omitempty"`
 }
 
 type recentProjectsResponse struct {
@@ -580,13 +597,13 @@ type projectIDRow struct {
 }
 
 type projectCreateRequest struct {
-	OnboardingIssue     string `json:"onboardingIssue"`
-	ProjectName         string `json:"projectName,omitempty"`
-	GitHubOrg           string `json:"githubOrg"`
-	ParentProjectID     *uint  `json:"parentProjectId,omitempty"`
-	LegacyMaintainerRef string `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef   string `json:"dotProjectYamlRef,omitempty"`
-	Maturity            string `json:"maturity,omitempty"`
+	OnboardingIssue         string `json:"onboardingIssue"`
+	ProjectName             string `json:"projectName,omitempty"`
+	GitHubOrg               string `json:"githubOrg"`
+	ParentProjectID         *uint  `json:"parentProjectId,omitempty"`
+	LegacyMaintainerRef     string `json:"legacyMaintainerRef,omitempty"`
+	DotProjectMaintainerRef string `json:"dotProjectMaintainerRef,omitempty"`
+	Maturity                string `json:"maturity,omitempty"`
 }
 
 type projectCreateResponse struct {
@@ -598,9 +615,12 @@ type projectCreateResponse struct {
 }
 
 type maintainerSummary struct {
-	ID     uint   `json:"id"`
-	Name   string `json:"name"`
-	GitHub string `json:"github"`
+	ID       uint   `json:"id"`
+	Name     string `json:"name"`
+	GitHub   string `json:"github"`
+	Country  string `json:"country,omitempty"`
+	Location string `json:"location,omitempty"`
+	Timezone string `json:"timezone,omitempty"`
 }
 
 type projectMaintainerDetail struct {
@@ -647,30 +667,64 @@ type maintainerRefStatus struct {
 }
 
 type projectDetailResponse struct {
-	ID                      uint                           `json:"id"`
-	Name                    string                         `json:"name"`
-	Maturity                string                         `json:"maturity"`
-	ParentProjectID         *uint                          `json:"parentProjectId,omitempty"`
-	LegacyMaintainerRef     string                         `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef       string                         `json:"dotProjectYamlRef,omitempty"`
-	RefStatus               maintainerRefStatus            `json:"maintainerRefStatus"`
-	LegacyMaintainerRefBody string                         `json:"legacyMaintainerRefBody,omitempty"`
-	RefOnlyGitHub           []string                       `json:"refOnlyGitHub"`
-	RefLines                map[string]string              `json:"refLines,omitempty"`
-	OnboardingIssue         string                         `json:"onboardingIssue,omitempty"`
-	MailingList             string                         `json:"mailingList,omitempty"`
-	Maintainers             []projectMaintainerDetail      `json:"maintainers"`
-	Services                []serviceSummary               `json:"services"`
-	FossaTeamID             *uint                          `json:"fossaTeamId,omitempty"`
-	FossaTeamName           string                         `json:"fossaTeamName,omitempty"`
-	FossaTeamMembers        []fossaTeamMemberSummary       `json:"fossaTeamMembers,omitempty"`
-	FossaInviteIneligible   []fossaInviteIneligibleSummary `json:"fossaInviteIneligible,omitempty"`
-	FossaInviteCandidates   []fossaInviteCandidateSummary  `json:"fossaInviteCandidates,omitempty"`
-	CreatedAt               time.Time                      `json:"createdAt"`
-	UpdatedAt               time.Time                      `json:"updatedAt"`
-	DeletedAt               *time.Time                     `json:"deletedAt,omitempty"`
-	UpdatedBy               string                         `json:"updatedBy,omitempty"`
-	UpdatedAuditID          *uint                          `json:"updatedAuditId,omitempty"`
+	ID                        uint                           `json:"id"`
+	Name                      string                         `json:"name"`
+	Maturity                  string                         `json:"maturity"`
+	ParentProjectID           *uint                          `json:"parentProjectId,omitempty"`
+	LegacyMaintainerRef       string                         `json:"legacyMaintainerRef,omitempty"`
+	DotProjectRepoRef         string                         `json:"dotProjectRepoRef,omitempty"`
+	DotProjectProjectRef      string                         `json:"dotProjectProjectRef,omitempty"`
+	DotProjectMaintainerRef   string                         `json:"dotProjectMaintainerRef,omitempty"`
+	DotProjectSecurityRef     string                         `json:"dotProjectSecurityRef,omitempty"`
+	DotProjectContributingRef string                         `json:"dotProjectContributingRef,omitempty"`
+	DotProjectGovernanceRef   string                         `json:"dotProjectGovernanceRef,omitempty"`
+	DotProjectSchemaVersion   string                         `json:"dotProjectSchemaVersion,omitempty"`
+	DotProjectMaintainerCount *uint                          `json:"dotProjectMaintainerCount,omitempty"`
+	DotProjectLastSyncedAt    *time.Time                     `json:"dotProjectLastSyncedAt,omitempty"`
+	DotProjectAdoptionStatus  string                         `json:"dotProjectAdoptionStatus,omitempty"`
+	DotProjectSyncState       *dotProjectSyncStateResponse   `json:"dotProjectSyncState,omitempty"`
+	DotProjectMaintainerCache *dotProjectMaintainerCacheBody `json:"dotProjectMaintainerCache,omitempty"`
+	RefStatus                 maintainerRefStatus            `json:"maintainerRefStatus"`
+	LegacyMaintainerRefBody   string                         `json:"legacyMaintainerRefBody,omitempty"`
+	RefOnlyGitHub             []string                       `json:"refOnlyGitHub"`
+	RefLines                  map[string]string              `json:"refLines,omitempty"`
+	OnboardingIssue           string                         `json:"onboardingIssue,omitempty"`
+	MailingList               string                         `json:"mailingList,omitempty"`
+	Maintainers               []projectMaintainerDetail      `json:"maintainers"`
+	Services                  []serviceSummary               `json:"services"`
+	FossaTeamID               *uint                          `json:"fossaTeamId,omitempty"`
+	FossaTeamName             string                         `json:"fossaTeamName,omitempty"`
+	FossaTeamMembers          []fossaTeamMemberSummary       `json:"fossaTeamMembers,omitempty"`
+	FossaInviteIneligible     []fossaInviteIneligibleSummary `json:"fossaInviteIneligible,omitempty"`
+	FossaInviteCandidates     []fossaInviteCandidateSummary  `json:"fossaInviteCandidates,omitempty"`
+	CreatedAt                 time.Time                      `json:"createdAt"`
+	UpdatedAt                 time.Time                      `json:"updatedAt"`
+	DeletedAt                 *time.Time                     `json:"deletedAt,omitempty"`
+	UpdatedBy                 string                         `json:"updatedBy,omitempty"`
+	UpdatedAuditID            *uint                          `json:"updatedAuditId,omitempty"`
+}
+
+type dotProjectSyncStateResponse struct {
+	RepoExists             bool       `json:"repoExists"`
+	ProjectFileExists      bool       `json:"projectFileExists"`
+	MaintainersFileExists  bool       `json:"maintainersFileExists"`
+	SecurityFileExists     bool       `json:"securityFileExists"`
+	ContributingFileExists bool       `json:"contributingFileExists"`
+	GovernanceFileExists   bool       `json:"governanceFileExists"`
+	DefaultBranch          string     `json:"defaultBranch,omitempty"`
+	MaintainersFilename    string     `json:"maintainersFilename,omitempty"`
+	SchemaVersion          string     `json:"schemaVersion,omitempty"`
+	LastCheckedAt          *time.Time `json:"lastCheckedAt,omitempty"`
+	SyncError              string     `json:"syncError,omitempty"`
+	ParseError             string     `json:"parseError,omitempty"`
+}
+
+type dotProjectMaintainerCacheBody struct {
+	Filename      string     `json:"filename,omitempty"`
+	ETag          string     `json:"etag,omitempty"`
+	BodyHash      string     `json:"bodyHash,omitempty"`
+	Body          string     `json:"body,omitempty"`
+	LastCheckedAt *time.Time `json:"lastCheckedAt,omitempty"`
 }
 
 func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -716,10 +770,17 @@ func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maturityFilters := parseCSVParam(r, "maturity")
+	dotProjectFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("dotProject")))
 
 	base := s.store.DB().Model(&model.Project{})
 	if len(maturityFilters) > 0 {
 		base = base.Where("projects.maturity IN ?", maturityFilters)
+	}
+	switch dotProjectFilter {
+	case "with":
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') <> ''")
+	case "without":
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') = ''")
 	}
 	if namePrefix != "" {
 		base = base.Where("LOWER(projects.name) LIKE ?", strings.ToLower(namePrefix)+"%")
@@ -733,8 +794,8 @@ func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
 			Joins("LEFT JOIN maintainers maint ON maint.id = mp.maintainer_id").
 			Joins("LEFT JOIN companies comp ON comp.id = maint.company_id").
 			Where(
-				"LOWER(projects.name) LIKE ? OR LOWER(projects.maintainer_ref) LIKE ? OR LOWER(maint.name) LIKE ? OR LOWER(maint.git_hub_account) LIKE ? OR LOWER(comp.name) LIKE ? OR REPLACE(REPLACE(REPLACE(LOWER(comp.name), ' ', ''), '-', ''), '_', '') LIKE ?",
-				like, like, like, like, like, compactLike,
+				"LOWER(projects.name) LIKE ? OR LOWER(projects.maintainer_ref) LIKE ? OR LOWER(maint.name) LIKE ? OR LOWER(maint.git_hub_account) LIKE ? OR LOWER(maint.location) LIKE ? OR LOWER(maint.country) LIKE ? OR LOWER(maint.timezone) LIKE ? OR LOWER(comp.name) LIKE ? OR REPLACE(REPLACE(REPLACE(LOWER(comp.name), ' ', ''), '-', ''), '_', '') LIKE ?",
+				like, like, like, like, like, like, like, like, compactLike,
 			)
 	}
 
@@ -846,6 +907,7 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 		direction = "desc"
 	}
 	maturityFilters := parseCSVParam(r, "maturity")
+	dotProjectFilter := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("dotProject")))
 	nameFilter := strings.TrimSpace(r.URL.Query().Get("projectName"))
 	maintainerFilter := strings.TrimSpace(r.URL.Query().Get("maintainer"))
 	maintainerFileFilter := strings.TrimSpace(r.URL.Query().Get("maintainerFile"))
@@ -853,6 +915,12 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 	base := s.store.DB().Model(&model.Project{})
 	if len(maturityFilters) > 0 {
 		base = base.Where("projects.maturity IN ?", maturityFilters)
+	}
+	switch dotProjectFilter {
+	case "with":
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') <> ''")
+	case "without":
+		base = base.Where("COALESCE(TRIM(projects.dot_project_repo_ref), '') = ''")
 	}
 	if nameFilter != "" {
 		base = base.Where("LOWER(projects.name) LIKE ?", "%"+strings.ToLower(nameFilter)+"%")
@@ -868,7 +936,10 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 		base = base.
 			Joins("LEFT JOIN maintainer_projects mp ON mp.project_id = projects.id").
 			Joins("LEFT JOIN maintainers maint ON maint.id = mp.maintainer_id").
-			Where("LOWER(maint.name) LIKE ? OR LOWER(maint.git_hub_account) LIKE ?", like, like)
+			Where(
+				"LOWER(maint.name) LIKE ? OR LOWER(maint.git_hub_account) LIKE ? OR LOWER(maint.location) LIKE ? OR LOWER(maint.country) LIKE ? OR LOWER(maint.timezone) LIKE ?",
+				like, like, like, like, like,
+			)
 	}
 	var total int64
 	if err := base.Distinct("projects.id").Count(&total).Error; err != nil {
@@ -1001,15 +1072,24 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		entry := recentProjectSummary{
-			ID:                  project.ID,
-			Name:                project.Name,
-			Maturity:            string(project.Maturity),
-			AddedBy:             addedBy[project.ID],
-			LegacyMaintainerRef: strings.TrimSpace(project.LegacyMaintainerRef),
-			GitHubOrg:           strings.TrimSpace(project.GitHubOrg),
-			DotProjectYamlRef:   strings.TrimSpace(project.DotProjectYamlRef),
-			CreatedAt:           project.CreatedAt.Format(time.RFC3339),
-			Maintainers:         summarizeMaintainers(project.Maintainers),
+			ID:                        project.ID,
+			Name:                      project.Name,
+			Maturity:                  string(project.Maturity),
+			AddedBy:                   addedBy[project.ID],
+			LegacyMaintainerRef:       strings.TrimSpace(project.LegacyMaintainerRef),
+			GitHubOrg:                 strings.TrimSpace(project.GitHubOrg),
+			DotProjectRepoRef:         strings.TrimSpace(project.DotProjectRepoRef),
+			DotProjectProjectRef:      strings.TrimSpace(project.DotProjectProjectRef),
+			DotProjectMaintainerRef:   strings.TrimSpace(project.DotProjectMaintainerRef),
+			DotProjectSecurityRef:     strings.TrimSpace(project.DotProjectSecurityRef),
+			DotProjectContributingRef: strings.TrimSpace(project.DotProjectContributingRef),
+			DotProjectGovernanceRef:   strings.TrimSpace(project.DotProjectGovernanceRef),
+			DotProjectSchemaVersion:   strings.TrimSpace(project.DotProjectSchemaVersion),
+			DotProjectMaintainerCount: project.DotProjectMaintainerCount,
+			DotProjectLastSyncedAt:    project.DotProjectLastSyncedAt,
+			DotProjectAdoptionStatus:  strings.TrimSpace(project.DotProjectAdoptionStatus),
+			CreatedAt:                 project.CreatedAt.Format(time.RFC3339),
+			Maintainers:               summarizeMaintainers(project.Maintainers),
 		}
 		if entry.AddedBy == "" {
 			entry.AddedBy = "—"
@@ -1033,6 +1113,10 @@ func (s *server) handleRecentProjects(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/dot-project/pull-request") {
+		s.handleDotProjectPullRequest(w, r)
+		return
+	}
 	if r.Method == http.MethodPatch {
 		if strings.HasSuffix(r.URL.Path, "/maturity") {
 			s.handleProjectMaturityUpdate(w, r)
@@ -1075,6 +1159,13 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 	} else if session.Role != roleStaff {
 		s.logger.Printf("web-bff: access denied project=%d user=%s role=%s reason=role_not_allowed", id, session.Login, session.Role)
 		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	dotProjectSyncState, err := s.store.GetDotProjectSyncState(project.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: failed to load dot-project sync state project=%d path=%s user=%s role=%s err=%v", id, r.URL.Path, login, role, err)
+		http.Error(w, "failed to load project", http.StatusInternalServerError)
 		return
 	}
 
@@ -1283,34 +1374,74 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := projectDetailResponse{
-		ID:                      project.ID,
-		Name:                    project.Name,
-		Maturity:                string(project.Maturity),
-		ParentProjectID:         project.ParentProjectID,
-		RefStatus:               refStatus,
-		LegacyMaintainerRefBody: refBody,
-		RefOnlyGitHub:           refOnlyGitHub,
-		RefLines:                refLines,
-		Maintainers:             maintainers,
-		Services:                services,
-		FossaTeamID:             fossaTeamID,
-		FossaTeamName:           fossaTeamName,
-		FossaTeamMembers:        fossaTeamMembers,
-		FossaInviteIneligible:   fossaInviteIneligible,
-		FossaInviteCandidates:   fossaInviteCandidates,
-		CreatedAt:               project.CreatedAt,
-		UpdatedAt:               project.UpdatedAt,
-		DeletedAt:               deletedAt,
-		UpdatedBy:               updatedBy,
-		UpdatedAuditID:          updatedAuditID,
+		ID:                        project.ID,
+		Name:                      project.Name,
+		Maturity:                  string(project.Maturity),
+		ParentProjectID:           project.ParentProjectID,
+		RefStatus:                 refStatus,
+		LegacyMaintainerRefBody:   refBody,
+		RefOnlyGitHub:             refOnlyGitHub,
+		RefLines:                  refLines,
+		Maintainers:               maintainers,
+		Services:                  services,
+		FossaTeamID:               fossaTeamID,
+		FossaTeamName:             fossaTeamName,
+		FossaTeamMembers:          fossaTeamMembers,
+		FossaInviteIneligible:     fossaInviteIneligible,
+		FossaInviteCandidates:     fossaInviteCandidates,
+		DotProjectMaintainerCount: project.DotProjectMaintainerCount,
+		DotProjectLastSyncedAt:    project.DotProjectLastSyncedAt,
+		CreatedAt:                 project.CreatedAt,
+		UpdatedAt:                 project.UpdatedAt,
+		DeletedAt:                 deletedAt,
+		UpdatedBy:                 updatedBy,
+		UpdatedAuditID:            updatedAuditID,
 	}
 
 	maintainerRef := strings.TrimSpace(project.LegacyMaintainerRef)
 	if maintainerRef != "" {
 		response.LegacyMaintainerRef = maintainerRef
 	}
-	if project.DotProjectYamlRef != "" {
-		response.DotProjectYamlRef = strings.TrimSpace(project.DotProjectYamlRef)
+	response.DotProjectRepoRef = strings.TrimSpace(project.DotProjectRepoRef)
+	response.DotProjectProjectRef = strings.TrimSpace(project.DotProjectProjectRef)
+	response.DotProjectMaintainerRef = strings.TrimSpace(project.DotProjectMaintainerRef)
+	response.DotProjectSecurityRef = strings.TrimSpace(project.DotProjectSecurityRef)
+	response.DotProjectContributingRef = strings.TrimSpace(project.DotProjectContributingRef)
+	response.DotProjectGovernanceRef = strings.TrimSpace(project.DotProjectGovernanceRef)
+	response.DotProjectSchemaVersion = strings.TrimSpace(project.DotProjectSchemaVersion)
+	response.DotProjectAdoptionStatus = strings.TrimSpace(project.DotProjectAdoptionStatus)
+	if dotProjectSyncState != nil {
+		syncState := &dotProjectSyncStateResponse{
+			RepoExists:             dotProjectSyncState.RepoExists,
+			ProjectFileExists:      dotProjectSyncState.ProjectFileExists,
+			MaintainersFileExists:  dotProjectSyncState.MaintainersFileExists,
+			SecurityFileExists:     dotProjectSyncState.SecurityFileExists,
+			ContributingFileExists: dotProjectSyncState.ContributingFileExists,
+			GovernanceFileExists:   dotProjectSyncState.GovernanceFileExists,
+			DefaultBranch:          strings.TrimSpace(dotProjectSyncState.DefaultBranch),
+			MaintainersFilename:    strings.TrimSpace(dotProjectSyncState.MaintainersFilename),
+			SchemaVersion:          strings.TrimSpace(dotProjectSyncState.SchemaVersion),
+			LastCheckedAt:          dotProjectSyncState.LastCheckedAt,
+		}
+		if dotProjectSyncState.SyncError != nil {
+			syncState.SyncError = strings.TrimSpace(*dotProjectSyncState.SyncError)
+		}
+		if dotProjectSyncState.ParseError != nil {
+			syncState.ParseError = strings.TrimSpace(*dotProjectSyncState.ParseError)
+		}
+		response.DotProjectSyncState = syncState
+		if dotProjectSyncState.MaintainersFileBody != nil || dotProjectSyncState.MaintainersFilename != "" || dotProjectSyncState.MaintainersFileETag != "" || dotProjectSyncState.MaintainersFileBodyHash != "" {
+			maintainerCache := &dotProjectMaintainerCacheBody{
+				Filename:      strings.TrimSpace(dotProjectSyncState.MaintainersFilename),
+				ETag:          strings.TrimSpace(dotProjectSyncState.MaintainersFileETag),
+				BodyHash:      strings.TrimSpace(dotProjectSyncState.MaintainersFileBodyHash),
+				LastCheckedAt: dotProjectSyncState.LastCheckedAt,
+			}
+			if dotProjectSyncState.MaintainersFileBody != nil {
+				maintainerCache.Body = *dotProjectSyncState.MaintainersFileBody
+			}
+			response.DotProjectMaintainerCache = maintainerCache
+		}
 	}
 	if project.OnboardingIssue != nil {
 		onboardingIssue := strings.TrimSpace(*project.OnboardingIssue)
@@ -1381,9 +1512,9 @@ func (s *server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	githubOrg := strings.TrimSpace(req.GitHubOrg)
 	legacyRef := strings.TrimSpace(req.LegacyMaintainerRef)
-	dotProjectRef := strings.TrimSpace(req.DotProjectYamlRef)
+	dotProjectRef := strings.TrimSpace(req.DotProjectMaintainerRef)
 	if legacyRef == "" && dotProjectRef == "" {
-		http.Error(w, "legacyMaintainerRef or dotProjectYamlRef is required", http.StatusBadRequest)
+		http.Error(w, "legacyMaintainerRef or dotProjectMaintainerRef is required", http.StatusBadRequest)
 		return
 	}
 	inferredOrg := ""
@@ -1402,7 +1533,7 @@ func (s *server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if inferredOrg != "" && !strings.EqualFold(inferredOrg, org) {
-			http.Error(w, "legacyMaintainerRef and dotProjectYamlRef must reference the same GitHub org", http.StatusBadRequest)
+			http.Error(w, "legacyMaintainerRef and dotProjectMaintainerRef must reference the same GitHub org", http.StatusBadRequest)
 			return
 		}
 		inferredOrg = org
@@ -1445,13 +1576,13 @@ func (s *server) handleProjectCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	project := model.Project{
-		Name:                projectName,
-		Maturity:            maturity,
-		GitHubOrg:           githubOrg,
-		ParentProjectID:     req.ParentProjectID,
-		LegacyMaintainerRef: legacyRef,
-		DotProjectYamlRef:   dotProjectRef,
-		OnboardingIssue:     &onboardingIssue,
+		Name:                    projectName,
+		Maturity:                maturity,
+		GitHubOrg:               githubOrg,
+		ParentProjectID:         req.ParentProjectID,
+		LegacyMaintainerRef:     legacyRef,
+		DotProjectMaintainerRef: dotProjectRef,
+		OnboardingIssue:         &onboardingIssue,
 	}
 	if err := s.store.DB().Create(&project).Error; err != nil {
 		s.logger.Printf("web-bff: create project error: %v", err)
@@ -1530,12 +1661,254 @@ func lookupStaffID(store *db.SQLStore, login string) *uint {
 	return &staff.ID
 }
 
+func staffIdentityForSession(store *db.SQLStore, session *session) (*uint, string) {
+	if session == nil {
+		return nil, "Staff"
+	}
+	staffName := strings.TrimSpace(session.Login)
+	var staffID *uint
+	if session.Login != "" {
+		var staff model.StaffMember
+		if err := store.DB().
+			Where("LOWER(git_hub_account) = ?", strings.ToLower(session.Login)).
+			First(&staff).Error; err == nil {
+			staffID = &staff.ID
+			staffName = strings.TrimSpace(staff.Name)
+		}
+	}
+	if staffName == "" {
+		staffName = "Staff"
+	}
+	return staffID, staffName
+}
+
+func activeProjectMaintainerGitHubHandles(maintainers []model.Maintainer) []string {
+	handles := make([]string, 0, len(maintainers))
+	seen := map[string]struct{}{}
+	for _, maintainer := range maintainers {
+		if maintainer.MaintainerStatus != model.ActiveMaintainer {
+			continue
+		}
+		normalized := dotproject.NormalizeGitHubHandle(maintainer.GitHubAccount)
+		if normalized == "" || normalized == "github_missing" || normalized == "github-missing" {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		handles = append(handles, normalized)
+	}
+	return handles
+}
+
 type projectMaintainerRefUpdateRequest struct {
 	LegacyMaintainerRef string `json:"legacyMaintainerRef"`
 }
 
 type projectMaturityUpdateRequest struct {
 	Maturity string `json:"maturity"`
+}
+
+type dotProjectPullRequestInput struct {
+	ProjectName          string
+	Owner                string
+	Repo                 string
+	ForkOwner            string
+	ForkRepo             string
+	FilePath             string
+	BaseBranch           string
+	HeadBranch           string
+	Original             string
+	Proposed             string
+	AddedHandles         []string
+	RemovedPlaceholders  []string
+	SubmittedByLogin     string
+	SubmittedByName      string
+	OriginalBodyHash     string
+	ProjectMaintainerRef string
+}
+
+type dotProjectPullRequestResponse struct {
+	URL                  string   `json:"url"`
+	Number               int      `json:"number"`
+	Branch               string   `json:"branch"`
+	BaseBranch           string   `json:"baseBranch"`
+	ForkOwner            string   `json:"forkOwner,omitempty"`
+	ForkRepo             string   `json:"forkRepo,omitempty"`
+	FilePath             string   `json:"filePath"`
+	CommitSHA            string   `json:"commitSha,omitempty"`
+	AddedHandles         []string `json:"addedHandles"`
+	RemovedPlaceholders  []string `json:"removedPlaceholders"`
+	SubmittedBy          string   `json:"submittedBy"`
+	ProjectMaintainerRef string   `json:"projectMaintainerRef,omitempty"`
+}
+
+func (s *server) handleDotProjectPullRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	id, err := parseProjectSubresourceID(r.URL.Path, "/dot-project/pull-request")
+	if err != nil {
+		http.Error(w, "invalid project id", http.StatusBadRequest)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+
+	project, err := s.store.GetProjectByID(id)
+	if err != nil {
+		if errors.Is(err, db.ErrProjectNotFound) {
+			http.Error(w, "project not found", http.StatusNotFound)
+			return
+		}
+		s.logger.Printf("web-bff: load project for dot-project PR failed id=%d err=%v", id, err)
+		http.Error(w, "failed to load project", http.StatusInternalServerError)
+		return
+	}
+	syncState, err := s.store.GetDotProjectSyncState(project.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: load dot-project sync state for PR failed project=%d err=%v", project.ID, err)
+		http.Error(w, "failed to load dot-project state", http.StatusInternalServerError)
+		return
+	}
+	if syncState == nil || syncState.MaintainersFileBody == nil || strings.TrimSpace(*syncState.MaintainersFileBody) == "" {
+		http.Error(w, "cached maintainers file body is required", http.StatusConflict)
+		return
+	}
+
+	patch, err := dotproject.BuildMaintainerRosterPatch(*syncState.MaintainersFileBody, activeProjectMaintainerGitHubHandles(project.Maintainers))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusConflict)
+		return
+	}
+	if patch.Proposed == *syncState.MaintainersFileBody {
+		http.Error(w, "no dot-project maintainer file changes to submit", http.StatusConflict)
+		return
+	}
+
+	staffID, staffName := staffIdentityForSession(s.store, session)
+	filePath := strings.TrimSpace(syncState.MaintainersFilename)
+	if filePath == "" {
+		filePath = pathpkg.Base(strings.TrimSpace(project.DotProjectMaintainerRef))
+	}
+	if filePath == "." || filePath == "/" || filePath == "" {
+		filePath = "MAINTAINERS.yaml"
+	}
+	baseBranch := strings.TrimSpace(syncState.DefaultBranch)
+	if baseBranch == "" {
+		baseBranch = "main"
+	}
+	owner := strings.TrimSpace(project.GitHubOrg)
+	if owner == "" {
+		if parsedOwner, err := parseGitHubOrgFromURL(project.DotProjectMaintainerRef); err == nil {
+			owner = parsedOwner
+		}
+	}
+	if owner == "" {
+		http.Error(w, "project github org is required", http.StatusConflict)
+		return
+	}
+
+	input := dotProjectPullRequestInput{
+		ProjectName:          project.Name,
+		Owner:                owner,
+		Repo:                 ".project",
+		ForkOwner:            session.Login,
+		ForkRepo:             dotProjectForkRepoName(project.Name, ".project"),
+		FilePath:             filePath,
+		BaseBranch:           baseBranch,
+		HeadBranch:           fmt.Sprintf("maintainer-d/%d/maintainers-%d", project.ID, time.Now().UTC().UnixNano()),
+		Original:             *syncState.MaintainersFileBody,
+		Proposed:             patch.Proposed,
+		AddedHandles:         patch.AddedHandles,
+		RemovedPlaceholders:  patch.RemovedPlaceholders,
+		SubmittedByLogin:     session.Login,
+		SubmittedByName:      staffName,
+		OriginalBodyHash:     strings.TrimSpace(syncState.MaintainersFileBodyHash),
+		ProjectMaintainerRef: strings.TrimSpace(project.DotProjectMaintainerRef),
+	}
+
+	submitter := s.createDotProjectPullRequest
+	if submitter == nil {
+		submitter = s.createDotProjectMaintainerPullRequest
+	}
+	if strings.TrimSpace(session.AccessToken) == "" && s.createDotProjectPullRequest == nil {
+		http.Error(w, "github oauth token is required; sign out and sign in again to approve repository access", http.StatusUnauthorized)
+		return
+	}
+	result, err := submitter(r.Context(), input, session.AccessToken)
+	if err != nil {
+		s.logger.Printf("web-bff: dot-project PR create failed project=%d owner=%s repo=%s file=%s err=%v", project.ID, owner, input.Repo, filePath, err)
+		http.Error(w, "failed to create dot-project pull request", http.StatusBadGateway)
+		return
+	}
+	if result.AddedHandles == nil {
+		result.AddedHandles = patch.AddedHandles
+	}
+	if result.RemovedPlaceholders == nil {
+		result.RemovedPlaceholders = patch.RemovedPlaceholders
+	}
+	if result.SubmittedBy == "" {
+		result.SubmittedBy = staffName
+	}
+	if result.ForkOwner == "" {
+		result.ForkOwner = input.ForkOwner
+	}
+	if result.ForkRepo == "" {
+		result.ForkRepo = input.ForkRepo
+	}
+	result.ProjectMaintainerRef = input.ProjectMaintainerRef
+
+	metadata := map[string]any{
+		"actor": map[string]string{
+			"login": session.Login,
+			"role":  session.Role,
+			"name":  staffName,
+		},
+		"pull_request": map[string]any{
+			"url":         result.URL,
+			"number":      result.Number,
+			"branch":      result.Branch,
+			"base_branch": result.BaseBranch,
+			"commit_sha":  result.CommitSHA,
+		},
+		"fork": map[string]string{
+			"owner": result.ForkOwner,
+			"repo":  result.ForkRepo,
+		},
+		"repository": map[string]string{
+			"owner": owner,
+			"repo":  input.Repo,
+			"path":  filePath,
+		},
+		"added_handles":        patch.AddedHandles,
+		"removed_placeholders": patch.RemovedPlaceholders,
+		"original_body_hash":   input.OriginalBodyHash,
+	}
+	if metadataJSON, err := json.Marshal(metadata); err != nil {
+		s.logger.Printf("web-bff: dot-project PR audit metadata encode error: %v", err)
+	} else {
+		event := model.AuditLog{
+			ProjectID: &project.ID,
+			StaffID:   staffID,
+			Action:    "DOT_PROJECT_MAINTAINER_PR_CREATE",
+			Message:   fmt.Sprintf("Dot-project maintainer pull request submitted by %s", staffName),
+			Metadata:  string(metadataJSON),
+		}
+		if err := s.store.DB().Create(&event).Error; err != nil {
+			s.logger.Printf("web-bff: dot-project PR audit log failed: %v", err)
+		}
+	}
+
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(result); err != nil {
+		s.logger.Printf("web-bff: dot-project PR encode error: %v", err)
+	}
 }
 
 func (s *server) handleProjectMaintainerRefUpdate(w http.ResponseWriter, r *http.Request) {
@@ -1731,6 +2104,9 @@ type maintainerDetailResponse struct {
 	Status      string                      `json:"status"`
 	CompanyID   *uint                       `json:"companyId,omitempty"`
 	Company     string                      `json:"company,omitempty"`
+	Location    string                      `json:"location,omitempty"`
+	Country     string                      `json:"country,omitempty"`
+	Timezone    string                      `json:"timezone,omitempty"`
 	Projects    []maintainerProjectResponse `json:"projects"`
 	Services    []maintainerServiceResponse `json:"services,omitempty"`
 	CreatedAt   time.Time                   `json:"createdAt"`
@@ -2123,6 +2499,15 @@ func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, incl
 	}
 	if maintainer.Company.Name != "" {
 		response.Company = maintainer.Company.Name
+	}
+	if maintainer.Location != nil {
+		response.Location = *maintainer.Location
+	}
+	if maintainer.Country != nil {
+		response.Country = *maintainer.Country
+	}
+	if maintainer.Timezone != nil {
+		response.Timezone = *maintainer.Timezone
 	}
 	return response
 }
@@ -3252,12 +3637,21 @@ type companyDetailResponse struct {
 }
 
 type searchProjectResult struct {
-	ID                  uint    `json:"id"`
-	Name                string  `json:"name"`
-	GitHubOrg           string  `json:"githubOrg,omitempty"`
-	OnboardingIssue     *string `json:"onboardingIssue,omitempty"`
-	LegacyMaintainerRef string  `json:"legacyMaintainerRef,omitempty"`
-	DotProjectYamlRef   string  `json:"dotProjectYamlRef,omitempty"`
+	ID                        uint       `json:"id"`
+	Name                      string     `json:"name"`
+	GitHubOrg                 string     `json:"githubOrg,omitempty"`
+	OnboardingIssue           *string    `json:"onboardingIssue,omitempty"`
+	LegacyMaintainerRef       string     `json:"legacyMaintainerRef,omitempty"`
+	DotProjectRepoRef         string     `json:"dotProjectRepoRef,omitempty"`
+	DotProjectProjectRef      string     `json:"dotProjectProjectRef,omitempty"`
+	DotProjectMaintainerRef   string     `json:"dotProjectMaintainerRef,omitempty"`
+	DotProjectSecurityRef     string     `json:"dotProjectSecurityRef,omitempty"`
+	DotProjectContributingRef string     `json:"dotProjectContributingRef,omitempty"`
+	DotProjectGovernanceRef   string     `json:"dotProjectGovernanceRef,omitempty"`
+	DotProjectSchemaVersion   string     `json:"dotProjectSchemaVersion,omitempty"`
+	DotProjectMaintainerCount *uint      `json:"dotProjectMaintainerCount,omitempty"`
+	DotProjectLastSyncedAt    *time.Time `json:"dotProjectLastSyncedAt,omitempty"`
+	DotProjectAdoptionStatus  string     `json:"dotProjectAdoptionStatus,omitempty"`
 }
 
 type searchMaintainerResult struct {
@@ -3553,7 +3947,11 @@ func (s *server) handleSearchPostgres(w http.ResponseWriter, query string, limit
 
 	var projects []model.Project
 	if err := s.store.DB().Raw(`
-		SELECT id, name, git_hub_org, onboarding_issue, maintainer_ref, dot_project_yaml_ref
+		SELECT id, name, git_hub_org, onboarding_issue, maintainer_ref, dot_project_repo_ref,
+		       dot_project_project_ref, dot_project_yaml_ref, dot_project_security_ref,
+		       dot_project_contributing_ref, dot_project_governance_ref,
+		       dot_project_schema_version, dot_project_maintainer_count,
+		       dot_project_last_synced_at, dot_project_adoption_status
 		FROM projects
 		WHERE deleted_at IS NULL
 		  AND search_tsv @@ websearch_to_tsquery('simple', unaccent(?))
@@ -3567,12 +3965,21 @@ func (s *server) handleSearchPostgres(w http.ResponseWriter, query string, limit
 	projectResults := make([]searchProjectResult, 0, len(projects))
 	for _, project := range projects {
 		projectResults = append(projectResults, searchProjectResult{
-			ID:                  project.ID,
-			Name:                project.Name,
-			GitHubOrg:           strings.TrimSpace(project.GitHubOrg),
-			OnboardingIssue:     project.OnboardingIssue,
-			LegacyMaintainerRef: strings.TrimSpace(project.LegacyMaintainerRef),
-			DotProjectYamlRef:   strings.TrimSpace(project.DotProjectYamlRef),
+			ID:                        project.ID,
+			Name:                      project.Name,
+			GitHubOrg:                 strings.TrimSpace(project.GitHubOrg),
+			OnboardingIssue:           project.OnboardingIssue,
+			LegacyMaintainerRef:       strings.TrimSpace(project.LegacyMaintainerRef),
+			DotProjectRepoRef:         strings.TrimSpace(project.DotProjectRepoRef),
+			DotProjectProjectRef:      strings.TrimSpace(project.DotProjectProjectRef),
+			DotProjectMaintainerRef:   strings.TrimSpace(project.DotProjectMaintainerRef),
+			DotProjectSecurityRef:     strings.TrimSpace(project.DotProjectSecurityRef),
+			DotProjectContributingRef: strings.TrimSpace(project.DotProjectContributingRef),
+			DotProjectGovernanceRef:   strings.TrimSpace(project.DotProjectGovernanceRef),
+			DotProjectSchemaVersion:   strings.TrimSpace(project.DotProjectSchemaVersion),
+			DotProjectMaintainerCount: project.DotProjectMaintainerCount,
+			DotProjectLastSyncedAt:    project.DotProjectLastSyncedAt,
+			DotProjectAdoptionStatus:  strings.TrimSpace(project.DotProjectAdoptionStatus),
 		})
 	}
 
@@ -3725,7 +4132,11 @@ func (s *server) handleSearchFallback(w http.ResponseWriter, query string, limit
 	}
 	if err := s.store.DB().
 		Model(&model.Project{}).
-		Select("id, name, git_hub_org, onboarding_issue, maintainer_ref, dot_project_yaml_ref").
+		Select(`id, name, git_hub_org, onboarding_issue, maintainer_ref,
+			dot_project_repo_ref, dot_project_project_ref, dot_project_yaml_ref,
+			dot_project_security_ref, dot_project_contributing_ref, dot_project_governance_ref,
+			dot_project_schema_version, dot_project_maintainer_count, dot_project_last_synced_at,
+			dot_project_adoption_status`).
 		Where(
 			"LOWER(name) LIKE ? OR LOWER(maintainer_ref) LIKE ? OR LOWER(dot_project_yaml_ref) LIKE ? OR LOWER(git_hub_org) LIKE ?",
 			like,
@@ -3745,12 +4156,21 @@ func (s *server) handleSearchFallback(w http.ResponseWriter, query string, limit
 	projectResults := make([]searchProjectResult, 0, len(projects))
 	for _, project := range projects {
 		projectResults = append(projectResults, searchProjectResult{
-			ID:                  project.ID,
-			Name:                project.Name,
-			GitHubOrg:           strings.TrimSpace(project.GitHubOrg),
-			OnboardingIssue:     project.OnboardingIssue,
-			LegacyMaintainerRef: strings.TrimSpace(project.LegacyMaintainerRef),
-			DotProjectYamlRef:   strings.TrimSpace(project.DotProjectYamlRef),
+			ID:                        project.ID,
+			Name:                      project.Name,
+			GitHubOrg:                 strings.TrimSpace(project.GitHubOrg),
+			OnboardingIssue:           project.OnboardingIssue,
+			LegacyMaintainerRef:       strings.TrimSpace(project.LegacyMaintainerRef),
+			DotProjectRepoRef:         strings.TrimSpace(project.DotProjectRepoRef),
+			DotProjectProjectRef:      strings.TrimSpace(project.DotProjectProjectRef),
+			DotProjectMaintainerRef:   strings.TrimSpace(project.DotProjectMaintainerRef),
+			DotProjectSecurityRef:     strings.TrimSpace(project.DotProjectSecurityRef),
+			DotProjectContributingRef: strings.TrimSpace(project.DotProjectContributingRef),
+			DotProjectGovernanceRef:   strings.TrimSpace(project.DotProjectGovernanceRef),
+			DotProjectSchemaVersion:   strings.TrimSpace(project.DotProjectSchemaVersion),
+			DotProjectMaintainerCount: project.DotProjectMaintainerCount,
+			DotProjectLastSyncedAt:    project.DotProjectLastSyncedAt,
+			DotProjectAdoptionStatus:  strings.TrimSpace(project.DotProjectAdoptionStatus),
 		})
 	}
 
@@ -5158,6 +5578,330 @@ func (s *server) fetchIssueTitleFromGitHub(ctx context.Context, owner, repo stri
 	return issue.GetTitle(), nil
 }
 
+func (s *server) createDotProjectMaintainerPullRequest(ctx context.Context, input dotProjectPullRequestInput, githubToken string) (*dotProjectPullRequestResponse, error) {
+	githubToken = strings.TrimSpace(githubToken)
+	if githubToken == "" {
+		return nil, fmt.Errorf("github user credentials are not available")
+	}
+	client := github.NewClient(oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{
+		AccessToken: githubToken,
+	})))
+	forkOwner := strings.TrimSpace(input.ForkOwner)
+	if forkOwner == "" {
+		forkOwner = input.SubmittedByLogin
+	}
+	forkRepo := strings.TrimSpace(input.ForkRepo)
+	if forkRepo == "" {
+		forkRepo = dotProjectForkRepoName(input.ProjectName, input.Repo)
+	}
+
+	baseRef, _, err := client.Git.GetRef(ctx, input.Owner, input.Repo, "heads/"+input.BaseBranch)
+	if err != nil {
+		return nil, fmt.Errorf("get base ref: %w", err)
+	}
+	if baseRef == nil || baseRef.Object == nil || baseRef.Object.SHA == nil || strings.TrimSpace(*baseRef.Object.SHA) == "" {
+		return nil, fmt.Errorf("base ref %q did not include a commit sha", input.BaseBranch)
+	}
+
+	content, _, _, err := client.Repositories.GetContents(ctx, input.Owner, input.Repo, input.FilePath, &github.RepositoryContentGetOptions{
+		Ref: input.BaseBranch,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("get maintainer file content: %w", err)
+	}
+	if content == nil || strings.TrimSpace(content.GetSHA()) == "" {
+		return nil, fmt.Errorf("maintainer file %q did not include a content sha", input.FilePath)
+	}
+	currentContent, err := content.GetContent()
+	if err != nil {
+		return nil, fmt.Errorf("decode current maintainer file content: %w", err)
+	}
+	if currentContent != input.Original {
+		return nil, fmt.Errorf("cached maintainer file is stale; run dot-project sync before submitting a pull request")
+	}
+
+	fork, err := ensureDotProjectFork(ctx, client, input.Owner, input.Repo, forkOwner, forkRepo)
+	if err != nil {
+		return nil, err
+	}
+	if fork.GetOwner().GetLogin() != "" {
+		forkOwner = fork.GetOwner().GetLogin()
+	}
+	if fork.GetName() != "" {
+		forkRepo = fork.GetName()
+	}
+
+	if _, _, err := client.Git.CreateRef(ctx, forkOwner, forkRepo, &github.Reference{
+		Ref: github.String("refs/heads/" + input.HeadBranch),
+		Object: &github.GitObject{
+			SHA: baseRef.Object.SHA,
+		},
+	}); err != nil {
+		return nil, fmt.Errorf("create branch in fork %s/%s: %w", forkOwner, forkRepo, err)
+	}
+
+	commitAuthor, err := dotProjectCommitAuthor(ctx, client, input)
+	if err != nil {
+		return nil, err
+	}
+	contentResponse, _, err := client.Repositories.UpdateFile(ctx, forkOwner, forkRepo, input.FilePath, &github.RepositoryContentFileOptions{
+		Message:   github.String(dotProjectMaintainerCommitMessage(input.ProjectName, commitAuthor)),
+		Content:   []byte(input.Proposed),
+		SHA:       github.String(content.GetSHA()),
+		Branch:    github.String(input.HeadBranch),
+		Author:    commitAuthor,
+		Committer: commitAuthor,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("update maintainer file in fork %s/%s: %w", forkOwner, forkRepo, err)
+	}
+
+	pr, _, err := client.PullRequests.Create(ctx, input.Owner, input.Repo, &github.NewPullRequest{
+		Title:               github.String(fmt.Sprintf("Update %s maintainers.yaml", input.ProjectName)),
+		Head:                github.String(forkOwner + ":" + input.HeadBranch),
+		Base:                github.String(input.BaseBranch),
+		Body:                github.String(buildDotProjectPullRequestBody(input)),
+		MaintainerCanModify: github.Bool(true),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create pull request: %w", err)
+	}
+	reviewers := dotProjectMaintainerReviewers(input.AddedHandles)
+	teamReviewers := dotProjectMaintainerTeamReviewers()
+	if len(reviewers) > 0 || len(teamReviewers) > 0 {
+		if _, _, err := client.PullRequests.RequestReviewers(ctx, input.Owner, input.Repo, pr.GetNumber(), github.ReviewersRequest{
+			Reviewers:     reviewers,
+			TeamReviewers: teamReviewers,
+		}); err != nil {
+			return nil, fmt.Errorf("request maintainer reviews: %w", err)
+		}
+	}
+
+	commitSHA := ""
+	if contentResponse != nil {
+		commitSHA = contentResponse.GetSHA()
+	}
+	return &dotProjectPullRequestResponse{
+		URL:                 pr.GetHTMLURL(),
+		Number:              pr.GetNumber(),
+		Branch:              input.HeadBranch,
+		BaseBranch:          input.BaseBranch,
+		ForkOwner:           forkOwner,
+		ForkRepo:            forkRepo,
+		FilePath:            input.FilePath,
+		CommitSHA:           commitSHA,
+		AddedHandles:        input.AddedHandles,
+		RemovedPlaceholders: input.RemovedPlaceholders,
+		SubmittedBy:         input.SubmittedByName,
+	}, nil
+}
+
+func ensureDotProjectFork(ctx context.Context, client *github.Client, owner, repo, forkOwner, forkRepo string) (*github.Repository, error) {
+	if forkOwner == "" {
+		return nil, fmt.Errorf("fork owner is required")
+	}
+	if forkRepo == "" {
+		return nil, fmt.Errorf("fork repo name is required")
+	}
+	if existing, _, err := client.Repositories.Get(ctx, forkOwner, forkRepo); err == nil {
+		if !repositoryIsForkOf(existing, owner, repo) {
+			return nil, fmt.Errorf("github repository %s/%s already exists but is not a fork of %s/%s", forkOwner, forkRepo, owner, repo)
+		}
+		return existing, nil
+	} else if !isGitHubNotFound(err) {
+		return nil, fmt.Errorf("check fork %s/%s: %w", forkOwner, forkRepo, err)
+	}
+
+	fork, _, err := client.Repositories.CreateFork(ctx, owner, repo, &github.RepositoryCreateForkOptions{
+		Name:              forkRepo,
+		DefaultBranchOnly: true,
+	})
+	if err != nil {
+		var accepted *github.AcceptedError
+		if !errors.As(err, &accepted) {
+			return nil, fmt.Errorf("create fork %s/%s from %s/%s: %w", forkOwner, forkRepo, owner, repo, err)
+		}
+	}
+	if fork != nil && fork.GetName() != "" {
+		forkRepo = fork.GetName()
+	}
+
+	readyFork, err := waitForDotProjectFork(ctx, client, forkOwner, forkRepo, owner, repo)
+	if err != nil {
+		return nil, err
+	}
+	return readyFork, nil
+}
+
+func waitForDotProjectFork(ctx context.Context, client *github.Client, forkOwner, forkRepo, upstreamOwner, upstreamRepo string) (*github.Repository, error) {
+	var lastErr error
+	for attempt := 0; attempt < 10; attempt++ {
+		fork, _, err := client.Repositories.Get(ctx, forkOwner, forkRepo)
+		if err == nil {
+			if repositoryIsForkOf(fork, upstreamOwner, upstreamRepo) {
+				return fork, nil
+			}
+			lastErr = fmt.Errorf("github repository %s/%s exists but is not a fork of %s/%s", forkOwner, forkRepo, upstreamOwner, upstreamRepo)
+		} else if !isGitHubNotFound(err) {
+			lastErr = err
+		}
+
+		timer := time.NewTimer(time.Duration(attempt+1) * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	if lastErr != nil {
+		return nil, fmt.Errorf("wait for fork %s/%s: %w", forkOwner, forkRepo, lastErr)
+	}
+	return nil, fmt.Errorf("fork %s/%s was not ready before timeout", forkOwner, forkRepo)
+}
+
+func dotProjectCommitAuthor(ctx context.Context, client *github.Client, input dotProjectPullRequestInput) (*github.CommitAuthor, error) {
+	user, _, err := client.Users.Get(ctx, "")
+	if err != nil {
+		return nil, fmt.Errorf("load github user for commit sign-off: %w", err)
+	}
+	name := strings.TrimSpace(user.GetName())
+	if name == "" {
+		name = strings.TrimSpace(input.SubmittedByName)
+	}
+	if name == "" {
+		name = strings.TrimSpace(input.SubmittedByLogin)
+	}
+	email := strings.TrimSpace(user.GetEmail())
+	if email == "" && user.GetID() > 0 && strings.TrimSpace(user.GetLogin()) != "" {
+		email = fmt.Sprintf("%d+%s@users.noreply.github.com", user.GetID(), strings.TrimSpace(user.GetLogin()))
+	}
+	if email == "" && strings.TrimSpace(input.SubmittedByLogin) != "" {
+		email = strings.TrimSpace(input.SubmittedByLogin) + "@users.noreply.github.com"
+	}
+	if name == "" || email == "" {
+		return nil, fmt.Errorf("github user name and email are required for commit sign-off")
+	}
+	return &github.CommitAuthor{
+		Name:  github.String(name),
+		Email: github.String(email),
+	}, nil
+}
+
+func dotProjectMaintainerCommitMessage(projectName string, author *github.CommitAuthor) string {
+	name := ""
+	email := ""
+	if author != nil {
+		name = strings.TrimSpace(author.GetName())
+		email = strings.TrimSpace(author.GetEmail())
+	}
+	return fmt.Sprintf("Update %s maintainers\n\nSigned-off-by: %s <%s>", strings.TrimSpace(projectName), name, email)
+}
+
+func repositoryIsForkOf(repo *github.Repository, upstreamOwner, upstreamRepo string) bool {
+	if repo == nil || !repo.GetFork() || repo.Parent == nil {
+		return false
+	}
+	return strings.EqualFold(repo.Parent.GetOwner().GetLogin(), upstreamOwner) && strings.EqualFold(repo.Parent.GetName(), upstreamRepo)
+}
+
+func isGitHubNotFound(err error) bool {
+	var githubErr *github.ErrorResponse
+	return errors.As(err, &githubErr) && githubErr.Response != nil && githubErr.Response.StatusCode == http.StatusNotFound
+}
+
+func dotProjectForkRepoName(projectName, sourceRepo string) string {
+	prefix := slugForGitHubRepoName(projectName)
+	if prefix == "" {
+		prefix = "project"
+	}
+	sourceRepo = strings.TrimSpace(sourceRepo)
+	if sourceRepo == "" {
+		sourceRepo = ".project"
+	}
+	name := prefix + sourceRepo
+	if len(name) <= 100 {
+		return name
+	}
+	suffix := "-" + sourceRepo
+	maxPrefix := 100 - len(suffix)
+	if maxPrefix < 1 {
+		return name[:100]
+	}
+	return strings.Trim(name[:maxPrefix], "-.") + suffix
+}
+
+func slugForGitHubRepoName(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	var builder strings.Builder
+	lastDash := false
+	for _, char := range value {
+		allowed := (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') || char == '.' || char == '_' || char == '-'
+		if allowed {
+			builder.WriteRune(char)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			builder.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(builder.String(), "-.")
+}
+
+func buildDotProjectPullRequestBody(input dotProjectPullRequestInput) string {
+	lines := []string{
+		"Maintainer-D generated this pull request from the current project maintainer database.",
+		"",
+		"Changes:",
+	}
+	if len(input.AddedHandles) > 0 {
+		lines = append(lines, fmt.Sprintf("- Add active maintainer-d handles missing from `%s`: %s", input.FilePath, strings.Join(dotProjectMentionedMaintainers(input.AddedHandles), ", ")))
+	}
+	if len(input.RemovedPlaceholders) > 0 {
+		lines = append(lines, fmt.Sprintf("- Remove placeholder maintainer lines: %s", strings.Join(input.RemovedPlaceholders, ", ")))
+	}
+	lines = append(lines,
+		"",
+		fmt.Sprintf("Submitted by: %s (%s)", input.SubmittedByName, input.SubmittedByLogin),
+	)
+	if input.OriginalBodyHash != "" {
+		lines = append(lines, fmt.Sprintf("Cached source body hash: `%s`", input.OriginalBodyHash))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func dotProjectMentionedMaintainers(handles []string) []string {
+	reviewers := dotProjectMaintainerReviewers(handles)
+	mentions := make([]string, 0, len(reviewers))
+	for _, reviewer := range reviewers {
+		mentions = append(mentions, "@"+reviewer)
+	}
+	return mentions
+}
+
+func dotProjectMaintainerReviewers(handles []string) []string {
+	reviewers := make([]string, 0, len(handles))
+	seen := make(map[string]struct{}, len(handles))
+	for _, raw := range handles {
+		handle := dotproject.NormalizeGitHubHandle(raw)
+		if handle == "" {
+			continue
+		}
+		if _, ok := seen[handle]; ok {
+			continue
+		}
+		seen[handle] = struct{}{}
+		reviewers = append(reviewers, handle)
+	}
+	return reviewers
+}
+
+func dotProjectMaintainerTeamReviewers() []string {
+	return []string{"cncf-projects"}
+}
+
 func groupCompanyDuplicates(companies []companyDetailResponse) []companyDuplicateGroup {
 	buckets := make(map[string][]companyDetailResponse)
 	for _, c := range companies {
@@ -5483,6 +6227,14 @@ func parseIDParam(path, prefix string) (uint, error) {
 	return uint(value), nil
 }
 
+func parseProjectSubresourceID(path, suffix string) (uint, error) {
+	if !strings.HasSuffix(path, suffix) {
+		return 0, fmt.Errorf("missing suffix")
+	}
+	base := strings.TrimSuffix(path, suffix)
+	return parseIDParam(base, "/api/projects/")
+}
+
 func parseMaturity(value string) (model.Maturity, bool) {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "sandbox":
@@ -5522,11 +6274,21 @@ func summarizeMaintainers(maintainers []model.Maintainer) []maintainerSummary {
 			continue
 		}
 		seen[key] = struct{}{}
-		result = append(result, maintainerSummary{
+		summary := maintainerSummary{
 			ID:     maintainer.ID,
 			Name:   name,
 			GitHub: github,
-		})
+		}
+		if maintainer.Country != nil {
+			summary.Country = *maintainer.Country
+		}
+		if maintainer.Location != nil {
+			summary.Location = *maintainer.Location
+		}
+		if maintainer.Timezone != nil {
+			summary.Timezone = *maintainer.Timezone
+		}
+		result = append(result, summary)
 	}
 	return result
 }

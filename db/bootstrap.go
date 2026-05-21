@@ -66,6 +66,7 @@ func BootstrapDB(driver, dsn, spreadsheetID, worksheetCredentialsPath, fossaToke
 		&model.RemoteTeam{},
 		&model.RemoteUser{},
 		&model.RemoteTeamUser{},
+		&model.DotProjectSyncState{},
 	); err != nil {
 		return nil, fmt.Errorf("auto-migration failed: %w", err)
 	}

@@ -7,19 +7,19 @@ import { Navbar } from "clo-ui/components/Navbar";
 import { Searchbar } from "clo-ui/components/Searchbar";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { getAuthBaseUrl, redirectToAuthLogin } from "@/utils/auth";
 import { useTheme } from "./ThemeProvider";
 import styles from "./AppShell.module.css";
 
-type AppShellProps = {
-  children: ReactNode;
-  navCenter?: ReactNode;
-  navCenterClassName?: string;
-};
-
-type MeResponse = {
+export type AppShellViewer = {
   login: string;
   role: string;
   maintainerId?: number;
+} | null;
+
+type AppShellProps = {
+  children: ReactNode | ((viewer: AppShellViewer) => ReactNode);
+  navCenterClassName?: string;
 };
 
 const MoonIcon = () => (
@@ -51,25 +51,16 @@ const SunIcon = () => (
 
 export default function AppShell({
   children,
-  navCenter,
   navCenterClassName,
 }: AppShellProps) {
-  const [me, setMe] = useState<MeResponse | null>(null);
+  const [me, setMe] = useState<AppShellViewer>(null);
   const { theme, toggleTheme } = useTheme();
   const devLoginAttemptedRef = useRef(false);
+  const authRedirectAttemptedRef = useRef(false);
   const [mounted, setMounted] = useState(false);
-  const router = useRouter();
+  const [searchQuery, setSearchQuery] = useState("");
   const pathname = usePathname();
-  const [navQuery, setNavQuery] = useState("");
-
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    const params = new URLSearchParams(window.location.search);
-    const nextQuery = params.get("query") || "";
-    setNavQuery((current) => (current === nextQuery ? current : nextQuery));
-  }, [pathname]);
+  const router = useRouter();
 
   const bffBaseUrl = useMemo(() => {
     const raw = process.env.NEXT_PUBLIC_BFF_BASE_URL || "/api";
@@ -87,11 +78,7 @@ export default function AppShell({
   }, [bffBaseUrl]);
 
   const authBaseUrl = useMemo(() => {
-    if (bffBaseUrl.endsWith("/api")) {
-      const stripped = bffBaseUrl.slice(0, -4);
-      return stripped === "" ? "" : stripped;
-    }
-    return bffBaseUrl;
+    return getAuthBaseUrl(bffBaseUrl);
   }, [bffBaseUrl]);
 
   useEffect(() => {
@@ -128,11 +115,20 @@ export default function AppShell({
             if (alive) {
               setMe(null);
             }
+            if (
+              pathname &&
+              pathname !== "/" &&
+              typeof window !== "undefined" &&
+              !authRedirectAttemptedRef.current
+            ) {
+              authRedirectAttemptedRef.current = true;
+              redirectToAuthLogin(authBaseUrl, pathname);
+            }
             return;
           }
           throw new Error(`unexpected status ${response.status}`);
         }
-        const data = (await response.json()) as MeResponse;
+        const data = (await response.json()) as NonNullable<AppShellViewer>;
         if (alive) {
           setMe(data);
         }
@@ -147,11 +143,19 @@ export default function AppShell({
     return () => {
       alive = false;
     };
-  }, [apiBaseUrl, authBaseUrl]);
+  }, [apiBaseUrl, authBaseUrl, pathname]);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const nextQuery = new URLSearchParams(window.location.search).get("query") || "";
+    setSearchQuery((current) => (current === nextQuery ? current : nextQuery));
+  }, [pathname]);
 
   const handleLogout = async () => {
     try {
@@ -164,34 +168,19 @@ export default function AppShell({
     }
   };
 
+  const handleSearch = () => {
+    const nextQuery = searchQuery.trim();
+    setSearchQuery(nextQuery);
+    const params = new URLSearchParams();
+    if (nextQuery) {
+      params.set("query", nextQuery);
+    }
+    const qs = params.toString();
+    router.push(qs ? `/search?${qs}` : "/search");
+  };
+
   const userLabel = me ? `${me.login} · ${me.role}` : "";
-  const navSearchPlaceholder =
-    "Search projects, maintainers, companies, or roster URLs";
-  const navSearch =
-    navCenter === undefined ? (
-      <Searchbar
-        placeholder={navSearchPlaceholder}
-        value={navQuery}
-        onValueChange={setNavQuery}
-        onSearch={() => {
-          const params = new URLSearchParams();
-          if (navQuery.trim()) {
-            params.set("query", navQuery.trim());
-          }
-          const qs = params.toString();
-          router.push(qs ? `/search?${qs}` : "/search");
-          if (typeof window !== "undefined") {
-            window.dispatchEvent(new Event("md-search"));
-          }
-        }}
-        cleanSearchValue={() => setNavQuery("")}
-        bigSize={false}
-        noButtons
-        classNameWrapper={styles.navSearch}
-      />
-    ) : (
-      navCenter
-    );
+  const content = typeof children === "function" ? children(me) : children;
 
   return (
     <div className={styles.page}>
@@ -204,7 +193,6 @@ export default function AppShell({
             <div className={styles.alpha}>Alpha</div>
           </div>
           <div className={`${styles.navCenter} ${navCenterClassName ?? ""}`}>
-            {navSearch}
           </div>
           <div className={styles.userArea}>
             <button
@@ -229,7 +217,7 @@ export default function AppShell({
             ) : null}
             {me?.role === "staff" ? (
               <Link className={styles.auditButton} href="/audit">
-                Audit
+                AUDIT LOGS
               </Link>
             ) : null}
             {me ? (
@@ -245,18 +233,26 @@ export default function AppShell({
                   maintainerId={me.maintainerId}
                 />
               </Dropdown>
-            ) : (
-              <Link
-                className={styles.loginButton}
-                href={`${authBaseUrl}/auth/login?next=/`}
-              >
-                Sign in with GitHub
-              </Link>
-            )}
+            ) : null}
           </div>
         </div>
       </Navbar>
-      <div className={styles.content}>{children}</div>
+      {me ? (
+        <div className={styles.searchBand}>
+          <div className={styles.searchBandInner}>
+            <Searchbar
+              placeholder="Search projects, maintainers, companies, or roster URLs"
+              value={searchQuery}
+              onValueChange={setSearchQuery}
+              onSearch={handleSearch}
+              cleanSearchValue={() => setSearchQuery("")}
+              bigSize={false}
+              classNameWrapper={styles.searchbar}
+            />
+          </div>
+        </div>
+      ) : null}
+      <div className={`${styles.content} ${me ? styles.contentWithSearch : ""}`}>{content}</div>
       <Footer className={styles.footer} logo={<span className={styles.footerLogo}>maintainer-d</span>}>
         <div className={styles.footerCol}>
           <div className="h6 fw-bold text-uppercase">Project</div>

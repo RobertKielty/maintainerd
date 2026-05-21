@@ -12,6 +12,7 @@ import MaintainerServicesPanel, {
   MaintainerServiceView,
 } from "@/components/MaintainerServicesPanel";
 import CompanyCreateModal from "@/components/CompanyCreateModal";
+import { getAuthBaseUrl, redirectToAuthLogin } from "@/utils/auth";
 import styles from "./page.module.css";
 
 type MaintainerDetail = {
@@ -23,6 +24,9 @@ type MaintainerDetail = {
   status: string;
   companyId?: number | null;
   company?: string;
+  location?: string;
+  country?: string;
+  timezone?: string;
   projects: { id: number; name: string }[];
   services?: MaintainerServiceView[];
   createdAt: string;
@@ -47,6 +51,9 @@ const maintainerDataHasChanged = (
     current.status !== next.status ||
     current.company !== next.company ||
     current.companyId !== next.companyId ||
+    current.location !== next.location ||
+    current.country !== next.country ||
+    current.timezone !== next.timezone ||
     JSON.stringify(current.services ?? []) !== JSON.stringify(next.services ?? []) ||
     current.createdAt !== next.createdAt ||
     current.updatedAt !== next.updatedAt ||
@@ -106,6 +113,7 @@ export default function MaintainerPage() {
     }
     return `${bffBaseUrl}/api`;
   }, [bffBaseUrl]);
+  const authBaseUrl = useMemo(() => getAuthBaseUrl(bffBaseUrl), [bffBaseUrl]);
 
   const canEdit = role === "staff";
   const canEditSelf =
@@ -139,7 +147,7 @@ export default function MaintainerPage() {
         );
         if (!response.ok) {
           if (response.status === 401) {
-            router.push("/");
+            redirectToAuthLogin(authBaseUrl, `/maintainers/${maintainerId}`);
             return;
           }
           throw new Error(`unexpected status ${response.status}`);
@@ -171,7 +179,7 @@ export default function MaintainerPage() {
         window.clearInterval(intervalId);
       }
     };
-  }, [apiBaseUrl, error, isEditing, maintainer, maintainerId, pollIntervalMs, router]);
+  }, [apiBaseUrl, authBaseUrl, error, isEditing, maintainer, maintainerId, pollIntervalMs, router]);
 
   useEffect(() => {
     let alive = true;
@@ -438,6 +446,9 @@ export default function MaintainerPage() {
               githubEmail={maintainer.githubEmail}
               status={maintainer.status}
               company={maintainer.company}
+              location={maintainer.location}
+              country={maintainer.country}
+              timezone={maintainer.timezone}
               projects={maintainer.projects}
               createdAt={maintainer.createdAt}
               updatedAt={maintainer.updatedAt}

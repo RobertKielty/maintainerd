@@ -11,8 +11,17 @@ type ProjectCardProps = {
   onboardingIssueStatus?: string;
   legacyMaintainerRef?: string;
   githubOrg?: string;
-  dotProjectYamlRef?: string;
-  maintainers?: { id: number; name: string }[];
+  dotProjectRepoRef?: string;
+  dotProjectProjectRef?: string;
+  dotProjectMaintainerRef?: string;
+  dotProjectSecurityRef?: string;
+  dotProjectContributingRef?: string;
+  dotProjectGovernanceRef?: string;
+  dotProjectSchemaVersion?: string;
+  dotProjectMaintainerCount?: number | null;
+  dotProjectLastSyncedAt?: string | null;
+  dotProjectAdoptionStatus?: string;
+  maintainers?: { id: number; name: string; country?: string; location?: string; timezone?: string }[];
   maintainerFilter?: string;
 };
 
@@ -24,7 +33,7 @@ export default function ProjectCard({
   onboardingIssueStatus,
   legacyMaintainerRef,
   githubOrg,
-  dotProjectYamlRef,
+  dotProjectRepoRef,
   maintainers = [],
   maintainerFilter = "",
 }: ProjectCardProps) {
@@ -33,7 +42,7 @@ export default function ProjectCard({
   const hasObStatus = Boolean(onboardingIssueStatus);
   const hasLegacyFile = Boolean(legacyMaintainerRef);
   const hasOrg = Boolean(githubOrg && githubOrg.trim());
-  const hasDotRepo = Boolean(dotProjectYamlRef);
+  const hasDotProjectRepo = Boolean(dotProjectRepoRef);
 
   const renderLink = (value?: string | null, label?: string) => {
     if (!value) {
@@ -131,14 +140,32 @@ export default function ProjectCard({
           <div>
             <dt>Maintainers</dt>
             <dd>
-              {maintainers.map((maintainer, index) => (
-                <span key={maintainer.id}>
-                  <Link className={styles.link} href={`/maintainers/${maintainer.id}`}>
-                    {highlightMatch(maintainer.name, maintainerFilter)}
-                  </Link>
-                  {index < maintainers.length - 1 ? ", " : ""}
-                </span>
-              ))}
+              {maintainers.map((maintainer, index) => {
+                const lower = maintainerFilter.toLowerCase();
+                const isMatch = Boolean(lower) && (
+                  maintainer.name.toLowerCase().includes(lower) ||
+                  (maintainer.country?.toLowerCase().includes(lower) ?? false) ||
+                  (maintainer.location?.toLowerCase().includes(lower) ?? false) ||
+                  (maintainer.timezone?.toLowerCase().includes(lower) ?? false)
+                );
+                const flag = isMatch && maintainer.country
+                  ? [...maintainer.country.toUpperCase()]
+                      .map((c) => String.fromCodePoint(c.charCodeAt(0) + 0x1f1a5))
+                      .join("")
+                  : "";
+                return (
+                  <span
+                    key={maintainer.id}
+                    className={isMatch ? styles.maintainerMatch : undefined}
+                  >
+                    <Link className={styles.link} href={`/maintainers/${maintainer.id}`}>
+                      {highlightMatch(maintainer.name, maintainerFilter)}
+                    </Link>
+                    {flag ? <span title={maintainer.country}> {flag}</span> : null}
+                    {index < maintainers.length - 1 ? ", " : ""}
+                  </span>
+                );
+              })}
             </dd>
           </div>
         ) : null}
@@ -163,10 +190,10 @@ export default function ProjectCard({
             <dd>{orgLink(githubOrg)}</dd>
           </div>
         ) : null}
-        {hasDotRepo ? (
+        {hasDotProjectRepo ? (
           <div>
             <dt>.project repo</dt>
-            <dd>{renderLink(dotProjectYamlRef)}</dd>
+            <dd>{renderLink(dotProjectRepoRef, fileName(dotProjectRepoRef))}</dd>
           </div>
         ) : null}
       </dl>

@@ -9,6 +9,8 @@ IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd:$(TAG)
 IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd:latest
 SYNC_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sync:$(TAG)
 SYNC_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sync:latest
+DOT_PROJECT_SYNC_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-dot-project-sync:$(TAG)
+DOT_PROJECT_SYNC_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-dot-project-sync:latest
 SANITIZE_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sanitize:$(TAG)
 SANITIZE_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sanitize:latest
 MIGRATE_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-migrate:$(TAG)
@@ -17,6 +19,8 @@ ONBOARDING_BACKFILL_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-onboarding-bac
 ONBOARDING_BACKFILL_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-onboarding-backfill:latest
 FOSSA_POLLER_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-fossa-poller:$(TAG)
 FOSSA_POLLER_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-fossa-poller:latest
+GITHUB_PROFILE_SYNC_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-github-profile-sync:$(TAG)
+GITHUB_PROFILE_SYNC_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-github-profile-sync:latest
 WEB_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-web:$(TAG)
 WEB_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-web:latest
 WEB_BFF_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-web-bff:$(TAG)
@@ -79,6 +83,11 @@ sync-image-build:
 	@echo "Building sync image: $(SYNC_IMAGE)"
 	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(SYNC_IMAGE) -f Dockerfile --target sync .
 
+.PHONY: dot-project-sync-image-build
+dot-project-sync-image-build:
+	@echo "Building dot-project sync image: $(DOT_PROJECT_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(DOT_PROJECT_SYNC_IMAGE) -f Dockerfile --target dot-project-sync .
+
 .PHONY: sanitize-image-build
 sanitize-image-build:
 	@echo "Building sanitize image: $(SANITIZE_IMAGE)"
@@ -98,6 +107,11 @@ onboarding-backfill-image-build:
 fossa-poller-image-build:
 	@echo "Building fossa poller image: $(FOSSA_POLLER_IMAGE)"
 	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(FOSSA_POLLER_IMAGE) -f Dockerfile --target fossa-poller .
+
+.PHONY: github-profile-sync-image-build
+github-profile-sync-image-build:
+	@echo "Building GitHub profile sync image: $(GITHUB_PROFILE_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(GITHUB_PROFILE_SYNC_IMAGE) -f Dockerfile --target github-profile-sync .
 
 .PHONY: web-image-build
 web-image-build:
@@ -186,6 +200,21 @@ sync-image-push: sync-image-build
 	@$(CONTAINER_TOOL) tag $(SYNC_IMAGE) $(SYNC_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(SYNC_IMAGE_LATEST)
 
+.PHONY: dot-project-sync-image-push
+dot-project-sync-image-push: dot-project-sync-image-build
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(DOT_PROJECT_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) push $(DOT_PROJECT_SYNC_IMAGE)
+	@echo "Tagging and pushing latest: $(DOT_PROJECT_SYNC_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(DOT_PROJECT_SYNC_IMAGE) $(DOT_PROJECT_SYNC_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(DOT_PROJECT_SYNC_IMAGE_LATEST)
+
 .PHONY: sanitize-image-push
 sanitize-image-push: sanitize-image-build
 	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
@@ -246,6 +275,21 @@ fossa-poller-image-push: fossa-poller-image-build
 	@$(CONTAINER_TOOL) tag $(FOSSA_POLLER_IMAGE) $(FOSSA_POLLER_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(FOSSA_POLLER_IMAGE_LATEST)
 
+.PHONY: github-profile-sync-image-push
+github-profile-sync-image-push: github-profile-sync-image-build
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(GITHUB_PROFILE_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) push $(GITHUB_PROFILE_SYNC_IMAGE)
+	@echo "Tagging and pushing latest: $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(GITHUB_PROFILE_SYNC_IMAGE) $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)
+
 .PHONY: web-image-push
 web-image-push: web-image-build
 	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
@@ -292,10 +336,31 @@ sync-image-deploy: sync-image-push
 	kubectl -n $(NAMESPACE) $$CTX_FLAG delete job -l job-name=maintainer-sync --ignore-not-found; \
 	echo "Next scheduled run will pull $(SYNC_IMAGE)."
 
+.PHONY: dot-project-sync-image-deploy
+dot-project-sync-image-deploy: dot-project-sync-image-push
+	@echo "Image pushed. Updating CronJob/dot-project-sync in $(NAMESPACE) [ctx=$(CTX_STR)]"
+	@CTX_FLAG="$(if $(KUBECONTEXT),--context $(KUBECONTEXT))" ; \
+	if ! kubectl $$CTX_FLAG config current-context >/dev/null 2>&1; then \
+		echo "kubectl context $(CTX_STR) unavailable; skipping rollout"; exit 0; \
+	fi ; \
+	if ! kubectl -n $(NAMESPACE) $$CTX_FLAG get cronjob/dot-project-sync >/dev/null 2>&1; then \
+		echo "CronJob/dot-project-sync not found in namespace $(NAMESPACE)."; \
+		echo "Hint: apply deploy/manifests/dot-project-sync-cronjob.yaml or run 'make dot-project-sync-apply'."; \
+		exit 1; \
+	fi ; \
+	kubectl -n $(NAMESPACE) $$CTX_FLAG set image cronjob/dot-project-sync '*=$(DOT_PROJECT_SYNC_IMAGE)'; \
+	kubectl -n $(NAMESPACE) $$CTX_FLAG delete job -l job-name=dot-project-sync --ignore-not-found; \
+	echo "Next scheduled run will pull $(DOT_PROJECT_SYNC_IMAGE)."
+
 .PHONY: sync-apply
 sync-apply:
 	@echo "Applying sync resources in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/cronjob.yaml -f deploy/manifests/sync-rbac.yaml
+
+.PHONY: dot-project-sync-apply
+dot-project-sync-apply:
+	@echo "Applying dot-project sync CronJob in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/dot-project-sync-cronjob.yaml
 
 .PHONY: sync-run
 sync-run:
@@ -303,6 +368,14 @@ sync-run:
 	job="maintainer-sync-manual-$$(date +%s)"; \
 	echo "Creating sync job $$job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) create job --from=cronjob/maintainer-sync $$job; \
+	'
+
+.PHONY: dot-project-sync-run
+dot-project-sync-run:
+	@bash -c 'set -euo pipefail; \
+	job="dot-project-sync-manual-$$(date +%s)"; \
+	echo "Creating dot-project sync job $$job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) create job --from=cronjob/dot-project-sync $$job; \
 	'
 
 .PHONY: bootstrap-run
@@ -351,10 +424,35 @@ onboarding-backfill-job:
 	@echo "Running onboarding backfill job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/maintainerd-onboarding-backfill-job.yaml
 
+.PHONY: github-profile-sync-run
+github-profile-sync-run:
+	@bash -c 'set -euo pipefail; \
+	echo "Recreating GitHub profile sync job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete job github-profile-sync --ignore-not-found; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/github-profile-sync-job.yaml; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/github-profile-sync --timeout=1800s; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) logs job/github-profile-sync --tail=-1; \
+	'
+
+.PHONY: fossa-poller-deploy
+fossa-poller-deploy:
+	@bash -c 'set -euo pipefail; \
+	echo "Retiring legacy CronJob/maintainerd-fossa-poller in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete cronjob maintainerd-fossa-poller --ignore-not-found; \
+	jobs="$$(kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) get jobs -o name | grep "^job.batch/maintainerd-fossa-poller-" || true)"; \
+	if [ -n "$${jobs}" ]; then \
+		echo "Deleting legacy fossa poller Jobs [ctx=$(CTX_STR)]"; \
+		echo "$${jobs}" | xargs -r kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete --wait=true; \
+	fi; \
+	echo "Applying fossa poller deployment in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/maintainerd-fossa-poller-deployment.yaml; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) rollout status deployment/maintainerd-fossa-poller --timeout=180s; \
+	'
+
 .PHONY: fossa-poller-cronjob
 fossa-poller-cronjob:
-	@echo "Applying fossa poller cronjob in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
-	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/cronjob-fossa-poller.yaml
+	@echo "fossa-poller-cronjob is deprecated; applying the deployment-backed poller instead [ctx=$(CTX_STR)]"
+	@$(MAKE) fossa-poller-deploy
 
 .PHONY: migrate-schema-safe
 migrate-schema-safe:
@@ -453,6 +551,10 @@ help:
 	@echo "make deploy-web -> apply web-bff/web services + deployments + ingress + cert"
 	@echo "make web-image-set TAG=... -> set maintainerd-web image to a specific tag"
 	@echo "make web-release TAG=... -> build+push web & web-bff with same tag, then set both images"
+	@echo "make github-profile-sync-image-build -> build GitHub profile sync image $(GITHUB_PROFILE_SYNC_IMAGE) locally"
+	@echo "make github-profile-sync-image-push -> build and push $(GITHUB_PROFILE_SYNC_IMAGE)"
+	@echo "make dot-project-sync-image-build -> build dot-project sync image $(DOT_PROJECT_SYNC_IMAGE) locally"
+	@echo "make dot-project-sync-image-push -> build and push $(DOT_PROJECT_SYNC_IMAGE)"
 	@echo "make clean-env       -> remove $(ENVOUT)"
 	@echo "make print           -> show which keys would be loaded (without values)"
 	@echo "make mntrd-image-build  -> build maintainerd image $(IMAGE) locally"
@@ -460,6 +562,10 @@ help:
 	@echo "make mntrd-image-deploy -> build, push, and restart Deployment in $(NAMESPACE)"
 	@echo "make sync-apply      -> apply CronJob + RBAC for the sync job"
 	@echo "make sync-run        -> trigger a manual sync job and tail logs"
+	@echo "make dot-project-sync-apply -> apply the hourly dot-project sync CronJob"
+	@echo "make dot-project-sync-run -> trigger a manual dot-project sync job"
+	@echo "make fossa-poller-deploy -> apply Deployment for the long-running FOSSA poller"
+	@echo "make github-profile-sync-run -> recreate one-off GitHub profile sync job and tail logs"
 	@echo "make bootstrap-run   -> prod: recreate bootstrap job after applying SOPS bootstrap secrets"
 	@echo "make bootstrap-run-dev -> dev: recreate bootstrap job after applying .envrc secrets"
 	@echo "make migrate-schema  -> run one-off schema migration job"
@@ -506,14 +612,13 @@ test-web:
 	bff_pid=""; web_pid=""; microcks_started=""; \
 	cleanup() { \
 		status=$$?; \
-		if [ -n "$$web_pid" ] || [ -n "$$bff_pid" ]; then \
-			kill $$web_pid $$bff_pid >/dev/null 2>&1 || true; \
-		fi; \
+		if [ -n "$$bff_pid" ]; then kill -TERM -$$bff_pid >/dev/null 2>&1 || true; fi; \
+		if [ -n "$$web_pid" ]; then kill -TERM -$$web_pid >/dev/null 2>&1 || true; fi; \
 		if [ -n "$$microcks_started" ]; then \
-			CONTAINER_TOOL="$${CONTAINER_TOOL:-podman}" scripts/microcks-down.sh >/dev/null 2>&1 || true; \
+			CONTAINER_TOOL="$${CONTAINER_TOOL:-podman}" timeout 30 scripts/microcks-down.sh >/dev/null 2>&1 || true; \
 		fi; \
 		if command -v lsof >/dev/null 2>&1; then \
-			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill >/dev/null 2>&1 || true; \
+			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill -9 >/dev/null 2>&1 || true; \
 		fi; \
 		if [ "$$TESTDATA_DIR" != "$$HOST_LOG_DIR" ]; then \
 			mkdir -p "$$HOST_LOG_DIR"; \
@@ -588,7 +693,7 @@ test-web:
 	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_ALLOW_LIVE_FOSSA="$$USE_MICROCKS" BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
 	WEB_APP_BASE_URL=http://localhost:4001 GITHUB_OAUTH_REDIRECT_URL=http://localhost:9001/auth/callback \
 	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test FOSSA_API_BASE="$${FOSSA_API_BASE:-}" FOSSA_API_TOKEN="$${FOSSA_API_TOKEN:-}" \
-	go run ./cmd/web-bff > >(tee "$$TESTDATA_DIR/web-bff-test.log") 2>&1 & \
+	setsid go run ./cmd/web-bff </dev/null >"$$TESTDATA_DIR/web-bff-test.log" 2>&1 & \
 	bff_pid=$$!; \
 	mkdir -p "$$TESTDATA_DIR/tmp" web/tmp || true; \
 	NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
@@ -596,7 +701,7 @@ test-web:
 	npm --prefix web run build > "$$TESTDATA_DIR/web-build-test.log" 2>&1; \
 	PORT=4001 NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
 	NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false TURBOPACK_ROOT="$$(pwd)/web" OUTPUT_FILE_TRACING_ROOT="$$(pwd)/web" \
-	npm --prefix web run start > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
+	setsid npm --prefix web run start </dev/null > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
 	web_pid=$$!; \
 	npx --prefix web wait-on http://localhost:9001/healthz http://localhost:4001 > /dev/null 2>&1; \
 	BDD_FEATURE_PATH="$${BDD_FEATURE:-}"; \
@@ -616,11 +721,10 @@ test-web-license-checker:
 	bff_pid=""; web_pid=""; \
 	cleanup() { \
 		status=$$?; \
-		if [ -n "$$web_pid" ] || [ -n "$$bff_pid" ]; then \
-			kill $$web_pid $$bff_pid >/dev/null 2>&1 || true; \
-		fi; \
+		if [ -n "$$bff_pid" ]; then kill -TERM -$$bff_pid >/dev/null 2>&1 || true; fi; \
+		if [ -n "$$web_pid" ]; then kill -TERM -$$web_pid >/dev/null 2>&1 || true; fi; \
 		if command -v lsof >/dev/null 2>&1; then \
-			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill >/dev/null 2>&1 || true; \
+			lsof -ti TCP:9001 -ti TCP:4001 2>/dev/null | xargs -r kill -9 >/dev/null 2>&1 || true; \
 		fi; \
 		if [ "$$TESTDATA_DIR" != "$$HOST_LOG_DIR" ]; then \
 			mkdir -p "$$HOST_LOG_DIR"; \
@@ -683,7 +787,7 @@ test-web-license-checker:
 	BFF_ADDR=:9001 BFF_TEST_MODE=true BFF_TEST_FOSSA_TEAM_ID=999001 SESSION_COOKIE_SECURE=false SESSION_COOKIE_DOMAIN= \
 	WEB_APP_BASE_URL=http://localhost:4001 GITHUB_OAUTH_REDIRECT_URL=http://localhost:9001/auth/callback \
 	GITHUB_OAUTH_CLIENT_ID=test GITHUB_OAUTH_CLIENT_SECRET=test \
-	go run ./cmd/web-bff > >(tee "$$TESTDATA_DIR/web-bff-test.log") 2>&1 & \
+	setsid go run ./cmd/web-bff </dev/null >"$$TESTDATA_DIR/web-bff-test.log" 2>&1 & \
 	bff_pid=$$!; \
 	mkdir -p "$$TESTDATA_DIR/tmp" web/tmp || true; \
 	NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
@@ -691,7 +795,7 @@ test-web-license-checker:
 	npm --prefix web run build > "$$TESTDATA_DIR/web-build-test.log" 2>&1; \
 	PORT=4001 NEXT_PUBLIC_BFF_BASE_URL=http://localhost:9001 NEXT_DIST_DIR="$$TESTDATA_DIR/next-dist" TMPDIR="$$TESTDATA_DIR/tmp" NEXT_TEMP_DIR="$$TESTDATA_DIR/tmp" \
 	NEXT_TELEMETRY_DISABLED=1 NPM_CONFIG_UPDATE_NOTIFIER=false TURBOPACK_ROOT="$$(pwd)/web" OUTPUT_FILE_TRACING_ROOT="$$(pwd)/web" \
-	npm --prefix web run start > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
+	setsid npm --prefix web run start </dev/null > "$$TESTDATA_DIR/web-app-test.log" 2>&1 & \
 	web_pid=$$!; \
 	npx --prefix web wait-on http://localhost:9001/healthz http://localhost:4001 > /dev/null 2>&1; \
 	cd web && WEB_BASE_URL=http://localhost:4001 BFF_BASE_URL=http://localhost:9001 TEST_STAFF_LOGIN=staff-tester \
@@ -1063,9 +1167,11 @@ fossa-poller-image-set:
 	@if [ -z "$(TAG)" ]; then \
 		echo "Usage: make fossa-poller-image-set TAG=<tag>"; exit 1; \
 	fi
-	@echo "Setting maintainerd-fossa-poller image to $(FOSSA_POLLER_IMAGE) [ns=$(NAMESPACE)]"
+	@echo "Setting Deployment/maintainerd-fossa-poller image to $(FOSSA_POLLER_IMAGE) [ns=$(NAMESPACE)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
-		set image cronjob/maintainerd-fossa-poller fossa-poller=$(FOSSA_POLLER_IMAGE)
+		set image deployment/maintainerd-fossa-poller fossa-poller=$(FOSSA_POLLER_IMAGE)
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		rollout status deployment/maintainerd-fossa-poller --timeout=180s
 
 .PHONY: sync-image-set
 sync-image-set:
@@ -1075,6 +1181,15 @@ sync-image-set:
 	@echo "Setting maintainerd-sync image to $(SYNC_IMAGE) [ns=$(NAMESPACE)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
 		set image cronjob/maintainer-sync '*=$(SYNC_IMAGE)'
+
+.PHONY: dot-project-sync-image-set
+dot-project-sync-image-set:
+	@if [ -z "$(TAG)" ]; then \
+		echo "Usage: make dot-project-sync-image-set TAG=<tag>"; exit 1; \
+	fi
+	@echo "Setting maintainerd-dot-project-sync image to $(DOT_PROJECT_SYNC_IMAGE) [ns=$(NAMESPACE)]"
+	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
+		set image cronjob/dot-project-sync '*=$(DOT_PROJECT_SYNC_IMAGE)'
 
 .PHONY: sanitize-image-set
 sanitize-image-set:
@@ -1095,7 +1210,7 @@ onboarding-backfill-image-set:
 		set image cronjob/maintainerd-onboarding-backfill '*=$(ONBOARDING_BACKFILL_IMAGE)'
 
 .PHONY: image-set
-image-set: mntrd-image-set web-image-set web-bff-image-set fossa-poller-image-set sync-image-set sanitize-image-set onboarding-backfill-image-set
+image-set: mntrd-image-set web-image-set web-bff-image-set fossa-poller-image-set sync-image-set dot-project-sync-image-set sanitize-image-set onboarding-backfill-image-set
 	@true
 
 # Convenience combo target
@@ -1114,14 +1229,16 @@ images-show:
 	@echo "Image repositories:"
 	@echo "  maintainerd        $(IMAGE)"
 	@echo "  maintainerd-sync   $(SYNC_IMAGE)"
+	@echo "  maintainerd-dot-project-sync $(DOT_PROJECT_SYNC_IMAGE)"
 	@echo "  maintainerd-sanitize $(SANITIZE_IMAGE)"
 	@echo "  maintainerd-migrate  $(MIGRATE_IMAGE)"
 	@echo "  maintainerd-fossa-poller $(FOSSA_POLLER_IMAGE)"
+	@echo "  maintainerd-github-profile-sync $(GITHUB_PROFILE_SYNC_IMAGE)"
 	@echo "  maintainerd-web      $(WEB_IMAGE)"
 	@echo "  maintainerd-web-bff  $(WEB_BFF_IMAGE)"
 
 .PHONY: images-build
-images-build: mntrd-image-build sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build fossa-poller-image-build web-image-build web-bff-image-build
+images-build: mntrd-image-build sync-image-build dot-project-sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build fossa-poller-image-build github-profile-sync-image-build web-image-build web-bff-image-build
 	@echo "All images built."
 
 .PHONY: mntrd-image-push-only
@@ -1153,6 +1270,21 @@ sync-image-push-only:
 	@echo "Tagging and pushing latest: $(SYNC_IMAGE_LATEST)"
 	@$(CONTAINER_TOOL) tag $(SYNC_IMAGE) $(SYNC_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(SYNC_IMAGE_LATEST)
+
+.PHONY: dot-project-sync-image-push-only
+dot-project-sync-image-push-only:
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(DOT_PROJECT_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) push $(DOT_PROJECT_SYNC_IMAGE)
+	@echo "Tagging and pushing latest: $(DOT_PROJECT_SYNC_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(DOT_PROJECT_SYNC_IMAGE) $(DOT_PROJECT_SYNC_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(DOT_PROJECT_SYNC_IMAGE_LATEST)
 
 .PHONY: sanitize-image-push-only
 sanitize-image-push-only:
@@ -1214,6 +1346,21 @@ fossa-poller-image-push-only:
 	@$(CONTAINER_TOOL) tag $(FOSSA_POLLER_IMAGE) $(FOSSA_POLLER_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(FOSSA_POLLER_IMAGE_LATEST)
 
+.PHONY: github-profile-sync-image-push-only
+github-profile-sync-image-push-only:
+	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
+	@if [ -n "$(GHCR_TOKEN)" ]; then \
+		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
+		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
+	else \
+		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
+	fi
+	@echo "Pushing image: $(GITHUB_PROFILE_SYNC_IMAGE)"
+	@$(CONTAINER_TOOL) push $(GITHUB_PROFILE_SYNC_IMAGE)
+	@echo "Tagging and pushing latest: $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)"
+	@$(CONTAINER_TOOL) tag $(GITHUB_PROFILE_SYNC_IMAGE) $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)
+	@$(CONTAINER_TOOL) push $(GITHUB_PROFILE_SYNC_IMAGE_LATEST)
+
 .PHONY: web-image-push-only
 web-image-push-only:
 	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
@@ -1245,7 +1392,7 @@ web-bff-image-push-only:
 	@$(CONTAINER_TOOL) push $(WEB_BFF_IMAGE_LATEST)
 
 .PHONY: images-push
-images-push: mntrd-image-push-only sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only fossa-poller-image-push-only web-image-push-only web-bff-image-push-only
+images-push: mntrd-image-push-only sync-image-push-only dot-project-sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only fossa-poller-image-push-only github-profile-sync-image-push-only web-image-push-only web-bff-image-push-only
 	@echo "All images pushed (no build)."
 
 .PHONY: clean-env
@@ -1398,6 +1545,7 @@ test-package:
 .PHONY: ci-local
 ci-local:
 	@echo "Running local CI checks..."
+	@mkdir -p $(GOCACHE_DIR) /tmp/golangci-lint
 	@echo "→ Tool versions..."
 	@bash -c 'set -euo pipefail; \
 	echo "go: $$(go version)"; \
@@ -1422,41 +1570,41 @@ ci-local:
 		gofmt -s -l $$GOFILES; \
 		exit 1; \
 	fi
-	@echo "→ Running go vet..."
-	@go vet # ./...
-	@echo "→ Running staticcheck..."
-	@command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck not installed. Run: go install honnef.co/go/tools/cmd/staticcheck@latest"; exit 1; }
-	@staticcheck # ./...
-	@echo "→ Running golangci-lint..."
-	@command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; exit 1; }
-	@golangci-lint run ./...
-	@echo "→ Running go tests..."
-	@go test ./...
-	@echo "→ Running web eslint..."
 	@rm -rf web/work/testdata/next-dist web/testdata/next-dist web/tmp || true
-	@npm --prefix web run lint -- --max-warnings=$(ESLINT_MAX_WARNINGS)
-	@echo "→ Running web typecheck..."
-	@npm --prefix web run typecheck
-	@echo "→ Running web BDD..."
 	@bash -c 'set -euo pipefail; \
 	if [ -z "$${MD_DB_DSN:-}" ]; then \
 		echo "MD_DB_DSN is required for ci-local web BDD (Postgres only)."; \
 		echo "Example: MD_DB_DSN=\"host=localhost port=5432 user=maintainerd password=maintainerd dbname=maintainerd_test sslmode=disable\""; \
 		exit 1; \
 	fi; \
-	env MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" $(MAKE) web-bdd; \
+	command -v staticcheck >/dev/null 2>&1 || { echo "staticcheck not installed. Run: go install honnef.co/go/tools/cmd/staticcheck@latest"; exit 1; }; \
+	command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint not installed. Run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; exit 1; }; \
+	NPROC=$$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4); \
+	export GOCACHE=$(GOCACHE_DIR); \
+	export GOLANGCI_LINT_CACHE=/tmp/golangci-lint; \
+	echo "→ Running all checks sequentially..."; \
+	go vet ./...                  && echo "✓ go vet"; \
+	npm --prefix web run lint -- --max-warnings=$(ESLINT_MAX_WARNINGS) \
+	                              && echo "✓ web lint"; \
+	npm --prefix web run typecheck \
+	                              && echo "✓ web typecheck"; \
+	staticcheck ./...             && echo "✓ staticcheck"; \
+	golangci-lint run ./...       && echo "✓ golangci-lint"; \
+	go test -race -p "$$NPROC" -coverprofile=coverage.out -covermode=atomic ./... \
+	                              && echo "✓ go test -race"; \
+	MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" WEB_BDD_USE_MICROCKS=true NO_BDD_OPEN=1 $(MAKE) web-bdd \
+	                              && echo "✓ web BDD"; \
+	echo "→ Coverage report:"; \
+	go tool cover -func=coverage.out | tail -n 1; \
+	echo "✅ All CI checks passed!"; \
 	'
-	@echo "→ Running tests with race detector..."
-	@go test -race -coverprofile=coverage.out -covermode=atomic ./...
-	@echo "→ Coverage report:"
-	@go tool cover -func=coverage.out | tail -n 1
-	@echo "✅ All CI checks passed!"
 
 .PHONY: lint
 lint:
 	@echo "Running golangci-lint..."
+	@mkdir -p $(GOCACHE_DIR) /tmp/golangci-lint
 	@if command -v golangci-lint >/dev/null 2>&1; then \
-		golangci-lint run ./...; \
+		GOLANGCI_LINT_CACHE=/tmp/golangci-lint GOCACHE=$(GOCACHE_DIR) golangci-lint run ./...; \
 	else \
 		echo "golangci-lint not installed."; \
 		echo "Install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest"; \
