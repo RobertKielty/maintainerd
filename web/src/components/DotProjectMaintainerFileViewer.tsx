@@ -244,7 +244,7 @@ const isSequenceItemLine = (line: string): boolean => /^\s*-\s*\S/.test(line);
 
 const isMaintainerPlaceholderLine = (line: string): boolean => {
   const trimmed = line.trim();
-  return /^#\s*TODO:\s*Add maintainer GitHub handles\s*$/i.test(trimmed) || /^-\s*github-handle\s*(?:#.*)?$/i.test(trimmed);
+  return /^#\s*TODO\b.*$/i.test(trimmed) || /^-\s*github-handle\s*(?:#.*)?$/i.test(trimmed);
 };
 
 const splitSourceLines = (source: string): string[] =>

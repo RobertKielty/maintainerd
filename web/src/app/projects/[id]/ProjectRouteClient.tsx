@@ -48,6 +48,18 @@ type DotProjectMaintainerCache = {
   lastCheckedAt?: string | null;
 };
 
+type DotProjectMaintainerPullRequest = {
+  status: string;
+  url?: string;
+  number?: number;
+  title?: string;
+  author?: string;
+  source?: string;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  warning?: string;
+};
+
 type ProjectDetail = {
   id: number;
   name: string;
@@ -66,6 +78,7 @@ type ProjectDetail = {
   dotProjectAdoptionStatus?: string;
   dotProjectSyncState?: DotProjectSyncState | null;
   dotProjectMaintainerCache?: DotProjectMaintainerCache | null;
+  dotProjectMaintainerPullRequest?: DotProjectMaintainerPullRequest | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -170,6 +183,11 @@ const projectDataHasChanged = (current: ProjectDetail | null, next: ProjectDetai
     current.dotProjectMaintainerCache?.bodyHash !== next.dotProjectMaintainerCache?.bodyHash ||
     current.dotProjectMaintainerCache?.body !== next.dotProjectMaintainerCache?.body ||
     current.dotProjectMaintainerCache?.lastCheckedAt !== next.dotProjectMaintainerCache?.lastCheckedAt ||
+    current.dotProjectMaintainerPullRequest?.status !== next.dotProjectMaintainerPullRequest?.status ||
+    current.dotProjectMaintainerPullRequest?.url !== next.dotProjectMaintainerPullRequest?.url ||
+    current.dotProjectMaintainerPullRequest?.number !== next.dotProjectMaintainerPullRequest?.number ||
+    current.dotProjectMaintainerPullRequest?.updatedAt !== next.dotProjectMaintainerPullRequest?.updatedAt ||
+    current.dotProjectMaintainerPullRequest?.warning !== next.dotProjectMaintainerPullRequest?.warning ||
     current.maintainerRefStatus.status !== next.maintainerRefStatus.status ||
     current.maintainerRefStatus.url !== next.maintainerRefStatus.url ||
     current.maintainerRefStatus.checkedAt !== next.maintainerRefStatus.checkedAt ||
@@ -458,6 +476,7 @@ export default function ProjectRouteClient({ children }: ProjectRouteClientProps
                 dotProjectAdoptionStatus={project.dotProjectAdoptionStatus}
                 dotProjectSyncState={project.dotProjectSyncState}
                 dotProjectMaintainerCache={project.dotProjectMaintainerCache}
+                dotProjectMaintainerPullRequest={project.dotProjectMaintainerPullRequest}
                 maintainerRefStatus={project.maintainerRefStatus}
                 maintainerRefBody={project.legacyMaintainerRefBody}
                 refOnlyGitHub={project.refOnlyGitHub}

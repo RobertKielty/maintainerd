@@ -14,6 +14,7 @@ func TestBuildMaintainerRosterPatchAddsMissingMaintainersAndRemovesPlaceholders(
         members:
           # TODO: Add maintainer GitHub handles
           # TODO: Add maintainer handles
+          # TODO: reconcile this roster after launch
           - github-handle
           - alice
 `
@@ -22,7 +23,7 @@ func TestBuildMaintainerRosterPatchAddsMissingMaintainersAndRemovesPlaceholders(
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"bob", "carol"}, patch.AddedHandles)
-	assert.Equal(t, []string{"# TODO: Add maintainer GitHub handles", "# TODO: Add maintainer handles", "- github-handle"}, patch.RemovedPlaceholders)
+	assert.Equal(t, []string{"# TODO: Add maintainer GitHub handles", "# TODO: Add maintainer handles", "# TODO: reconcile this roster after launch", "- github-handle"}, patch.RemovedPlaceholders)
 	assert.Equal(t, `maintainers:
   - teams:
       - name: project-maintainers

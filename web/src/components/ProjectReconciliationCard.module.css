@@ -731,13 +731,32 @@
 }
 
 .dotProjectYamlValidation {
-  border: 1px solid #f4d08a;
+  border: 1px solid var(--md-status-warning-border, #f4d08a);
   border-radius: 10px;
   padding: 10px 12px;
-  color: #6d4d00;
-  background: #fff7e6;
+  color: var(--md-status-warning-text, #6d4d00);
+  background: var(--md-status-warning-bg, #fff7e6);
   font-size: 12px;
   line-height: 1.5;
+}
+
+.dotProjectPullRequestNotice {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--md-status-warning-border, #f4d08a);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--md-status-warning-text, #6d4d00);
+  background: var(--md-status-warning-bg, #fff7e6);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.dotProjectPullRequestNotice p {
+  margin: 2px 0 0;
+  color: inherit;
 }
 
 .dotProjectYamlSuccess {

@@ -88,6 +88,18 @@ type DotProjectMaintainerCacheSummary = {
   lastCheckedAt?: string | null;
 };
 
+type DotProjectMaintainerPullRequestSummary = {
+  status: string;
+  url?: string | null;
+  number?: number | null;
+  title?: string | null;
+  author?: string | null;
+  source?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+  warning?: string | null;
+};
+
 type SortDirection = "asc" | "desc";
 
 type SortState<Key extends string> = {
@@ -139,6 +151,7 @@ type ProjectReconciliationCardProps = {
   dotProjectAdoptionStatus?: string | null;
   dotProjectSyncState?: DotProjectSyncStateSummary | null;
   dotProjectMaintainerCache?: DotProjectMaintainerCacheSummary | null;
+  dotProjectMaintainerPullRequest?: DotProjectMaintainerPullRequestSummary | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -280,6 +293,7 @@ export default function ProjectReconciliationCard({
   dotProjectAdoptionStatus,
   dotProjectSyncState,
   dotProjectMaintainerCache,
+  dotProjectMaintainerPullRequest,
   maintainerRefStatus,
   maintainerRefBody,
   refLines,
@@ -322,6 +336,8 @@ export default function ProjectReconciliationCard({
   const dotProjectMaintainerCacheBody = dotProjectMaintainerCache?.body ?? "";
   const dotProjectMaintainerCacheFilename =
     dotProjectMaintainerCache?.filename || dotProjectMaintainersFilename || "maintainers.yaml";
+  const openDotProjectMaintainerPR =
+    dotProjectMaintainerPullRequest?.status === "open" ? dotProjectMaintainerPullRequest : null;
   const dotProjectFiles = [
     {
       label: ".project repo",
@@ -892,6 +908,26 @@ export default function ProjectReconciliationCard({
               </a>
             ) : null}
           </div>
+          {openDotProjectMaintainerPR ? (
+            <div className={styles.dotProjectPullRequestNotice}>
+              <div>
+                <strong>Open maintainer-file pull request</strong>
+                <p>
+                  #{openDotProjectMaintainerPR.number} {openDotProjectMaintainerPR.title || "Untitled pull request"}
+                  {openDotProjectMaintainerPR.author ? ` by ${openDotProjectMaintainerPR.author}` : ""}
+                  {openDotProjectMaintainerPR.updatedAt ? `, updated ${formatDateTime(openDotProjectMaintainerPR.updatedAt)}` : ""}.
+                </p>
+              </div>
+              {openDotProjectMaintainerPR.url ? (
+                <a className={styles.link} href={openDotProjectMaintainerPR.url} target="_blank" rel="noreferrer">
+                  Open PR
+                </a>
+              ) : null}
+            </div>
+          ) : null}
+          {dotProjectMaintainerPullRequest?.status === "unknown" && dotProjectMaintainerPullRequest.warning ? (
+            <div className={styles.dotProjectYamlValidation}>{dotProjectMaintainerPullRequest.warning}</div>
+          ) : null}
           <DotProjectMaintainerFileViewer
             apiBaseUrl={apiBaseUrl}
             filename={dotProjectMaintainerCacheFilename}

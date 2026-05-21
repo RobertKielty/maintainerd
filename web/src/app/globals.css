@@ -27,6 +27,9 @@ body {
   --md-status-danger-bg: #fee2e2;
   --md-status-danger-border: #fca5a5;
   --md-status-danger-text: #b91c1c;
+  --md-status-warning-bg: #fff7e6;
+  --md-status-warning-border: #f4d08a;
+  --md-status-warning-text: #6d4d00;
   --md-callout-bg: linear-gradient(180deg, rgba(250, 250, 252, 1) 0%, rgba(245, 247, 250, 1) 100%);
 }
 
@@ -52,6 +55,9 @@ body {
   --md-status-danger-bg: rgba(239, 68, 68, 0.14);
   --md-status-danger-border: rgba(248, 113, 113, 0.4);
   --md-status-danger-text: #fca5a5;
+  --md-status-warning-bg: rgba(245, 158, 11, 0.14);
+  --md-status-warning-border: rgba(251, 191, 36, 0.4);
+  --md-status-warning-text: #fcd34d;
   --md-callout-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0.06) 100%);
 }
 
