@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -94,6 +95,17 @@ func setupPostgresTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, err)
 
 	return gormDB
+}
+
+func githubTestClient(t *testing.T, handler http.Handler) *github.Client {
+	t.Helper()
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+	client := github.NewClient(server.Client())
+	baseURL, err := url.Parse(server.URL + "/")
+	require.NoError(t, err)
+	client.BaseURL = baseURL
+	return client
 }
 
 func performMaintainerGet(t *testing.T, s *server, maintainerID uint, sessionID string) *httptest.ResponseRecorder {
@@ -245,6 +257,13 @@ func TestMaintainerCanAccessAllProjectsAndMaintainers(t *testing.T) {
 		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
 		cookieName: defaultSessionCookieName,
 		logger:     log.New(io.Discard, "", 0),
+		githubClient: func(context.Context, string) *github.Client {
+			return githubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/repos/project-cache/.project/pulls", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[]`))
+			}))
+		},
 	}
 
 	maintainerSessionID := "alice-session"
@@ -322,6 +341,13 @@ func TestProjectDetailIncludesDotProjectMaintainerCache(t *testing.T) {
 		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
 		cookieName: defaultSessionCookieName,
 		logger:     log.New(io.Discard, "", 0),
+		githubClient: func(context.Context, string) *github.Client {
+			return githubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				assert.Equal(t, "/repos/project-cache/.project/pulls", r.URL.Path)
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`[]`))
+			}))
+		},
 	}
 
 	staffSessionID := "staff-session"
@@ -351,6 +377,83 @@ func TestProjectDetailIncludesDotProjectMaintainerCache(t *testing.T) {
 	assert.Equal(t, body, response.DotProjectMaintainerCache.Body)
 	require.NotNil(t, response.DotProjectMaintainerCache.LastCheckedAt)
 	assert.True(t, response.DotProjectMaintainerCache.LastCheckedAt.Equal(now))
+}
+
+func TestProjectDetailIncludesOpenDotProjectMaintainerPullRequestFromGitHub(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	project := model.Project{
+		Name:                    "Project Cache",
+		Maturity:                model.Graduated,
+		GitHubOrg:               "project-cache",
+		DotProjectRepoRef:       "https://github.com/project-cache/.project",
+		DotProjectMaintainerRef: "https://github.com/project-cache/.project/blob/main/Maintainers.YAML",
+	}
+	require.NoError(t, dbConn.Create(&project).Error)
+
+	body := "maintainers:\n  - teams:\n      - name: project-maintainers\n        members:\n          - alice-example\n"
+	syncState := model.DotProjectSyncState{
+		ProjectID:             project.ID,
+		RepoExists:            true,
+		MaintainersFileExists: true,
+		MaintainersFilename:   "Maintainers.YAML",
+		MaintainersFileBody:   &body,
+		LastCheckedAt:         &now,
+	}
+	require.NoError(t, dbConn.Create(&syncState).Error)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		githubClient: func(context.Context, string) *github.Client {
+			return githubTestClient(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				switch r.URL.Path {
+				case "/repos/project-cache/.project/pulls":
+					_, _ = w.Write([]byte(`[{"number":7,"state":"open","html_url":"https://github.com/project-cache/.project/pull/7","title":"Manual maintainer update","user":{"login":"outside-user"},"created_at":"2026-05-21T09:00:00Z","updated_at":"2026-05-21T09:05:00Z"}]`))
+				case "/repos/project-cache/.project/pulls/7/files":
+					_, _ = w.Write([]byte(`[{"filename":"Maintainers.YAML"}]`))
+				default:
+					http.NotFound(w, r)
+				}
+			}))
+		},
+	}
+
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/projects/%d", project.ID), nil)
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+	rec := httptest.NewRecorder()
+	handler := s.requireSession(http.HandlerFunc(s.handleProject))
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var response projectDetailResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.NotNil(t, response.DotProjectMaintainerPR)
+	assert.Equal(t, "open", response.DotProjectMaintainerPR.Status)
+	assert.Equal(t, 7, response.DotProjectMaintainerPR.Number)
+	assert.Equal(t, "github", response.DotProjectMaintainerPR.Source)
+	assert.Equal(t, "https://github.com/project-cache/.project/pull/7", response.DotProjectMaintainerPR.URL)
 }
 
 func TestHandleDotProjectPullRequestCreatesAuditLog(t *testing.T) {
@@ -502,9 +605,8 @@ func TestBuildDotProjectPullRequestBodyMentionsAddedMaintainers(t *testing.T) {
 	assert.NotContains(t, body, "@@")
 }
 
-func TestDotProjectMaintainerReviewersNormalizesHandles(t *testing.T) {
-	assert.Equal(t, []string{"alice", "bob"}, dotProjectMaintainerReviewers([]string{"@Alice", "bob", "alice", ""}))
-	assert.Equal(t, []string{"cncf-projects"}, dotProjectMaintainerTeamReviewers())
+func TestDotProjectMaintainerMentionHandlesNormalizesHandles(t *testing.T) {
+	assert.Equal(t, []string{"alice", "bob"}, dotProjectMaintainerMentionHandles([]string{"@Alice", "bob", "alice", ""}))
 }
 
 func TestMaintainerServiceAssociationsForStaff(t *testing.T) {

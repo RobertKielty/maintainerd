@@ -696,8 +696,9 @@ Implementation report:
 - Generated commits include a `Signed-off-by` trailer that matches the signed-in GitHub user so repository DCO checks can pass.
 - Refinements tracked in [cncf/maintainer-d#114](https://github.com/cncf/maintainer-d/issues/114):
   - Added maintainer handles are rendered as GitHub mentions in the PR body `Changes:` section, for example `@alice`, so maintainers are notified and reviewers can open maintainer profiles directly.
-  - The GitHub write path requests review from each maintainer added to the update and from the `@cncf/cncf-projects` team.
-  - The proposed PR also removes the shorter placeholder comment `# TODO: Add maintainer handles` when it is present in the maintainer file.
+  - Reviewer requests on `.project` repositories were removed; GitHub mentions in the PR body are the notification mechanism for now.
+  - The dot-project route checks maintainer-d audit logs first, then scans open GitHub PRs for changes to the maintainer file, and shows an open maintainer-file PR notice when one exists.
+  - The proposed PR and UI preview remove maintainer-block comments starting with `# TODO`, plus the placeholder `- github-handle`, when present in the maintainer file.
 - PR creation is recorded in the audit log with the submitting staff member and PR metadata.
 - The dot-project UI now exposes a real `Submit Pull Request` action from the preview and shows the resulting PR details.
 

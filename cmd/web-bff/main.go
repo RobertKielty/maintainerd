@@ -96,6 +96,7 @@ type server struct {
 	onboardingCache             *onboardingIssueCache
 	fetchIssues                 func(ctx context.Context) ([]onboardingIssueSummary, error)
 	createDotProjectPullRequest func(ctx context.Context, input dotProjectPullRequestInput, githubToken string) (*dotProjectPullRequestResponse, error)
+	githubClient                func(ctx context.Context, token string) *github.Client
 	fossaTeamCacheMu            sync.RWMutex
 	fossaTeamCache              map[uint]cachedFossaTeam
 }
@@ -684,6 +685,7 @@ type projectDetailResponse struct {
 	DotProjectAdoptionStatus  string                         `json:"dotProjectAdoptionStatus,omitempty"`
 	DotProjectSyncState       *dotProjectSyncStateResponse   `json:"dotProjectSyncState,omitempty"`
 	DotProjectMaintainerCache *dotProjectMaintainerCacheBody `json:"dotProjectMaintainerCache,omitempty"`
+	DotProjectMaintainerPR    *dotProjectMaintainerPRStatus  `json:"dotProjectMaintainerPullRequest,omitempty"`
 	RefStatus                 maintainerRefStatus            `json:"maintainerRefStatus"`
 	LegacyMaintainerRefBody   string                         `json:"legacyMaintainerRefBody,omitempty"`
 	RefOnlyGitHub             []string                       `json:"refOnlyGitHub"`
@@ -725,6 +727,30 @@ type dotProjectMaintainerCacheBody struct {
 	BodyHash      string     `json:"bodyHash,omitempty"`
 	Body          string     `json:"body,omitempty"`
 	LastCheckedAt *time.Time `json:"lastCheckedAt,omitempty"`
+}
+
+type dotProjectMaintainerPRStatus struct {
+	Status    string     `json:"status"`
+	URL       string     `json:"url,omitempty"`
+	Number    int        `json:"number,omitempty"`
+	Title     string     `json:"title,omitempty"`
+	Author    string     `json:"author,omitempty"`
+	Source    string     `json:"source,omitempty"`
+	CreatedAt *time.Time `json:"createdAt,omitempty"`
+	UpdatedAt *time.Time `json:"updatedAt,omitempty"`
+	Warning   string     `json:"warning,omitempty"`
+}
+
+type dotProjectPRAuditMetadata struct {
+	PullRequest struct {
+		URL    string `json:"url"`
+		Number int    `json:"number"`
+	} `json:"pull_request"`
+	Repository struct {
+		Owner string `json:"owner"`
+		Repo  string `json:"repo"`
+		Path  string `json:"path"`
+	} `json:"repository"`
 }
 
 func (s *server) handleProjects(w http.ResponseWriter, r *http.Request) {
@@ -1442,6 +1468,19 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 			}
 			response.DotProjectMaintainerCache = maintainerCache
 		}
+		maintainerFilePath := strings.TrimSpace(dotProjectSyncState.MaintainersFilename)
+		if maintainerFilePath == "" {
+			maintainerFilePath = pathpkg.Base(strings.TrimSpace(project.DotProjectMaintainerRef))
+		}
+		owner := strings.TrimSpace(project.GitHubOrg)
+		if owner == "" {
+			if parsedOwner, err := parseGitHubOrgFromURL(project.DotProjectMaintainerRef); err == nil {
+				owner = parsedOwner
+			}
+		}
+		if status := s.dotProjectMaintainerPullRequestStatus(r.Context(), project.ID, owner, ".project", maintainerFilePath, session.AccessToken); status != nil {
+			response.DotProjectMaintainerPR = status
+		}
 	}
 	if project.OnboardingIssue != nil {
 		onboardingIssue := strings.TrimSpace(*project.OnboardingIssue)
@@ -1863,7 +1902,6 @@ func (s *server) handleDotProjectPullRequest(w http.ResponseWriter, r *http.Requ
 		result.ForkRepo = input.ForkRepo
 	}
 	result.ProjectMaintainerRef = input.ProjectMaintainerRef
-
 	metadata := map[string]any{
 		"actor": map[string]string{
 			"login": session.Login,
@@ -5567,6 +5605,133 @@ func parseGitHubOrgFromURL(raw string) (string, error) {
 	return parts[0], nil
 }
 
+func (s *server) dotProjectMaintainerPullRequestStatus(ctx context.Context, projectID uint, owner, repo, filePath, githubToken string) *dotProjectMaintainerPRStatus {
+	owner = strings.TrimSpace(owner)
+	repo = strings.TrimSpace(repo)
+	filePath = normalizeGitHubPath(filePath)
+	if owner == "" || repo == "" || filePath == "" {
+		return nil
+	}
+	client := s.githubClientForToken(ctx, firstNonEmpty(githubToken, s.githubToken))
+	if status := s.auditedDotProjectMaintainerPullRequestStatus(ctx, client, projectID, owner, repo, filePath); status != nil {
+		return status
+	}
+	status, err := openGitHubMaintainerPullRequestStatus(ctx, client, owner, repo, filePath)
+	if err != nil {
+		s.logger.Printf("web-bff: dot-project open maintainer PR lookup failed project=%d owner=%s repo=%s path=%s err=%v", projectID, owner, repo, filePath, err)
+		return &dotProjectMaintainerPRStatus{
+			Status:  "unknown",
+			Warning: "Unable to check GitHub for open maintainer-file pull requests.",
+		}
+	}
+	return status
+}
+
+func (s *server) auditedDotProjectMaintainerPullRequestStatus(ctx context.Context, client *github.Client, projectID uint, owner, repo, filePath string) *dotProjectMaintainerPRStatus {
+	var audits []model.AuditLog
+	if err := s.store.DB().
+		Where("project_id = ? AND action = ?", projectID, "DOT_PROJECT_MAINTAINER_PR_CREATE").
+		Order("created_at DESC").
+		Limit(20).
+		Find(&audits).Error; err != nil {
+		s.logger.Printf("web-bff: dot-project PR audit lookup failed project=%d err=%v", projectID, err)
+		return nil
+	}
+	for _, audit := range audits {
+		var metadata dotProjectPRAuditMetadata
+		if err := json.Unmarshal([]byte(audit.Metadata), &metadata); err != nil {
+			continue
+		}
+		if !sameGitHubRepo(metadata.Repository.Owner, metadata.Repository.Repo, owner, repo) || !sameGitHubPath(metadata.Repository.Path, filePath) || metadata.PullRequest.Number <= 0 {
+			continue
+		}
+		pr, _, err := client.PullRequests.Get(ctx, owner, repo, metadata.PullRequest.Number)
+		if err != nil {
+			s.logger.Printf("web-bff: dot-project audited PR lookup failed project=%d owner=%s repo=%s number=%d err=%v", projectID, owner, repo, metadata.PullRequest.Number, err)
+			continue
+		}
+		if pr.GetState() == "open" {
+			return dotProjectMaintainerStatusFromPullRequest(pr, "maintainer-d")
+		}
+	}
+	return nil
+}
+
+func openGitHubMaintainerPullRequestStatus(ctx context.Context, client *github.Client, owner, repo, filePath string) (*dotProjectMaintainerPRStatus, error) {
+	pulls, _, err := client.PullRequests.List(ctx, owner, repo, &github.PullRequestListOptions{
+		State:     "open",
+		Sort:      "updated",
+		Direction: "desc",
+		ListOptions: github.ListOptions{
+			PerPage: 20,
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, pr := range pulls {
+		files, _, err := client.PullRequests.ListFiles(ctx, owner, repo, pr.GetNumber(), &github.ListOptions{PerPage: 100})
+		if err != nil {
+			return nil, err
+		}
+		for _, file := range files {
+			if sameGitHubPath(file.GetFilename(), filePath) {
+				return dotProjectMaintainerStatusFromPullRequest(pr, "github"), nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func dotProjectMaintainerStatusFromPullRequest(pr *github.PullRequest, source string) *dotProjectMaintainerPRStatus {
+	if pr == nil {
+		return nil
+	}
+	createdAt := pr.GetCreatedAt().Time
+	updatedAt := pr.GetUpdatedAt().Time
+	return &dotProjectMaintainerPRStatus{
+		Status:    pr.GetState(),
+		URL:       pr.GetHTMLURL(),
+		Number:    pr.GetNumber(),
+		Title:     pr.GetTitle(),
+		Author:    pr.GetUser().GetLogin(),
+		Source:    source,
+		CreatedAt: &createdAt,
+		UpdatedAt: &updatedAt,
+	}
+}
+
+func (s *server) githubClientForToken(ctx context.Context, token string) *github.Client {
+	if s.githubClient != nil {
+		return s.githubClient(ctx, token)
+	}
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return github.NewClient(nil)
+	}
+	return github.NewClient(oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})))
+}
+
+func sameGitHubRepo(leftOwner, leftRepo, rightOwner, rightRepo string) bool {
+	return strings.EqualFold(strings.TrimSpace(leftOwner), strings.TrimSpace(rightOwner)) && strings.EqualFold(strings.TrimSpace(leftRepo), strings.TrimSpace(rightRepo))
+}
+
+func sameGitHubPath(left, right string) bool {
+	return strings.EqualFold(normalizeGitHubPath(left), normalizeGitHubPath(right))
+}
+
+func normalizeGitHubPath(value string) string {
+	value = strings.TrimSpace(strings.ReplaceAll(value, "\\", "/"))
+	if value == "" {
+		return ""
+	}
+	cleaned := pathpkg.Clean(value)
+	if cleaned == "." || cleaned == "/" {
+		return ""
+	}
+	return strings.TrimPrefix(cleaned, "/")
+}
+
 func (s *server) fetchIssueTitleFromGitHub(ctx context.Context, owner, repo string, number int) (string, error) {
 	client := github.NewClient(oauth2.NewClient(ctx, oauth2.StaticTokenSource(&oauth2.Token{
 		AccessToken: s.githubToken,
@@ -5665,16 +5830,6 @@ func (s *server) createDotProjectMaintainerPullRequest(ctx context.Context, inpu
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create pull request: %w", err)
-	}
-	reviewers := dotProjectMaintainerReviewers(input.AddedHandles)
-	teamReviewers := dotProjectMaintainerTeamReviewers()
-	if len(reviewers) > 0 || len(teamReviewers) > 0 {
-		if _, _, err := client.PullRequests.RequestReviewers(ctx, input.Owner, input.Repo, pr.GetNumber(), github.ReviewersRequest{
-			Reviewers:     reviewers,
-			TeamReviewers: teamReviewers,
-		}); err != nil {
-			return nil, fmt.Errorf("request maintainer reviews: %w", err)
-		}
 	}
 
 	commitSHA := ""
@@ -5873,16 +6028,16 @@ func buildDotProjectPullRequestBody(input dotProjectPullRequestInput) string {
 }
 
 func dotProjectMentionedMaintainers(handles []string) []string {
-	reviewers := dotProjectMaintainerReviewers(handles)
-	mentions := make([]string, 0, len(reviewers))
-	for _, reviewer := range reviewers {
-		mentions = append(mentions, "@"+reviewer)
+	mentionHandles := dotProjectMaintainerMentionHandles(handles)
+	mentions := make([]string, 0, len(mentionHandles))
+	for _, handle := range mentionHandles {
+		mentions = append(mentions, "@"+handle)
 	}
 	return mentions
 }
 
-func dotProjectMaintainerReviewers(handles []string) []string {
-	reviewers := make([]string, 0, len(handles))
+func dotProjectMaintainerMentionHandles(handles []string) []string {
+	mentionHandles := make([]string, 0, len(handles))
 	seen := make(map[string]struct{}, len(handles))
 	for _, raw := range handles {
 		handle := dotproject.NormalizeGitHubHandle(raw)
@@ -5893,13 +6048,9 @@ func dotProjectMaintainerReviewers(handles []string) []string {
 			continue
 		}
 		seen[handle] = struct{}{}
-		reviewers = append(reviewers, handle)
+		mentionHandles = append(mentionHandles, handle)
 	}
-	return reviewers
-}
-
-func dotProjectMaintainerTeamReviewers() []string {
-	return []string{"cncf-projects"}
+	return mentionHandles
 }
 
 func groupCompanyDuplicates(companies []companyDetailResponse) []companyDuplicateGroup {
