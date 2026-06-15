@@ -25,6 +25,8 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&model.Maintainer{},
 		&model.MaintainerProject{},
 		&model.DotProjectSyncState{},
+		&model.MaintainerIdentityObservation{},
+		&model.AuditLog{},
 		&model.Service{},
 		&model.RemoteTeam{},
 		&model.RemoteUser{},
@@ -84,6 +86,50 @@ func seedTestData(t *testing.T, db *gorm.DB) (company model.Company, project1, p
 	require.NoError(t, db.Model(&project2).Association("Maintainers").Append(&maintainer2, &maintainer3))
 
 	return
+}
+
+func TestUpsertMaintainerWithIdentity_SetsLFXUserID(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewSQLStore(db)
+
+	project := model.Project{Name: "kubernetes", Maturity: model.Graduated}
+	require.NoError(t, db.Create(&project).Error)
+
+	maintainer, created, linked, err := store.UpsertMaintainerWithIdentity(project.ID, "Alice Example", "alice@example.com", "AliceExample", "Acme", "003-test")
+	require.NoError(t, err)
+	require.NotNil(t, maintainer)
+	assert.True(t, created)
+	assert.True(t, linked)
+	assert.Equal(t, "003-test", maintainer.LFXUserID)
+	assert.Equal(t, "GITHUB_EMAIL_MISSING", maintainer.GitHubEmail)
+	require.NotNil(t, maintainer.CompanyID)
+	assert.Equal(t, "Acme", maintainer.Company.Name)
+
+	var refreshed model.Maintainer
+	require.NoError(t, db.Preload("Company").First(&refreshed, maintainer.ID).Error)
+	assert.Equal(t, "003-test", refreshed.LFXUserID)
+	assert.Equal(t, "GITHUB_EMAIL_MISSING", refreshed.GitHubEmail)
+	require.NotNil(t, refreshed.CompanyID)
+	assert.Equal(t, "Acme", refreshed.Company.Name)
+}
+
+func TestUpsertMaintainerWithIdentity_IgnoresBlankCompany(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewSQLStore(db)
+
+	project := model.Project{Name: "kubernetes", Maturity: model.Graduated}
+	require.NoError(t, db.Create(&project).Error)
+
+	maintainer, created, linked, err := store.UpsertMaintainerWithIdentity(project.ID, "Alice Example", "alice@example.com", "AliceExample", "   ", "003-test")
+	require.NoError(t, err)
+	require.NotNil(t, maintainer)
+	assert.True(t, created)
+	assert.True(t, linked)
+	assert.Nil(t, maintainer.CompanyID)
+
+	var companyCount int64
+	require.NoError(t, db.Model(&model.Company{}).Count(&companyCount).Error)
+	assert.Equal(t, int64(0), companyCount)
 }
 
 func TestGetMaintainersByProject(t *testing.T) {

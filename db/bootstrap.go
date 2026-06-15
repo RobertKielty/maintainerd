@@ -62,6 +62,7 @@ func BootstrapDB(driver, dsn, spreadsheetID, worksheetCredentialsPath, fossaToke
 		&model.FoundationOfficer{},
 		&model.Collaborator{},
 		&model.MaintainerProject{},
+		&model.MaintainerIdentityObservation{},
 		&model.Service{},
 		&model.RemoteTeam{},
 		&model.RemoteUser{},

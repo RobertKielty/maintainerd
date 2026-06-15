@@ -17,6 +17,8 @@ type Store interface {
 	ListProjects() ([]model.Project, error)
 	GetProjectByID(projectID uint) (*model.Project, error)
 	GetProjectMapByName() (map[string]model.Project, error)
+	ListMaintainers() ([]model.Maintainer, error)
+	ListMaintainersWithoutIdentityObservation(source string) ([]model.Maintainer, error)
 	GetMaintainersByProject(projectID uint) ([]model.Maintainer, error)
 	GetProjectRemoteTeamMap(serviceName string) (map[uint]*model.RemoteTeam, error)
 	GetMaintainerMapByEmail() (map[string]model.Maintainer, error)
@@ -25,6 +27,7 @@ type Store interface {
 	GetMaintainerMapByGitHubAccount() (map[string]model.Maintainer, error)
 	CreateRemoteTeam(projectID uint, projectName string, serviceID uint, remoteTeamID uint, remoteTeamName string) (*model.RemoteTeam, error)
 	UpsertMaintainer(projectID uint, name, email, githubHandle, company string) (*model.Maintainer, error)
+	UpsertMaintainerWithIdentity(projectID uint, name, email, githubHandle, company, lfxUserID string) (*model.Maintainer, bool, bool, error)
 	CreateCompany(name string) (*model.Company, error)
 	UpdateProjectMaturity(projectID uint, maturity model.Maturity) error
 	UpdateProjectLegacyMaintainerRef(projectID uint, ref string) error
@@ -48,5 +51,8 @@ type Store interface {
 	UpsertMaintainerRefCache(cache *model.MaintainerRefCache) error
 	GetDotProjectSyncState(projectID uint) (*model.DotProjectSyncState, error)
 	UpsertDotProjectSyncState(state *model.DotProjectSyncState) error
+	UpsertMaintainerIdentityObservation(observation *model.MaintainerIdentityObservation) (*model.MaintainerIdentityObservation, error)
+	GetLatestMaintainerIdentityObservation(source string, maintainerID uint) (*model.MaintainerIdentityObservation, error)
+	GetLatestMaintainerIdentityObservationByRef(source string, projectID uint, sourceRef string) (*model.MaintainerIdentityObservation, error)
 	MergeCompanies(fromID, toID uint) error
 }

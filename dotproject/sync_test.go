@@ -59,11 +59,21 @@ func (f *fakeDiscoveryRunner) Discover(_ context.Context, project model.Project)
 	return &DiscoveryResult{}, nil
 }
 
+type fakeMaintainerEnricher struct {
+	err error
+}
+
+func (f fakeMaintainerEnricher) EnrichProject(_ context.Context, _ model.Project, _ *DiscoveryResult) (EnrichmentSummary, error) {
+	return EnrichmentSummary{}, f.err
+}
+
 func TestSyncProjectPersistsAdoptedDiscovery(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 9, 10, 11, 12, 0, time.UTC)
 	store := &fakeSyncStore{}
+	var visitedProject model.Project
+	var visitedFile FileDiscovery
 	syncer := &Syncer{
 		Store: store,
 		Discoverer: &fakeDiscoveryRunner{
@@ -86,6 +96,10 @@ func TestSyncProjectPersistsAdoptedDiscovery(t *testing.T) {
 				},
 			},
 		},
+		MaintainersFileVisitor: func(project model.Project, file FileDiscovery) {
+			visitedProject = project
+			visitedFile = file
+		},
 		Now: func() time.Time { return now },
 	}
 
@@ -97,6 +111,8 @@ func TestSyncProjectPersistsAdoptedDiscovery(t *testing.T) {
 	assert.Equal(t, "https://github.com/example-org/.project", persisted.patch.DotProjectRepoRef)
 	assert.Equal(t, "https://github.com/example-org/.project/blob/main/project.yaml", persisted.patch.DotProjectProjectRef)
 	assert.Equal(t, "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml", persisted.patch.DotProjectMaintainerRef)
+	assert.Equal(t, uint(42), visitedProject.ID)
+	assert.Equal(t, "https://github.com/example-org/.project/blob/main/MAINTAINERS.yaml", visitedFile.BlobURL)
 	assert.Equal(t, "1.0.0", persisted.patch.DotProjectSchemaVersion)
 	assert.Equal(t, AdoptionStatusAdopted, persisted.patch.DotProjectAdoptionStatus)
 	require.NotNil(t, persisted.patch.DotProjectLastSyncedAt)
@@ -147,14 +163,14 @@ func TestSyncProjectPersistsSyncError(t *testing.T) {
 	assert.Equal(t, "github api timeout", *persisted.state.SyncError)
 }
 
-func TestSyncProjectInfersGitHubOrgFromLegacyMaintainerRef(t *testing.T) {
+func TestSyncProjectDoesNotInferGitHubOrgFromLegacyMaintainerRef(t *testing.T) {
 	t.Parallel()
 
 	now := time.Date(2026, 5, 9, 10, 11, 12, 0, time.UTC)
 	store := &fakeSyncStore{}
 	discoverer := &fakeDiscoveryRunner{
-		results: map[uint]*DiscoveryResult{
-			77: {RepoExists: false},
+		errors: map[uint]error{
+			77: errors.New("project github org is required"),
 		},
 	}
 	syncer := &Syncer{
@@ -167,10 +183,13 @@ func TestSyncProjectInfersGitHubOrgFromLegacyMaintainerRef(t *testing.T) {
 		Model:               gorm.Model{ID: 77},
 		LegacyMaintainerRef: "https://github.com/example-org/community/blob/main/maintainers.md",
 	})
-	require.NoError(t, err)
-	assert.Equal(t, AdoptionStatusNotFound, status)
+	require.Error(t, err)
+	assert.Equal(t, AdoptionStatusError, status)
 	require.Contains(t, discoverer.seen, uint(77))
-	assert.Equal(t, "example-org", discoverer.seen[77].GitHubOrg)
+	assert.Equal(t, "", discoverer.seen[77].GitHubOrg)
+	persisted := store.persisted[77]
+	require.NotNil(t, persisted.state.SyncError)
+	assert.Equal(t, "project github org is required", *persisted.state.SyncError)
 }
 
 func TestSyncProjectKeepsOrgEmptyWhenLegacyRefIsNotGitHub(t *testing.T) {
@@ -239,6 +258,70 @@ func TestSyncAllSummarizesStatuses(t *testing.T) {
 	assert.Len(t, summary.ErrorSummaries, 1)
 	assert.Contains(t, summary.ErrorSummaries[0], "Project Four")
 	assert.Contains(t, summary.ErrorSummaries[0], "boom")
+}
+
+func TestSyncAllSummarizesMaintainersParseWarnings(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+		},
+	}
+	syncer := &Syncer{
+		Store: store,
+		Discoverer: &fakeDiscoveryRunner{
+			results: map[uint]*DiscoveryResult{
+				1: {
+					RepoExists:             true,
+					MaintainersFile:        FileDiscovery{Exists: true, BlobURL: "https://github.com/org-one/.project/blob/main/maintainers.yaml"},
+					MaintainersParseStatus: ParseStatusInvalidShape,
+					MaintainersParseError:  "maintainers must contain at least one entry",
+				},
+			},
+		},
+	}
+
+	summary, err := syncer.SyncAll(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, summary.WarningSummaries, 1)
+	assert.Contains(t, summary.WarningSummaries[0], "Project One")
+	assert.Contains(t, summary.WarningSummaries[0], "maintainers must contain at least one entry")
+	assert.Contains(t, summary.WarningSummaries[0], "https://github.com/org-one/.project/blob/main/maintainers.yaml")
+	require.Len(t, summary.GistReportRows, 1)
+	assert.NotEmpty(t, summary.GistReportRows[0].Warning)
+}
+
+func TestSyncAllStopsOnFatalEnrichmentError(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+		},
+	}
+	discoverer := &fakeDiscoveryRunner{
+		results: map[uint]*DiscoveryResult{
+			1: {RepoExists: true},
+			2: {RepoExists: true},
+		},
+	}
+	syncer := &Syncer{
+		Store:      store,
+		Discoverer: discoverer,
+		Enricher:   fakeMaintainerEnricher{err: errors.New("LFX Platform access failed; update token")},
+	}
+
+	summary, err := syncer.SyncAll(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "LFX Platform access failed")
+	assert.Equal(t, 2, summary.Loaded)
+	assert.Equal(t, 1, summary.Total)
+	assert.Equal(t, 0, summary.Synced)
+	require.Contains(t, discoverer.seen, uint(1))
+	assert.NotContains(t, discoverer.seen, uint(2))
 }
 
 func TestSyncAllSkipsArchivedAndMaintainerD(t *testing.T) {

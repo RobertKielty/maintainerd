@@ -15,6 +15,7 @@ export type AppShellViewer = {
   login: string;
   role: string;
   maintainerId?: number;
+  capabilities?: string[];
 } | null;
 
 type AppShellProps = {
@@ -48,6 +49,8 @@ const SunIcon = () => (
     />
   </svg>
 );
+
+const LFX_ENRICHMENT_CAPABILITY = "lfx:enrichment:run";
 
 export default function AppShell({
   children,
@@ -180,6 +183,7 @@ export default function AppShell({
   };
 
   const userLabel = me ? `${me.login} · ${me.role}` : "";
+  const canRunLFXEnrichment = Boolean(me?.capabilities?.includes(LFX_ENRICHMENT_CAPABILITY));
   const content = typeof children === "function" ? children(me) : children;
 
   return (
@@ -218,6 +222,11 @@ export default function AppShell({
             {me?.role === "staff" ? (
               <Link className={styles.auditButton} href="/audit">
                 AUDIT LOGS
+              </Link>
+            ) : null}
+            {canRunLFXEnrichment ? (
+              <Link className={styles.auditButton} href="/lfx">
+                LFX
               </Link>
             ) : null}
             {me ? (

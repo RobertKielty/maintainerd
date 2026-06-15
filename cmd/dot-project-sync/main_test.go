@@ -3,12 +3,62 @@ package main
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"maintainerd/dotproject"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestBuildRequiredLFXClientRequiresToken(t *testing.T) {
+	t.Setenv("LFX_AUTH_TOKEN", "")
+	t.Setenv("LFX_ACL", "")
+
+	client, err := buildRequiredLFXClient()
+	require.Error(t, err)
+	assert.Nil(t, client)
+	assert.Contains(t, err.Error(), "https://app.lfx.dev/settings")
+}
+
+func TestBuildRequiredLFXClientUsesToken(t *testing.T) {
+	t.Setenv("LFX_AUTH_TOKEN", "short-lived-token")
+	t.Setenv("LFX_ACL", "acl")
+
+	client, err := buildRequiredLFXClient()
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	assert.Equal(t, "short-lived-token", client.Token)
+	assert.Equal(t, "acl", client.ACL)
+}
+
+func TestBuildLFXClientDefaultRequestDelay(t *testing.T) {
+	t.Setenv("LFX_REQUEST_DELAY", "")
+
+	client := buildLFXClient("token", "")
+
+	require.NotNil(t, client)
+	assert.Equal(t, 250*time.Millisecond, client.MinDelay)
+}
+
+func TestBuildLFXClientRequestDelayOverride(t *testing.T) {
+	t.Setenv("LFX_REQUEST_DELAY", "750ms")
+
+	client := buildLFXClient("token", "")
+
+	require.NotNil(t, client)
+	assert.Equal(t, 750*time.Millisecond, client.MinDelay)
+}
+
+func TestFoundationCSVBlobURLUsesPlainView(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(
+		t,
+		"https://github.com/cncf/foundation/blob/abc123/project-maintainers.csv?plain=1",
+		foundationCSVBlobURL("cncf", "foundation", "abc123", "project-maintainers.csv"),
+	)
+}
 
 func TestBuildAuditEvent(t *testing.T) {
 	t.Parallel()
@@ -27,7 +77,19 @@ func TestBuildAuditEvent(t *testing.T) {
 		RepoOnly:            4,
 		Partial:             3,
 		Adopted:             1,
-		ErrorSummaries:      []string{"github rate limit exceeded", "boom"},
+		AutoAdd: dotproject.AutoAddSummary{
+			Candidates:             2,
+			WouldCreateMaintainers: 1,
+			WouldLinkMaintainers:   1,
+			WouldCreate: []dotproject.AutoAddCandidateSummary{
+				{Project: "Kubernetes", GitHub: "alice"},
+			},
+			WouldLink: []dotproject.AutoAddCandidateSummary{
+				{Project: "Prometheus", GitHub: "bob"},
+			},
+		},
+		WarningSummaries: []string{"Project One: maintainers.yaml warning: maintainers must contain at least one entry (https://github.com/org/.project/blob/main/maintainers.yaml)"},
+		ErrorSummaries:   []string{"github rate limit exceeded", "boom"},
 	}, &postSyncMetrics{
 		DBSizeBytes:              14680064,
 		DotProjectSyncStateBytes: 172032,
@@ -38,7 +100,16 @@ func TestBuildAuditEvent(t *testing.T) {
 		ProjectsTotal:            35,
 		ReposFound:               35,
 		CachedBodies:             35,
-	}, nil)
+	}, nil, syncConfig{
+		CheckFoundationCSV: true,
+		AutoAddMaintainers: false,
+		Actor:              "staff-tester",
+		FoundationOwner:    "cncf",
+		FoundationRepo:     "foundation",
+		FoundationRef:      "main",
+		FoundationPath:     "project-maintainers.csv",
+		GistFilename:       "dot-project-repos.csv",
+	})
 
 	assert.Equal(t, "DOT_PROJECT_SYNC_RUN", event.Action)
 	assert.Contains(t, event.Message, "scanned=20")
@@ -60,7 +131,20 @@ func TestBuildAuditEvent(t *testing.T) {
 	assert.Equal(t, float64(35), metadata["projects_total"])
 	assert.Equal(t, float64(35), metadata["repos_found"])
 	assert.Equal(t, float64(35), metadata["cached_bodies"])
+	assert.Equal(t, float64(2), metadata["auto_add_candidates"])
+	assert.Equal(t, float64(1), metadata["auto_add_would_create"])
+	assert.Equal(t, float64(1), metadata["auto_add_would_link"])
+	assert.Equal(t, true, metadata["check_foundation_csv"])
+	assert.Equal(t, false, metadata["auto_add_maintainers"])
+	assert.Equal(t, "staff-tester", metadata["dot_project_sync_actor"])
+	assert.Equal(t, "cncf", metadata["foundation_csv_owner"])
+	wouldCreate, ok := metadata["auto_add_would_create_handles"].([]any)
+	require.True(t, ok)
+	assert.Len(t, wouldCreate, 1)
 	errorsValue, ok := metadata["errors"].([]any)
 	require.True(t, ok)
 	assert.Len(t, errorsValue, 2)
+	warningsValue, ok := metadata["warnings"].([]any)
+	require.True(t, ok)
+	assert.Len(t, warningsValue, 1)
 }

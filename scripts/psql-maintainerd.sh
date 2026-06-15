@@ -4,21 +4,26 @@ set -euo pipefail
 SQL=""
 SQL_FILE=""
 INTERACTIVE=false
+PSQL_ARGS=()
 
 usage() {
-  echo "Usage: $0 [-i] [\"<sql>\"]"
+  echo "Usage: $0 [-i] [-v name=value] [\"<sql>\"]"
   echo "Example: $0 \"select count(*) from projects;\""
   echo "Or: $0 -f /path/to/query.sql"
+  echo "Or: $0 -v apply=true -f /path/to/query.sql"
   echo "Or: $0 -i"
 }
 
-while getopts ":f:i" opt; do
+while getopts ":f:iv:" opt; do
   case "$opt" in
     f)
       SQL_FILE="$OPTARG"
       ;;
     i)
       INTERACTIVE=true
+      ;;
+    v)
+      PSQL_ARGS+=("-v" "$OPTARG")
       ;;
     :)
       usage
@@ -57,6 +62,7 @@ DB_NAME="${MD_DB_NAME:-maintainerd}"
 DB_USER="${MD_DB_USER:-admin}"
 DB_PASSWORD="${MD_DB_PASSWORD:-}"
 POD_NAME=""
+CONN_STR="host=${DB_HOST} port=${DB_PORT} user=${DB_USER} dbname=${DB_NAME} sslmode=require connect_timeout=5"
 
 if [ -z "$DB_PASSWORD" ]; then
   echo "Set MD_DB_PASSWORD before running."
@@ -81,17 +87,31 @@ if [ "$INTERACTIVE" = true ]; then
   kubectl -n maintainerd wait --for=condition=Ready "pod/${POD_NAME}" --timeout=60s >/dev/null
 
   kubectl -n maintainerd exec -it "$POD_NAME" -- \
-    sh -lc "export TERM='${TERM:-xterm}' PAGER=cat PSQL_PAGER=off; exec psql -X -w \"host=${DB_HOST} port=${DB_PORT} user=${DB_USER} dbname=${DB_NAME} sslmode=require connect_timeout=5\""
+    sh -lc "export TERM='${TERM:-xterm}' PAGER=cat PSQL_PAGER=off; exec psql -X -w ${PSQL_ARGS[*]} \"${CONN_STR}\""
 elif [ -n "$SQL_FILE" ]; then
-  kubectl -n maintainerd run psql-client --rm -it --restart=Never \
+  POD_NAME="psql-client-${USER:-user}-$$"
+  trap cleanup_pod EXIT INT TERM
+
+  kubectl -n maintainerd run "$POD_NAME" --restart=Never \
     --image=postgres:16-alpine \
-    --env="PGPASSWORD=${DB_PASSWORD}" -- \
-    psql "host=${DB_HOST} port=${DB_PORT} user=${DB_USER} dbname=${DB_NAME} sslmode=require" \
-    -f "$SQL_FILE"
+    --env="PGPASSWORD=${DB_PASSWORD}" \
+    --command -- sleep infinity >/dev/null
+
+  kubectl -n maintainerd wait --for=condition=Ready "pod/${POD_NAME}" --timeout=60s >/dev/null
+
+  kubectl -n maintainerd exec -i "$POD_NAME" -- \
+    psql -X -w "${PSQL_ARGS[@]}" "${CONN_STR}" < "$SQL_FILE"
 else
-  kubectl -n maintainerd run psql-client --rm -it --restart=Never \
+  POD_NAME="psql-client-${USER:-user}-$$"
+  trap cleanup_pod EXIT INT TERM
+
+  kubectl -n maintainerd run "$POD_NAME" --restart=Never \
     --image=postgres:16-alpine \
-    --env="PGPASSWORD=${DB_PASSWORD}" -- \
-    psql "host=${DB_HOST} port=${DB_PORT} user=${DB_USER} dbname=${DB_NAME} sslmode=require" \
-    -c "$SQL"
+    --env="PGPASSWORD=${DB_PASSWORD}" \
+    --command -- sleep infinity >/dev/null
+
+  kubectl -n maintainerd wait --for=condition=Ready "pod/${POD_NAME}" --timeout=60s >/dev/null
+
+  kubectl -n maintainerd exec -i "$POD_NAME" -- \
+    psql -X -w "${PSQL_ARGS[@]}" "${CONN_STR}" -c "$SQL"
 fi

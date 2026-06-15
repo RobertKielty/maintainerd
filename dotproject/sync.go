@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
@@ -30,6 +29,24 @@ type DiscoveryRunner interface {
 	Discover(ctx context.Context, project model.Project) (*DiscoveryResult, error)
 }
 
+type MaintainerEnricher interface {
+	EnrichProject(ctx context.Context, project model.Project, result *DiscoveryResult) (EnrichmentSummary, error)
+}
+
+type MaintainerAutoAdder interface {
+	ProcessProject(ctx context.Context, project model.Project, result *DiscoveryResult) (AutoAddSummary, error)
+}
+
+type EnrichmentSummary struct {
+	Attempted     int
+	Matched       int
+	Ambiguous     int
+	Unmatched     int
+	Errored       int
+	SkippedRecent int
+	SkippedLimit  int
+}
+
 type SyncSummary struct {
 	Loaded              int
 	Total               int
@@ -44,13 +61,35 @@ type SyncSummary struct {
 	RepoOnly            int
 	GitHubErrorCount    int
 	RateLimitErrorCount int
+	Enrichment          EnrichmentSummary
+	AutoAdd             AutoAddSummary
+	GistReportRows      []GistReportRow
+	WarningSummaries    []string
 	ErrorSummaries      []string
 }
 
 type Syncer struct {
-	Store      SyncStore
-	Discoverer DiscoveryRunner
-	Now        func() time.Time
+	Store                  SyncStore
+	Discoverer             DiscoveryRunner
+	Enricher               MaintainerEnricher
+	AutoAdder              MaintainerAutoAdder
+	MaintainersFileVisitor func(project model.Project, file FileDiscovery)
+	Now                    func() time.Time
+}
+
+type FatalSyncError struct {
+	Err error
+}
+
+func (e FatalSyncError) Error() string {
+	if e.Err == nil {
+		return "fatal sync error"
+	}
+	return e.Err.Error()
+}
+
+func (e FatalSyncError) Unwrap() error {
+	return e.Err
 }
 
 func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
@@ -75,11 +114,23 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 			continue
 		}
 		summary.Total++
-		status, err := s.SyncProject(ctx, project)
+		status, enrichment, autoAdd, gistReportRow, err := s.syncProject(ctx, project)
 		if err != nil {
+			var fatal FatalSyncError
+			if errors.As(err, &fatal) {
+				return summary, err
+			}
 			summary.Errored++
 			summary.recordError(projectLabel(project), err)
 			continue
+		}
+		summary.Enrichment.add(enrichment)
+		summary.AutoAdd.add(autoAdd)
+		if gistReportRow != nil {
+			summary.GistReportRows = append(summary.GistReportRows, *gistReportRow)
+			if strings.TrimSpace(gistReportRow.Warning) != "" {
+				summary.recordWarning(projectLabel(project), gistReportRow.Warning)
+			}
 		}
 		summary.Synced++
 		switch status {
@@ -94,6 +145,16 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 		}
 	}
 	return summary, nil
+}
+
+func (s *EnrichmentSummary) add(other EnrichmentSummary) {
+	s.Attempted += other.Attempted
+	s.Matched += other.Matched
+	s.Ambiguous += other.Ambiguous
+	s.Unmatched += other.Unmatched
+	s.Errored += other.Errored
+	s.SkippedRecent += other.SkippedRecent
+	s.SkippedLimit += other.SkippedLimit
 }
 
 func (s *SyncSummary) recordError(projectLabel string, err error) {
@@ -126,6 +187,27 @@ func (s *SyncSummary) recordError(projectLabel string, err error) {
 	s.ErrorSummaries = append(s.ErrorSummaries, message)
 }
 
+func (s *SyncSummary) recordWarning(projectLabel, warning string) {
+	warning = strings.TrimSpace(warning)
+	if warning == "" {
+		return
+	}
+	label := strings.TrimSpace(projectLabel)
+	if label == "" {
+		label = "unknown project"
+	}
+	message := fmt.Sprintf("%s: %s", label, warning)
+	for _, existing := range s.WarningSummaries {
+		if existing == message {
+			return
+		}
+	}
+	if len(s.WarningSummaries) >= 25 {
+		return
+	}
+	s.WarningSummaries = append(s.WarningSummaries, message)
+}
+
 func projectLabel(project model.Project) string {
 	if name := strings.TrimSpace(project.Name); name != "" {
 		return name
@@ -134,17 +216,17 @@ func projectLabel(project model.Project) string {
 }
 
 func (s *Syncer) SyncProject(ctx context.Context, project model.Project) (string, error) {
+	status, _, _, _, err := s.syncProject(ctx, project)
+	return status, err
+}
+
+func (s *Syncer) syncProject(ctx context.Context, project model.Project) (string, EnrichmentSummary, AutoAddSummary, *GistReportRow, error) {
 	now := time.Now().UTC()
 	if s != nil && s.Now != nil {
 		now = s.Now().UTC()
 	}
 
-	discoveryProject := project
-	if inferredOrg, ok := inferGitHubOrg(project); ok {
-		discoveryProject.GitHubOrg = inferredOrg
-	}
-
-	result, err := s.Discoverer.Discover(ctx, discoveryProject)
+	result, err := s.Discoverer.Discover(ctx, project)
 	if err != nil {
 		status := AdoptionStatusError
 		state := &model.DotProjectSyncState{
@@ -158,18 +240,45 @@ func (s *Syncer) SyncProject(ctx context.Context, project model.Project) (string
 		patch.DotProjectAdoptionStatus = status
 		persistErr := s.Store.PersistDotProjectSync(project.ID, patch, state)
 		if persistErr != nil {
-			return status, fmt.Errorf("persist sync error for project %d: %w", project.ID, persistErr)
+			return status, EnrichmentSummary{}, AutoAddSummary{}, nil, fmt.Errorf("persist sync error for project %d: %w", project.ID, persistErr)
 		}
-		return status, err
+		return status, EnrichmentSummary{}, AutoAddSummary{}, nil, err
 	}
 
 	status := adoptionStatusFor(result)
+	if s.MaintainersFileVisitor != nil && result.MaintainersFile.Exists {
+		s.MaintainersFileVisitor(project, result.MaintainersFile)
+	}
 	state := buildSyncState(project.ID, now, result)
 	patch := buildProjectPatch(now, status, result)
 	if err := s.Store.PersistDotProjectSync(project.ID, patch, state); err != nil {
-		return status, err
+		return status, EnrichmentSummary{}, AutoAddSummary{}, nil, err
 	}
-	return status, nil
+	var gistReportRow *GistReportRow
+	if row, ok := BuildGistReportRow(project, result); ok {
+		gistReportRow = &row
+	}
+	enrichment := EnrichmentSummary{}
+	if s.Enricher != nil {
+		enrichment, err = s.Enricher.EnrichProject(ctx, project, result)
+		if err != nil {
+			if enrichment.Errored == 0 {
+				enrichment.Errored++
+			}
+			return status, enrichment, AutoAddSummary{}, gistReportRow, FatalSyncError{Err: err}
+		}
+	}
+	autoAdd := AutoAddSummary{}
+	if s.AutoAdder != nil {
+		autoAdd, err = s.AutoAdder.ProcessProject(ctx, project, result)
+		if err != nil {
+			if autoAdd.Errored == 0 {
+				autoAdd.Errored++
+			}
+			return status, enrichment, autoAdd, gistReportRow, FatalSyncError{Err: err}
+		}
+	}
+	return status, enrichment, autoAdd, gistReportRow, nil
 }
 
 func buildProjectPatch(now time.Time, status string, result *DiscoveryResult) model.Project {
@@ -266,37 +375,6 @@ func stringPtr(value string) *string {
 		return nil
 	}
 	return &value
-}
-
-func inferGitHubOrg(project model.Project) (string, bool) {
-	if org := strings.TrimSpace(project.GitHubOrg); org != "" {
-		return org, true
-	}
-	ref := strings.TrimSpace(project.LegacyMaintainerRef)
-	if ref == "" {
-		return "", false
-	}
-	return parseGitHubOrgFromURL(ref)
-}
-
-func parseGitHubOrgFromURL(raw string) (string, bool) {
-	parsed, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil {
-		return "", false
-	}
-	host := strings.ToLower(parsed.Host)
-	if host != "github.com" && host != "www.github.com" && host != "raw.githubusercontent.com" {
-		return "", false
-	}
-	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) < 2 {
-		return "", false
-	}
-	org := strings.TrimSpace(parts[0])
-	if org == "" {
-		return "", false
-	}
-	return org, true
 }
 
 func shouldSyncProject(project model.Project) bool {
