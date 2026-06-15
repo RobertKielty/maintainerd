@@ -4511,6 +4511,11 @@ type lfxEnrichmentRun struct {
 	Errored           int                    `json:"errored"`
 	SkippedRecent     int                    `json:"skippedRecent"`
 	SkippedLimit      int                    `json:"skippedLimit"`
+	WriteGist         bool                   `json:"writeGist"`
+	GistID            string                 `json:"gistId,omitempty"`
+	GistURL           string                 `json:"gistUrl,omitempty"`
+	GistFilename      string                 `json:"gistFilename,omitempty"`
+	GistRows          int                    `json:"gistRows,omitempty"`
 	Error             string                 `json:"error,omitempty"`
 }
 
@@ -4590,6 +4595,17 @@ type lfxEnrichmentRunRequest struct {
 	ACL               string  `json:"acl,omitempty"`
 	RequestsPerSecond float64 `json:"requestsPerSecond,omitempty"`
 	MaxLookups        int     `json:"maxLookups,omitempty"`
+	WriteGist         bool    `json:"writeGist,omitempty"`
+	GistID            string  `json:"gistId,omitempty"`
+	GistFilename      string  `json:"gistFilename,omitempty"`
+	GistDescription   string  `json:"gistDescription,omitempty"`
+}
+
+type lfxEnrichmentGistOptions struct {
+	Write       bool
+	ID          string
+	Filename    string
+	Description string
 }
 
 func (s *server) handleLFXEnrichmentAccess(w http.ResponseWriter, r *http.Request) {
@@ -4681,6 +4697,16 @@ func (s *server) handleLFXEnrichmentRunCreate(w http.ResponseWriter, r *http.Req
 		http.Error(w, "maxLookups must be zero or greater", http.StatusBadRequest)
 		return
 	}
+	gistOptions := lfxEnrichmentGistOptions{
+		Write:       req.WriteGist,
+		ID:          strings.TrimSpace(req.GistID),
+		Filename:    strings.TrimSpace(req.GistFilename),
+		Description: strings.TrimSpace(req.GistDescription),
+	}
+	if gistOptions.Write && strings.TrimSpace(s.githubToken) == "" {
+		http.Error(w, "GITHUB_API_TOKEN is required to publish a gist", http.StatusBadRequest)
+		return
+	}
 	clientFactory := s.newLFXClient
 	if clientFactory == nil {
 		clientFactory = newLFXEnrichmentClient
@@ -4700,9 +4726,12 @@ func (s *server) handleLFXEnrichmentRunCreate(w http.ResponseWriter, r *http.Req
 		RequestDelay:      delay.String(),
 		RequestsPerSecond: rps,
 		MaxLookups:        maxLookups,
+		WriteGist:         gistOptions.Write,
+		GistID:            gistOptions.ID,
+		GistFilename:      lfxGistFilename(gistOptions.Filename),
 	})
 	staffID := lookupStaffID(s.store, session.Login)
-	go s.runLFXEnrichment(run.ID, token, strings.TrimSpace(req.ACL), delay, maxLookups, session.Login, staffID) //nolint:gosec // enrichment must outlive the request context
+	go s.runLFXEnrichment(run.ID, token, strings.TrimSpace(req.ACL), delay, maxLookups, session.Login, staffID, gistOptions) //nolint:gosec // enrichment must outlive the request context
 
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusAccepted)
@@ -4711,7 +4740,7 @@ func (s *server) handleLFXEnrichmentRunCreate(w http.ResponseWriter, r *http.Req
 	}
 }
 
-func (s *server) runLFXEnrichment(runID, token, acl string, delay time.Duration, maxLookups int, requestedBy string, staffID *uint) {
+func (s *server) runLFXEnrichment(runID, token, acl string, delay time.Duration, maxLookups int, requestedBy string, staffID *uint, gistOptions lfxEnrichmentGistOptions) {
 	clientFactory := s.newLFXClient
 	if clientFactory == nil {
 		clientFactory = newLFXEnrichmentClient
@@ -4735,11 +4764,27 @@ func (s *server) runLFXEnrichment(runID, token, acl string, delay time.Duration,
 		},
 	}
 	summary, err := enricher.EnrichProject(ctx, model.Project{}, nil)
+	gistID := strings.TrimSpace(gistOptions.ID)
+	gistURL := ""
+	gistRows := 0
+	if err == nil && gistOptions.Write {
+		gist, rows, publishErr := s.publishLFXDotProjectGist(ctx, gistOptions)
+		gistRows = rows
+		if publishErr != nil {
+			err = publishErr
+		} else if gist != nil {
+			gistID = gist.GetID()
+			gistURL = gist.GetHTMLURL()
+		}
+	}
 	finishedAt := time.Now().UTC()
 	s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
 		run.FinishedAt = &finishedAt
 		run.Current = ""
 		applyLFXRunSummary(run, summary)
+		run.GistID = gistID
+		run.GistURL = gistURL
+		run.GistRows = gistRows
 		if err != nil {
 			run.Status = lfxRunFailed
 			run.Error = err.Error()
@@ -4747,7 +4792,7 @@ func (s *server) runLFXEnrichment(runID, token, acl string, delay time.Duration,
 			run.Status = lfxRunSucceeded
 		}
 	})
-	s.logLFXEnrichmentRun(runID, requestedBy, staffID, summary, delay, maxLookups, err)
+	s.logLFXEnrichmentRun(runID, requestedBy, staffID, summary, delay, maxLookups, gistOptions, gistID, gistURL, gistRows, err)
 }
 
 func applyLFXRunSummary(run *lfxEnrichmentRun, summary dotproject.EnrichmentSummary) {
@@ -4760,7 +4805,142 @@ func applyLFXRunSummary(run *lfxEnrichmentRun, summary dotproject.EnrichmentSumm
 	run.SkippedLimit = summary.SkippedLimit
 }
 
-func (s *server) logLFXEnrichmentRun(runID, requestedBy string, staffID *uint, summary dotproject.EnrichmentSummary, delay time.Duration, maxLookups int, runErr error) {
+func (s *server) publishLFXDotProjectGist(ctx context.Context, options lfxEnrichmentGistOptions) (*github.Gist, int, error) {
+	if s == nil || s.store == nil || s.store.DB() == nil {
+		return nil, 0, fmt.Errorf("database is required to publish dot-project gist")
+	}
+	rows, err := s.buildDotProjectGistRows()
+	if err != nil {
+		return nil, 0, err
+	}
+	content, err := dotproject.GistReportCSV(rows)
+	if err != nil {
+		return nil, 0, err
+	}
+	filename := lfxGistFilename(options.Filename)
+	description := strings.TrimSpace(options.Description)
+	if description == "" {
+		description = "maintainer-d dot-project repository report"
+	}
+	gist := &github.Gist{
+		Description: github.String(description),
+		Public:      github.Bool(true),
+		Files: map[github.GistFilename]github.GistFile{
+			github.GistFilename(filename): {
+				Content: github.String(content),
+			},
+		},
+	}
+	client := s.githubClientForToken(ctx, s.githubToken)
+	if gistID := strings.TrimSpace(options.ID); gistID != "" {
+		updated, _, err := client.Gists.Edit(ctx, gistID, gist)
+		if err != nil {
+			return nil, len(rows), fmt.Errorf("update dot-project gist %s: %w", gistID, err)
+		}
+		return updated, len(rows), nil
+	}
+	created, _, err := client.Gists.Create(ctx, gist)
+	if err != nil {
+		return nil, len(rows), fmt.Errorf("create dot-project gist: %w", err)
+	}
+	return created, len(rows), nil
+}
+
+func (s *server) buildDotProjectGistRows() ([]dotproject.GistReportRow, error) {
+	type row struct {
+		ProjectName               string
+		DotProjectProjectRef      string
+		DotProjectMaintainerRef   string
+		DotProjectSecurityRef     string
+		DotProjectContributingRef string
+		DotProjectGovernanceRef   string
+		DotProjectMaintainerCount *uint
+		RepoExists                bool
+		ProjectFileExists         bool
+		MaintainersFileExists     bool
+		MaintainersFilename       string
+		SecurityFileExists        bool
+		ContributingFileExists    bool
+		GovernanceFileExists      bool
+		MaintainersParseError     *string
+	}
+	var rows []row
+	if err := s.store.DB().
+		Table("projects p").
+		Select(`
+			p.name AS project_name,
+			p.dot_project_project_ref,
+			p.dot_project_yaml_ref AS dot_project_maintainer_ref,
+			p.dot_project_security_ref,
+			p.dot_project_contributing_ref,
+			p.dot_project_governance_ref,
+			p.dot_project_maintainer_count,
+			d.repo_exists,
+			d.project_file_exists,
+			d.maintainers_file_exists,
+			d.maintainers_filename,
+			d.security_file_exists,
+			d.contributing_file_exists,
+			d.governance_file_exists,
+			d.parse_error AS maintainers_parse_error
+		`).
+		Joins("JOIN dot_project_sync_states d ON d.project_id = p.id").
+		Where("p.deleted_at IS NULL AND d.repo_exists = ?", true).
+		Order("lower(p.name), p.id").
+		Scan(&rows).Error; err != nil {
+		return nil, fmt.Errorf("load dot-project gist rows: %w", err)
+	}
+	reportRows := make([]dotproject.GistReportRow, 0, len(rows))
+	for _, item := range rows {
+		result := &dotproject.DiscoveryResult{
+			RepoExists: true,
+			ProjectFile: dotproject.FileDiscovery{
+				Exists:  item.ProjectFileExists,
+				BlobURL: strings.TrimSpace(item.DotProjectProjectRef),
+			},
+			MaintainersFile: dotproject.FileDiscovery{
+				Exists:  item.MaintainersFileExists,
+				BlobURL: strings.TrimSpace(item.DotProjectMaintainerRef),
+			},
+			MaintainersFilename: strings.TrimSpace(item.MaintainersFilename),
+			MaintainerCount:     item.DotProjectMaintainerCount,
+			SecurityFile: dotproject.FileDiscovery{
+				Exists:  item.SecurityFileExists,
+				BlobURL: strings.TrimSpace(item.DotProjectSecurityRef),
+			},
+			ContributingFile: dotproject.FileDiscovery{
+				Exists:  item.ContributingFileExists,
+				BlobURL: strings.TrimSpace(item.DotProjectContributingRef),
+			},
+			GovernanceFile: dotproject.FileDiscovery{
+				Exists:  item.GovernanceFileExists,
+				BlobURL: strings.TrimSpace(item.DotProjectGovernanceRef),
+			},
+			MaintainersParseStatus: dotproject.ParseStatusParsed,
+		}
+		if item.MaintainersParseError != nil {
+			result.MaintainersParseError = strings.TrimSpace(*item.MaintainersParseError)
+			if result.MaintainersParseError != "" {
+				result.MaintainersParseStatus = dotproject.ParseStatusInvalidShape
+			}
+		}
+		row, ok := dotproject.BuildGistReportRow(model.Project{Name: item.ProjectName}, result)
+		if ok {
+			reportRows = append(reportRows, row)
+		}
+	}
+	return reportRows, nil
+}
+
+func lfxGistFilename(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "dot-project-repos.csv"
+	}
+	return value
+}
+
+func (s *server) logLFXEnrichmentRun(runID, requestedBy string, staffID *uint, summary dotproject.EnrichmentSummary, delay time.Duration, maxLookups int, gistOptions lfxEnrichmentGistOptions, gistID, gistURL string, gistRows int, runErr error) {
 	if s == nil || s.store == nil || s.store.DB() == nil {
 		return
 	}
@@ -4776,6 +4956,13 @@ func (s *server) logLFXEnrichmentRun(runID, requestedBy string, staffID *uint, s
 		"errored":        summary.Errored,
 		"skipped_recent": summary.SkippedRecent,
 		"skipped_limit":  summary.SkippedLimit,
+		"write_gist":     gistOptions.Write,
+	}
+	if gistOptions.Write {
+		metadata["gist_id"] = strings.TrimSpace(gistID)
+		metadata["gist_url"] = strings.TrimSpace(gistURL)
+		metadata["gist_filename"] = lfxGistFilename(gistOptions.Filename)
+		metadata["gist_rows"] = gistRows
 	}
 	action := "LFX_ENRICHMENT_RUN_SUCCEEDED"
 	message := fmt.Sprintf("LFX enrichment run %s completed by %s", runID, requestedBy)

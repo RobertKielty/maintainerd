@@ -29,6 +29,11 @@ type LFXRun = {
   errored: number;
   skippedRecent: number;
   skippedLimit: number;
+  writeGist: boolean;
+  gistId?: string;
+  gistUrl?: string;
+  gistFilename?: string;
+  gistRows?: number;
   error?: string;
 };
 
@@ -63,6 +68,10 @@ export default function LFXPage() {
   const [acl, setACL] = useState("");
   const [requestsPerSecond, setRequestsPerSecond] = useState("4");
   const [maxLookups, setMaxLookups] = useState("50");
+  const [writeGist, setWriteGist] = useState(false);
+  const [gistId, setGistId] = useState("");
+  const [gistFilename, setGistFilename] = useState("dot-project-repos.csv");
+  const [gistDescription, setGistDescription] = useState("maintainer-d dot-project repository report");
   const [status, setStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +176,10 @@ export default function LFXPage() {
           acl,
           requestsPerSecond: Number(requestsPerSecond),
           maxLookups: Number(maxLookups),
+          writeGist,
+          gistId,
+          gistFilename,
+          gistDescription,
         }),
       });
       if (!response.ok) {
@@ -259,6 +272,46 @@ export default function LFXPage() {
                 <p className={styles.bodyText}>
                   Runs continue asynchronously. Keep this page open to watch progress, or return later for recent run status.
                 </p>
+                <label className={styles.checkboxField}>
+                  <input
+                    checked={writeGist}
+                    onChange={(event) => setWriteGist(event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span>Publish dot-project gist when the run completes</span>
+                </label>
+                {writeGist ? (
+                  <div className={styles.gistOptions}>
+                    <label className={styles.field}>
+                      <span>Existing gist ID</span>
+                      <input
+                        autoComplete="off"
+                        name="gist-id"
+                        onChange={(event) => setGistId(event.target.value)}
+                        type="text"
+                        value={gistId}
+                      />
+                    </label>
+                    <label className={styles.field}>
+                      <span>Filename</span>
+                      <input
+                        name="gist-filename"
+                        onChange={(event) => setGistFilename(event.target.value)}
+                        type="text"
+                        value={gistFilename}
+                      />
+                    </label>
+                    <label className={styles.field}>
+                      <span>Description</span>
+                      <input
+                        name="gist-description"
+                        onChange={(event) => setGistDescription(event.target.value)}
+                        type="text"
+                        value={gistDescription}
+                      />
+                    </label>
+                  </div>
+                ) : null}
                 <button className={styles.primaryButton} disabled={submitting || !token.trim()} type="submit">
                   {submitting ? "Starting..." : "Start enrichment"}
                 </button>
@@ -298,6 +351,19 @@ export default function LFXPage() {
                       Request delay {activeRun.requestDelay}; max lookups{" "}
                       {activeRun.maxLookups === 0 ? "unlimited" : activeRun.maxLookups.toLocaleString()}.
                     </div>
+                    {activeRun.writeGist ? (
+                      <div className={styles.gistResult}>
+                        <span>Gist</span>
+                        {activeRun.gistUrl ? (
+                          <a href={activeRun.gistUrl} rel="noreferrer" target="_blank">
+                            {activeRun.gistFilename || activeRun.gistId || activeRun.gistUrl}
+                          </a>
+                        ) : (
+                          <strong>{activeRun.status === "running" ? "pending" : activeRun.gistId || "not published"}</strong>
+                        )}
+                        {activeRun.gistRows ? <small>{activeRun.gistRows.toLocaleString()} rows</small> : null}
+                      </div>
+                    ) : null}
                     {activeRun.error ? <div className={styles.banner}>{activeRun.error}</div> : null}
                   </div>
                 ) : (

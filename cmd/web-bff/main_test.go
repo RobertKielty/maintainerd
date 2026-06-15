@@ -1576,6 +1576,43 @@ func TestLFXEnrichmentRunStartsAsyncAndRecordsProgress(t *testing.T) {
 	assert.NotContains(t, audit.Metadata, "short-lived")
 }
 
+func TestBuildDotProjectGistRowsUsesCachedSyncState(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	count := uint(2)
+	project := model.Project{
+		Name:                      "Example",
+		Maturity:                  model.Sandbox,
+		DotProjectProjectRef:      "https://github.com/example/.project/blob/main/project.yaml",
+		DotProjectMaintainerRef:   "https://github.com/example/.project/blob/main/maintainers.yaml",
+		DotProjectSecurityRef:     "https://github.com/example/.project/blob/main/SECURITY.md",
+		DotProjectMaintainerCount: &count,
+	}
+	require.NoError(t, dbConn.Create(&project).Error)
+	parseErr := "maintainers.yaml: maintainers must contain at least one entry"
+	require.NoError(t, dbConn.Create(&model.DotProjectSyncState{
+		ProjectID:              project.ID,
+		RepoExists:             true,
+		ProjectFileExists:      true,
+		MaintainersFileExists:  true,
+		MaintainersFilename:    "maintainers.yaml",
+		SecurityFileExists:     true,
+		ContributingFileExists: false,
+		GovernanceFileExists:   false,
+		ParseError:             &parseErr,
+	}).Error)
+
+	s := &server{store: db.NewSQLStore(dbConn)}
+	rows, err := s.buildDotProjectGistRows()
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "Example", rows[0].ProjectName)
+	assert.Equal(t, "https://github.com/example/.project/blob/main/project.yaml", rows[0].ProjectFileURL)
+	assert.Equal(t, "https://github.com/example/.project/blob/main/maintainers.yaml", rows[0].MaintainersFileURL)
+	require.NotNil(t, rows[0].MaintainerCount)
+	assert.Equal(t, uint(2), *rows[0].MaintainerCount)
+	assert.Contains(t, rows[0].Warning, "maintainers must contain at least one entry")
+}
+
 func TestLFXEnrichmentRunRejectsNonAllowedStaff(t *testing.T) {
 	t.Setenv(lfxAdminLoginsEnv, "other-admin")
 	now := time.Now().UTC()
