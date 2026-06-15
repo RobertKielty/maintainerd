@@ -230,15 +230,25 @@ func parseProjectYAML(file FileDiscovery) (string, bool, ParseStatus, string) {
 }
 
 func parseMaintainersYAML(file FileDiscovery) (*uint, ParseStatus, string) {
+	handles, status, parseErr := ParseMaintainerHandles(file.Body)
+	if status != ParseStatusParsed {
+		return nil, status, parseErr
+	}
+	count := uint(len(handles))
+	return &count, ParseStatusParsed, ""
+}
+
+func ParseMaintainerHandles(body string) ([]string, ParseStatus, string) {
 	raw := struct {
 		Maintainers []struct {
 			Teams []struct {
+				Name    string   `yaml:"name"`
 				Members []string `yaml:"members"`
 			} `yaml:"teams"`
 		} `yaml:"maintainers"`
 	}{}
 
-	if err := yaml.Unmarshal([]byte(file.Body), &raw); err != nil {
+	if err := yaml.Unmarshal([]byte(body), &raw); err != nil {
 		return nil, ParseStatusInvalidYAML, err.Error()
 	}
 	if len(raw.Maintainers) == 0 {
@@ -258,8 +268,54 @@ func parseMaintainersYAML(file FileDiscovery) (*uint, ParseStatus, string) {
 		}
 	}
 
-	count := uint(len(handles))
-	return &count, ParseStatusParsed, ""
+	result := make([]string, 0, len(handles))
+	for handle := range handles {
+		result = append(result, handle)
+	}
+	return result, ParseStatusParsed, ""
+}
+
+func ParseProjectMaintainerHandles(body string) ([]string, ParseStatus, string) {
+	raw := struct {
+		Maintainers []struct {
+			Teams []struct {
+				Name    string   `yaml:"name"`
+				Members []string `yaml:"members"`
+			} `yaml:"teams"`
+		} `yaml:"maintainers"`
+	}{}
+
+	if err := yaml.Unmarshal([]byte(body), &raw); err != nil {
+		return nil, ParseStatusInvalidYAML, err.Error()
+	}
+	if len(raw.Maintainers) == 0 {
+		return nil, ParseStatusInvalidShape, "maintainers must contain at least one entry"
+	}
+
+	handles := make(map[string]struct{})
+	for _, maintainerGroup := range raw.Maintainers {
+		for _, team := range maintainerGroup.Teams {
+			if !strings.EqualFold(strings.TrimSpace(team.Name), "project-maintainers") {
+				continue
+			}
+			for _, member := range team.Members {
+				normalized := normalizeHandle(member)
+				if normalized == "" {
+					continue
+				}
+				handles[normalized] = struct{}{}
+			}
+		}
+	}
+	if len(handles) == 0 {
+		return nil, ParseStatusInvalidShape, "project-maintainers team has no members"
+	}
+
+	result := make([]string, 0, len(handles))
+	for handle := range handles {
+		result = append(result, handle)
+	}
+	return result, ParseStatusParsed, ""
 }
 
 func normalizeHandle(raw string) string {

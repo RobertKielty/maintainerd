@@ -90,6 +90,7 @@ type Maintainer struct {
 	Email            string           `gorm:"size:254;default:EMAIL_MISSING"` // Primary/Work Email
 	GitHubAccount    string           `gorm:"size:100;default:GITHUB_MISSING"`
 	GitHubEmail      string           `gorm:"size:100;default:GITHUB_MISSING"` // Email used for Git Commits on GitHub
+	LFXUserID        string           `gorm:"size:128;index"`
 	MaintainerStatus MaintainerStatus `gorm:"type:text"`
 	ImportWarnings   string
 	Location         *string   `gorm:"size:255"`
@@ -190,6 +191,29 @@ type MaintainerProject struct {
 	JoinedAt     time.Time  `gorm:"autoCreateTime"`
 	Maintainer   Maintainer `gorm:"foreignKey:MaintainerID;constraint:OnDelete:CASCADE"`
 	Project      Project    `gorm:"foreignKey:ProjectID;constraint:OnDelete:CASCADE"`
+}
+
+type MaintainerIdentityObservation struct {
+	gorm.Model
+	MaintainerID *uint `gorm:"index"`
+	ProjectID    *uint `gorm:"index"`
+
+	Source       string `gorm:"size:64;index"`
+	SourceRef    string `gorm:"size:512;index"`
+	SourceUserID string `gorm:"size:128;index"`
+
+	Name        string `gorm:"size:255"`
+	Email       string `gorm:"size:254"`
+	GitHubUser  string `gorm:"size:100"`
+	LFID        string `gorm:"size:100"`
+	CompanyName string `gorm:"size:255"`
+	CompanyRef  string `gorm:"size:128"`
+
+	MatchStatus string    `gorm:"size:32;index"`
+	MatchReason string    `gorm:"size:255"`
+	Confidence  string    `gorm:"size:32"`
+	RawPayload  string    `gorm:"type:jsonb"`
+	ObservedAt  time.Time `gorm:"index"`
 }
 
 type Company struct {

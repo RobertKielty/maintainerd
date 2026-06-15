@@ -1582,18 +1582,23 @@ ci-local:
 	NPROC=$$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4); \
 	export GOCACHE=$(GOCACHE_DIR); \
 	export GOLANGCI_LINT_CACHE=/tmp/golangci-lint; \
+	GO_TEST_PACKAGES="$$(go list ./...)"; \
+	echo "→ Go test packages: $$(printf "%s\n" "$$GO_TEST_PACKAGES" | wc -l)"; \
 	echo "→ Running all checks sequentially..."; \
-	go vet ./...                  && echo "✓ go vet"; \
-	npm --prefix web run lint -- --max-warnings=$(ESLINT_MAX_WARNINGS) \
-	                              && echo "✓ web lint"; \
-	npm --prefix web run typecheck \
-	                              && echo "✓ web typecheck"; \
-	staticcheck ./...             && echo "✓ staticcheck"; \
-	golangci-lint run ./...       && echo "✓ golangci-lint"; \
-	go test -race -p "$$NPROC" -coverprofile=coverage.out -covermode=atomic ./... \
-	                              && echo "✓ go test -race"; \
-	MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" WEB_BDD_USE_MICROCKS=true NO_BDD_OPEN=1 $(MAKE) web-bdd \
-	                              && echo "✓ web BDD"; \
+	go vet ./...; \
+	echo "✓ go vet"; \
+	npm --prefix web run lint -- --max-warnings=$(ESLINT_MAX_WARNINGS); \
+	echo "✓ web lint"; \
+	npm --prefix web run typecheck; \
+	echo "✓ web typecheck"; \
+	staticcheck ./...; \
+	echo "✓ staticcheck"; \
+	golangci-lint run ./...; \
+	echo "✓ golangci-lint"; \
+	go test -count=1 -race -p "$$NPROC" -coverprofile=coverage.out -covermode=atomic $$GO_TEST_PACKAGES; \
+	echo "✓ go test -race"; \
+	MD_DB_DRIVER=postgres MD_DB_DSN="$$MD_DB_DSN" WEB_BDD_USE_MICROCKS=true NO_BDD_OPEN=1 $(MAKE) web-bdd; \
+	echo "✓ web BDD"; \
 	echo "→ Coverage report:"; \
 	go tool cover -func=coverage.out | tail -n 1; \
 	echo "✅ All CI checks passed!"; \

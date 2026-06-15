@@ -35,6 +35,14 @@ Add a small provenance model for third-party identity observations. LFX can be t
 
 Keep `maintainers` as the canonical application record. Add source-specific observations that can be compared and promoted into canonical fields.
 
+Add a canonical LFX identifier to `Maintainer` so reports can directly distinguish maintainers with an LFX profile from maintainers who still need to create or connect one. The first-pass field should store the stable LFX user/contact ID returned by LFX user search, with LFID username still recorded on observations. A possible field is:
+
+```go
+LFXUserID string `gorm:"size:128;index"`
+```
+
+Do not treat the presence of an LFX ID as a maintainer registration gate by itself. It is reporting and enrichment data; project maintainer registration remains governed by dot-project and foundation CSV rules.
+
 Suggested new model:
 
 ```go
@@ -71,6 +79,12 @@ This lets the maintainer route show a unified view:
 - ambiguous matches that need staff review
 
 Canonical fields should not be overwritten blindly. The first implementation should only fill missing canonical fields automatically when the match is exact or strong, and record an observation otherwise.
+
+Confidence definitions:
+
+- `exact`: LFX user search resolves to a single user and `GetUserIdentities` confirms a linked GitHub identity whose source is `github` and whose username matches the maintainer GitHub handle case-insensitively.
+- `strong`: LFX user search resolves to a single user through a strong identifier, but without verified GitHub identity confirmation. Examples: the searched email equals the returned user email case-insensitively, or GitHub-handle search returns exactly one user but the identity endpoint does not confirm a GitHub username.
+- `weak`: LFX user search returns a plausible single user through weaker supporting data only, such as name/company similarity. Do not use weak matches for automatic canonical field updates.
 
 ## LFX Data Worth Recording
 
@@ -187,6 +201,7 @@ Automatically fill missing fields only:
 - `Name`, if maintainer-d has an empty or placeholder name and LFX has a strong match.
 - `Email`, if maintainer-d has `EMAIL_MISSING` and LFX has a verified or primary email.
 - `CompanyID`, if maintainer-d has no company and LFX account data gives a clear company.
+- `LFXUserID`, if maintainer-d has no LFX ID and LFX has an exact or strong match.
 
 Do not overwrite non-placeholder maintainer-d values without a staff-visible review workflow.
 

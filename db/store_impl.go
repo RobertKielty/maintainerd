@@ -87,6 +87,33 @@ func (s *SQLStore) ListProjectsWithMaintainers() ([]model.Project, error) {
 	return projects, err
 }
 
+func (s *SQLStore) ListMaintainers() ([]model.Maintainer, error) {
+	var maintainers []model.Maintainer
+	err := s.db.Preload("Company").Find(&maintainers).Error
+	return maintainers, err
+}
+
+func (s *SQLStore) ListMaintainersWithoutIdentityObservation(source string) ([]model.Maintainer, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil, fmt.Errorf("identity observation source is required")
+	}
+	var maintainers []model.Maintainer
+	err := s.db.
+		Preload("Company").
+		Where(`
+			not exists (
+				select 1
+				from maintainer_identity_observations mio
+				where mio.maintainer_id = maintainers.id
+				  and mio.source = ?
+				  and mio.deleted_at is null
+			)
+		`, source).
+		Find(&maintainers).Error
+	return maintainers, err
+}
+
 func (s *SQLStore) UpdateProjectLegacyMaintainerRef(projectID uint, ref string) error {
 	result := s.db.Model(&model.Project{}).
 		Where("id = ?", projectID).
@@ -162,9 +189,14 @@ func dotProjectProjectUpdates(patch model.Project) map[string]interface{} {
 }
 
 func (s *SQLStore) UpsertMaintainer(projectID uint, name, email, githubHandle, company string) (*model.Maintainer, error) {
+	maintainer, _, _, err := s.UpsertMaintainerWithIdentity(projectID, name, email, githubHandle, company, "")
+	return maintainer, err
+}
+
+func (s *SQLStore) UpsertMaintainerWithIdentity(projectID uint, name, email, githubHandle, company, lfxUserID string) (*model.Maintainer, bool, bool, error) {
 	tx := s.db.Begin()
 	if tx.Error != nil {
-		return nil, tx.Error
+		return nil, false, false, tx.Error
 	}
 	defer func() {
 		if r := recover(); r != nil {
@@ -176,43 +208,49 @@ func (s *SQLStore) UpsertMaintainer(projectID uint, name, email, githubHandle, c
 	if err := tx.First(&project, projectID).Error; err != nil {
 		tx.Rollback()
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrProjectNotFound
+			return nil, false, false, ErrProjectNotFound
 		}
-		return nil, err
+		return nil, false, false, err
 	}
 
 	var maintainer model.Maintainer
 	if githubHandle != "" {
-		if err := tx.Where("LOWER(git_hub_account) = ?", strings.ToLower(githubHandle)).
-			First(&maintainer).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		result := tx.Where("LOWER(git_hub_account) = ?", strings.ToLower(githubHandle)).
+			Limit(1).
+			Find(&maintainer)
+		if result.Error != nil {
 			tx.Rollback()
-			return nil, err
+			return nil, false, false, result.Error
 		}
 	}
 	if maintainer.ID == 0 && email != "" {
-		if err := tx.Where("LOWER(email) = ?", strings.ToLower(email)).
-			First(&maintainer).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		result := tx.Where("LOWER(email) = ?", strings.ToLower(email)).
+			Limit(1).
+			Find(&maintainer)
+		if result.Error != nil {
 			tx.Rollback()
-			return nil, err
+			return nil, false, false, result.Error
 		}
 	}
 
 	var companyModel *model.Company
-	if company != "" {
+	if company = strings.TrimSpace(company); company != "" {
 		var c model.Company
-		if err := tx.Where("name = ?", company).FirstOrCreate(&c).Error; err != nil {
+		if err := tx.Where(model.Company{Name: company}).FirstOrCreate(&c).Error; err != nil {
 			tx.Rollback()
-			return nil, err
+			return nil, false, false, err
 		}
 		companyModel = &c
 	}
 
+	created := false
 	if maintainer.ID == 0 {
 		maintainer = model.Maintainer{
 			Name:             name,
 			Email:            normalizeOrSentinel(email, "EMAIL_MISSING"),
 			GitHubAccount:    normalizeOrSentinel(githubHandle, "GITHUB_MISSING"),
-			GitHubEmail:      "GITHUB_MISSING",
+			GitHubEmail:      "GITHUB_EMAIL_MISSING",
+			LFXUserID:        strings.TrimSpace(lfxUserID),
 			MaintainerStatus: model.ActiveMaintainer,
 		}
 		if companyModel != nil {
@@ -221,17 +259,28 @@ func (s *SQLStore) UpsertMaintainer(projectID uint, name, email, githubHandle, c
 		}
 		if err := tx.Create(&maintainer).Error; err != nil {
 			tx.Rollback()
-			return nil, err
+			return nil, false, false, err
+		}
+		created = true
+	}
+
+	var existingLink int64
+	if err := tx.Model(&model.MaintainerProject{}).
+		Where("maintainer_id = ? AND project_id = ?", maintainer.ID, project.ID).
+		Count(&existingLink).Error; err != nil {
+		tx.Rollback()
+		return nil, false, false, err
+	}
+	linked := existingLink == 0
+	if linked {
+		if err := tx.Model(&maintainer).Association("Projects").Append(&project); err != nil {
+			tx.Rollback()
+			return nil, false, false, err
 		}
 	}
 
-	if err := tx.Model(&maintainer).Association("Projects").Append(&project); err != nil {
-		tx.Rollback()
-		return nil, err
-	}
-
 	if err := tx.Commit().Error; err != nil {
-		return nil, err
+		return nil, false, false, err
 	}
 
 	finalName := maintainer.Name
@@ -260,9 +309,18 @@ func (s *SQLStore) UpsertMaintainer(projectID uint, name, email, githubHandle, c
 	}
 	updatedMaintainer, err := s.UpdateMaintainerDetails(maintainer.ID, finalName, finalEmail, finalGitHub, status, finalCompanyID)
 	if err != nil {
-		return nil, err
+		return nil, false, false, err
 	}
-	return updatedMaintainer, nil
+	lfxUserID = strings.TrimSpace(lfxUserID)
+	if lfxUserID != "" && strings.TrimSpace(updatedMaintainer.LFXUserID) == "" {
+		if err := s.db.Model(&model.Maintainer{}).
+			Where("id = ?", updatedMaintainer.ID).
+			Update("lfx_user_id", lfxUserID).Error; err != nil {
+			return nil, false, false, err
+		}
+		updatedMaintainer.LFXUserID = lfxUserID
+	}
+	return updatedMaintainer, created, linked, nil
 }
 
 func normalizeOrSentinel(value, sentinel string) string {
@@ -482,7 +540,11 @@ func (s *SQLStore) GetMaintainerMapByGitHubAccount() (map[string]model.Maintaine
 	}
 	m := make(map[string]model.Maintainer)
 	for _, maintainer := range maintainers {
-		m[maintainer.GitHubAccount] = maintainer
+		key := strings.ToLower(strings.TrimSpace(maintainer.GitHubAccount))
+		if key == "" {
+			continue
+		}
+		m[key] = maintainer
 	}
 	return m, nil
 }
@@ -724,6 +786,121 @@ func (s *SQLStore) UpsertRemoteUserTeam(link *model.RemoteTeamUser) (*model.Remo
 		return nil, saveErr
 	}
 	return &existing, nil
+}
+
+func (s *SQLStore) UpsertMaintainerIdentityObservation(observation *model.MaintainerIdentityObservation) (*model.MaintainerIdentityObservation, error) {
+	if observation == nil {
+		return nil, fmt.Errorf("maintainer identity observation is required")
+	}
+	observation.Source = strings.TrimSpace(observation.Source)
+	observation.SourceRef = strings.TrimSpace(observation.SourceRef)
+	observation.SourceUserID = strings.TrimSpace(observation.SourceUserID)
+	observation.Name = strings.TrimSpace(observation.Name)
+	observation.Email = strings.TrimSpace(observation.Email)
+	observation.GitHubUser = strings.TrimSpace(observation.GitHubUser)
+	observation.LFID = strings.TrimSpace(observation.LFID)
+	observation.CompanyName = strings.TrimSpace(observation.CompanyName)
+	observation.CompanyRef = strings.TrimSpace(observation.CompanyRef)
+	observation.MatchStatus = strings.TrimSpace(observation.MatchStatus)
+	observation.MatchReason = strings.TrimSpace(observation.MatchReason)
+	observation.Confidence = strings.TrimSpace(observation.Confidence)
+	observation.RawPayload = strings.TrimSpace(observation.RawPayload)
+	if observation.RawPayload == "" {
+		observation.RawPayload = "{}"
+	}
+	if observation.Source == "" {
+		return nil, fmt.Errorf("maintainer identity observation source is required")
+	}
+	if observation.ObservedAt.IsZero() {
+		observation.ObservedAt = time.Now().UTC()
+	}
+
+	var existing model.MaintainerIdentityObservation
+	query := s.db.Where("source = ?", observation.Source)
+	if observation.MaintainerID == nil {
+		query = query.Where("maintainer_id IS NULL")
+	} else {
+		query = query.Where("maintainer_id = ?", *observation.MaintainerID)
+	}
+	if observation.ProjectID == nil {
+		query = query.Where("project_id IS NULL")
+	} else {
+		query = query.Where("project_id = ?", *observation.ProjectID)
+	}
+	if observation.SourceUserID != "" {
+		query = query.Where("source_user_id = ?", observation.SourceUserID)
+	} else {
+		query = query.Where("source_user_id = '' AND source_ref = ?", observation.SourceRef)
+	}
+	if err := query.Find(&existing).Error; err != nil {
+		return nil, err
+	}
+	if existing.ID == 0 {
+		if err := s.db.Create(observation).Error; err != nil {
+			return nil, err
+		}
+		return observation, nil
+	}
+
+	existing.SourceRef = observation.SourceRef
+	existing.SourceUserID = observation.SourceUserID
+	existing.Name = observation.Name
+	existing.Email = observation.Email
+	existing.GitHubUser = observation.GitHubUser
+	existing.LFID = observation.LFID
+	existing.CompanyName = observation.CompanyName
+	existing.CompanyRef = observation.CompanyRef
+	existing.MatchStatus = observation.MatchStatus
+	existing.MatchReason = observation.MatchReason
+	existing.Confidence = observation.Confidence
+	existing.RawPayload = observation.RawPayload
+	existing.ObservedAt = observation.ObservedAt
+	if err := s.db.Save(&existing).Error; err != nil {
+		return nil, err
+	}
+	return &existing, nil
+}
+
+func (s *SQLStore) GetLatestMaintainerIdentityObservation(source string, maintainerID uint) (*model.MaintainerIdentityObservation, error) {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil, fmt.Errorf("maintainer identity observation source is required")
+	}
+	var observation model.MaintainerIdentityObservation
+	err := s.db.
+		Where("source = ? AND maintainer_id = ?", source, maintainerID).
+		Order("observed_at DESC, id DESC").
+		Find(&observation).Error
+	if err != nil {
+		return nil, err
+	}
+	if observation.ID == 0 {
+		return nil, nil
+	}
+	return &observation, nil
+}
+
+func (s *SQLStore) GetLatestMaintainerIdentityObservationByRef(source string, projectID uint, sourceRef string) (*model.MaintainerIdentityObservation, error) {
+	source = strings.TrimSpace(source)
+	sourceRef = strings.TrimSpace(sourceRef)
+	if source == "" {
+		return nil, fmt.Errorf("maintainer identity observation source is required")
+	}
+	if sourceRef == "" {
+		return nil, fmt.Errorf("maintainer identity observation source ref is required")
+	}
+	var observation model.MaintainerIdentityObservation
+	err := s.db.
+		Where("source = ? AND project_id = ? AND source_ref = ?", source, projectID, sourceRef).
+		Order("observed_at DESC, id DESC").
+		Find(&observation).Error
+	if err != nil {
+		return nil, err
+	}
+	if observation.ID == 0 {
+		return nil, nil
+	}
+	return &observation, nil
 }
 
 // IsStaffGitHubAccount returns true if the GitHub account belongs to a staff member.

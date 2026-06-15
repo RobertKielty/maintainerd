@@ -53,6 +53,7 @@ func migrate(_ context.Context, store *db.SQLStore) error {
 		&model.StaffMember{},
 		&model.Maintainer{},
 		&model.MaintainerProject{},
+		&model.MaintainerIdentityObservation{},
 		&model.Project{},
 		&model.Service{},
 		&model.RemoteTeam{},

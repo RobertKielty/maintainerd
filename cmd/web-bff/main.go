@@ -23,6 +23,7 @@ import (
 
 	"maintainerd/db"
 	"maintainerd/dotproject"
+	"maintainerd/lfx"
 	"maintainerd/model"
 	"maintainerd/onboarding"
 	"maintainerd/plugins/fossa"
@@ -72,7 +73,9 @@ const (
 	contentTypeJSON          = "application/json"
 	roleStaff                = "staff"
 	roleMaintainer           = "maintainer"
+	capabilityLFXEnrichment  = "lfx:enrichment:run"
 	onboardingIssueCacheTTL  = 15 * time.Minute
+	lfxAdminLoginsEnv        = "LFX_ENRICHMENT_ADMIN_GITHUB_LOGINS"
 )
 
 type server struct {
@@ -97,6 +100,8 @@ type server struct {
 	fetchIssues                 func(ctx context.Context) ([]onboardingIssueSummary, error)
 	createDotProjectPullRequest func(ctx context.Context, input dotProjectPullRequestInput, githubToken string) (*dotProjectPullRequestResponse, error)
 	githubClient                func(ctx context.Context, token string) *github.Client
+	lfxRuns                     *lfxEnrichmentRunStore
+	newLFXClient                func(token, acl string, delay time.Duration) lfxEnrichmentClient
 	fossaTeamCacheMu            sync.RWMutex
 	fossaTeamCache              map[uint]cachedFossaTeam
 }
@@ -263,6 +268,8 @@ func main() {
 		logger:         logger,
 		githubToken:    githubToken,
 		fossaToken:     fossaToken,
+		lfxRuns:        newLFXEnrichmentRunStore(),
+		newLFXClient:   newLFXEnrichmentClient,
 		onboardingCache: &onboardingIssueCache{
 			expires: time.Time{},
 		},
@@ -313,6 +320,9 @@ func main() {
 	mux.Handle("/api/services/fossa/invites/refresh", s.withCORS(s.requireSession(http.HandlerFunc(s.handleFossaInviteRefresh))))
 	mux.Handle("/api/services/fossa/invites/", s.withCORS(s.requireSession(http.HandlerFunc(s.handleFossaInviteAction))))
 	mux.Handle("/api/services/fossa/team/sync", s.withCORS(s.requireSession(http.HandlerFunc(s.handleFossaTeamSync))))
+	mux.Handle("/api/lfx/enrichment/access", s.withCORS(s.requireSession(http.HandlerFunc(s.handleLFXEnrichmentAccess))))
+	mux.Handle("/api/lfx/enrichment/runs", s.withCORS(s.requireSession(http.HandlerFunc(s.handleLFXEnrichmentRuns))))
+	mux.Handle("/api/lfx/enrichment/runs/", s.withCORS(s.requireSession(http.HandlerFunc(s.handleLFXEnrichmentRun))))
 	mux.Handle("/api/", s.withCORS(s.requireSession(http.HandlerFunc(s.handleAPINotImplemented))))
 
 	server := &http.Server{
@@ -531,8 +541,9 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	response := map[string]any{
-		"login": session.Login,
-		"role":  session.Role,
+		"login":        session.Login,
+		"role":         session.Role,
+		"capabilities": s.capabilitiesForSession(session),
 	}
 	if session.Role == roleMaintainer {
 		if maintainer, err := s.getMaintainerByLogin(session.Login); err == nil {
@@ -2191,17 +2202,19 @@ type maintainerServiceTargetResponse struct {
 }
 
 type auditLogResponse struct {
-	ID           uint      `json:"id"`
-	Action       string    `json:"action"`
-	Message      string    `json:"message"`
-	Metadata     string    `json:"metadata,omitempty"`
-	CreatedAt    time.Time `json:"createdAt"`
-	ProjectID    *uint     `json:"projectId,omitempty"`
-	MaintainerID *uint     `json:"maintainerId,omitempty"`
-	ServiceID    *uint     `json:"serviceId,omitempty"`
-	StaffID      *uint     `json:"staffId,omitempty"`
-	StaffName    string    `json:"staffName,omitempty"`
-	StaffLogin   string    `json:"staffLogin,omitempty"`
+	ID             uint      `json:"id"`
+	Action         string    `json:"action"`
+	Message        string    `json:"message"`
+	Metadata       string    `json:"metadata,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	ProjectID      *uint     `json:"projectId,omitempty"`
+	ProjectName    string    `json:"projectName,omitempty"`
+	MaintainerID   *uint     `json:"maintainerId,omitempty"`
+	MaintainerName string    `json:"maintainerName,omitempty"`
+	ServiceID      *uint     `json:"serviceId,omitempty"`
+	StaffID        *uint     `json:"staffId,omitempty"`
+	StaffName      string    `json:"staffName,omitempty"`
+	StaffLogin     string    `json:"staffLogin,omitempty"`
 }
 
 type auditListResponse struct {
@@ -3340,6 +3353,50 @@ func (s *server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to load audit logs", http.StatusInternalServerError)
 		return
 	}
+	projectNames := make(map[uint]string)
+	projectIDs := make([]uint, 0, len(logs))
+	seenProjectIDs := make(map[uint]struct{})
+	maintainerNames := make(map[uint]string)
+	maintainerIDs := make([]uint, 0, len(logs))
+	seenMaintainerIDs := make(map[uint]struct{})
+	for _, logEntry := range logs {
+		if logEntry.ProjectID != nil {
+			if _, ok := seenProjectIDs[*logEntry.ProjectID]; !ok {
+				seenProjectIDs[*logEntry.ProjectID] = struct{}{}
+				projectIDs = append(projectIDs, *logEntry.ProjectID)
+			}
+		}
+		if logEntry.MaintainerID != nil {
+			if _, ok := seenMaintainerIDs[*logEntry.MaintainerID]; !ok {
+				seenMaintainerIDs[*logEntry.MaintainerID] = struct{}{}
+				maintainerIDs = append(maintainerIDs, *logEntry.MaintainerID)
+			}
+		}
+	}
+	if len(projectIDs) > 0 {
+		var projects []model.Project
+		if err := s.store.DB().Select("id", "name").Where("id IN ?", projectIDs).Find(&projects).Error; err != nil {
+			s.logger.Printf("web-bff: handleAudit project lookup error: %v", err)
+		} else {
+			for _, project := range projects {
+				projectNames[project.ID] = strings.TrimSpace(project.Name)
+			}
+		}
+	}
+	if len(maintainerIDs) > 0 {
+		var maintainers []model.Maintainer
+		if err := s.store.DB().Select("id", "name", "git_hub_account").Where("id IN ?", maintainerIDs).Find(&maintainers).Error; err != nil {
+			s.logger.Printf("web-bff: handleAudit maintainer lookup error: %v", err)
+		} else {
+			for _, maintainer := range maintainers {
+				name := strings.TrimSpace(maintainer.Name)
+				if name == "" {
+					name = strings.TrimSpace(maintainer.GitHubAccount)
+				}
+				maintainerNames[maintainer.ID] = name
+			}
+		}
+	}
 
 	response := auditListResponse{
 		Total: total,
@@ -3360,6 +3417,12 @@ func (s *server) handleAudit(w http.ResponseWriter, r *http.Request) {
 		if logEntry.Staff != nil {
 			item.StaffName = logEntry.Staff.Name
 			item.StaffLogin = logEntry.Staff.GitHubAccount
+		}
+		if logEntry.ProjectID != nil {
+			item.ProjectName = projectNames[*logEntry.ProjectID]
+		}
+		if logEntry.MaintainerID != nil {
+			item.MaintainerName = maintainerNames[*logEntry.MaintainerID]
 		}
 		response.Logs = append(response.Logs, item)
 	}
@@ -4413,6 +4476,409 @@ func (s *server) handleResolveOnboarding(w http.ResponseWriter, r *http.Request)
 
 type onboardingIssuesResponse struct {
 	Issues []onboardingIssueSummary `json:"issues"`
+}
+
+type lfxEnrichmentClient interface {
+	lfx.UserSearcher
+	CheckToken(ctx context.Context) error
+}
+
+type lfxEnrichmentRunStatus string
+
+const (
+	lfxRunRunning   lfxEnrichmentRunStatus = "running"
+	lfxRunSucceeded lfxEnrichmentRunStatus = "succeeded"
+	lfxRunFailed    lfxEnrichmentRunStatus = "failed"
+)
+
+type lfxEnrichmentRun struct {
+	ID                string                 `json:"id"`
+	Status            lfxEnrichmentRunStatus `json:"status"`
+	RequestedBy       string                 `json:"requestedBy"`
+	CreatedAt         time.Time              `json:"createdAt"`
+	StartedAt         *time.Time             `json:"startedAt,omitempty"`
+	FinishedAt        *time.Time             `json:"finishedAt,omitempty"`
+	RequestDelay      string                 `json:"requestDelay"`
+	RequestsPerSecond float64                `json:"requestsPerSecond"`
+	MaxLookups        int                    `json:"maxLookups"`
+	Total             int                    `json:"total"`
+	Processed         int                    `json:"processed"`
+	Current           string                 `json:"current,omitempty"`
+	Attempted         int                    `json:"attempted"`
+	Matched           int                    `json:"matched"`
+	Ambiguous         int                    `json:"ambiguous"`
+	Unmatched         int                    `json:"unmatched"`
+	Errored           int                    `json:"errored"`
+	SkippedRecent     int                    `json:"skippedRecent"`
+	SkippedLimit      int                    `json:"skippedLimit"`
+	Error             string                 `json:"error,omitempty"`
+}
+
+type lfxEnrichmentRunStore struct {
+	mu     sync.RWMutex
+	nextID uint64
+	runs   map[string]*lfxEnrichmentRun
+	order  []string
+}
+
+func newLFXEnrichmentRunStore() *lfxEnrichmentRunStore {
+	return &lfxEnrichmentRunStore{
+		runs: make(map[string]*lfxEnrichmentRun),
+	}
+}
+
+func (s *lfxEnrichmentRunStore) Create(run *lfxEnrichmentRun) lfxEnrichmentRun {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.nextID++
+	run.ID = strconv.FormatUint(s.nextID, 10)
+	copy := *run
+	s.runs[run.ID] = &copy
+	s.order = append([]string{run.ID}, s.order...)
+	if len(s.order) > 25 {
+		for _, id := range s.order[25:] {
+			delete(s.runs, id)
+		}
+		s.order = s.order[:25]
+	}
+	return copy
+}
+
+func (s *lfxEnrichmentRunStore) Get(id string) (lfxEnrichmentRun, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	run, ok := s.runs[id]
+	if !ok || run == nil {
+		return lfxEnrichmentRun{}, false
+	}
+	return *run, true
+}
+
+func (s *lfxEnrichmentRunStore) List() []lfxEnrichmentRun {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	runs := make([]lfxEnrichmentRun, 0, len(s.order))
+	for _, id := range s.order {
+		if run := s.runs[id]; run != nil {
+			runs = append(runs, *run)
+		}
+	}
+	return runs
+}
+
+func (s *lfxEnrichmentRunStore) Update(id string, update func(*lfxEnrichmentRun)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	run := s.runs[id]
+	if run == nil {
+		return
+	}
+	update(run)
+}
+
+type lfxEnrichmentAccessResponse struct {
+	CanRun        bool     `json:"canRun"`
+	AllowedLogins []string `json:"allowedLogins"`
+}
+
+type lfxEnrichmentRunsResponse struct {
+	Runs []lfxEnrichmentRun `json:"runs"`
+}
+
+type lfxEnrichmentRunRequest struct {
+	Token             string  `json:"token"`
+	ACL               string  `json:"acl,omitempty"`
+	RequestsPerSecond float64 `json:"requestsPerSecond,omitempty"`
+	MaxLookups        int     `json:"maxLookups,omitempty"`
+}
+
+func (s *server) handleLFXEnrichmentAccess(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(lfxEnrichmentAccessResponse{
+		CanRun:        s.canRunLFXEnrichment(session),
+		AllowedLogins: lfxEnrichmentAdminLogins(),
+	}); err != nil {
+		s.logger.Printf("web-bff: handleLFXEnrichmentAccess encode error: %v", err)
+	}
+}
+
+func (s *server) handleLFXEnrichmentRuns(w http.ResponseWriter, r *http.Request) {
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set(headerContentType, contentTypeJSON)
+		if err := json.NewEncoder(w).Encode(lfxEnrichmentRunsResponse{Runs: s.ensureLFXRuns().List()}); err != nil {
+			s.logger.Printf("web-bff: handleLFXEnrichmentRuns encode error: %v", err)
+		}
+	case http.MethodPost:
+		s.handleLFXEnrichmentRunCreate(w, r, session)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *server) handleLFXEnrichmentRun(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	session := sessionFromContext(r.Context())
+	if session == nil || session.Role != roleStaff {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/lfx/enrichment/runs/"), "/")
+	if id == "" {
+		http.Error(w, "missing run id", http.StatusBadRequest)
+		return
+	}
+	run, ok := s.ensureLFXRuns().Get(id)
+	if !ok {
+		http.Error(w, "run not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(run); err != nil {
+		s.logger.Printf("web-bff: handleLFXEnrichmentRun encode error: %v", err)
+	}
+}
+
+func (s *server) handleLFXEnrichmentRunCreate(w http.ResponseWriter, r *http.Request, session *session) {
+	if !s.canRunLFXEnrichment(session) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	var req lfxEnrichmentRunRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request", http.StatusBadRequest)
+		return
+	}
+	token := strings.TrimSpace(req.Token)
+	if token == "" {
+		http.Error(w, "token is required", http.StatusBadRequest)
+		return
+	}
+	rps, delay, err := lfxRequestDelay(req.RequestsPerSecond)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	maxLookups := req.MaxLookups
+	if maxLookups < 0 {
+		http.Error(w, "maxLookups must be zero or greater", http.StatusBadRequest)
+		return
+	}
+	clientFactory := s.newLFXClient
+	if clientFactory == nil {
+		clientFactory = newLFXEnrichmentClient
+	}
+	client := clientFactory(token, strings.TrimSpace(req.ACL), delay)
+	if err := client.CheckToken(r.Context()); err != nil {
+		http.Error(w, lfx.PlatformAccessError(err).Error(), http.StatusBadGateway)
+		return
+	}
+
+	now := time.Now().UTC()
+	run := s.ensureLFXRuns().Create(&lfxEnrichmentRun{
+		Status:            lfxRunRunning,
+		RequestedBy:       session.Login,
+		CreatedAt:         now,
+		StartedAt:         &now,
+		RequestDelay:      delay.String(),
+		RequestsPerSecond: rps,
+		MaxLookups:        maxLookups,
+	})
+	staffID := lookupStaffID(s.store, session.Login)
+	go s.runLFXEnrichment(run.ID, token, strings.TrimSpace(req.ACL), delay, maxLookups, session.Login, staffID) //nolint:gosec // enrichment must outlive the request context
+
+	w.Header().Set(headerContentType, contentTypeJSON)
+	w.WriteHeader(http.StatusAccepted)
+	if err := json.NewEncoder(w).Encode(run); err != nil {
+		s.logger.Printf("web-bff: handleLFXEnrichmentRunCreate encode error: %v", err)
+	}
+}
+
+func (s *server) runLFXEnrichment(runID, token, acl string, delay time.Duration, maxLookups int, requestedBy string, staffID *uint) {
+	clientFactory := s.newLFXClient
+	if clientFactory == nil {
+		clientFactory = newLFXEnrichmentClient
+	}
+	client := clientFactory(token, acl, delay)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
+	defer cancel()
+
+	enricher := &lfx.Enricher{
+		Store:      s.store,
+		Client:     client,
+		EnrichAll:  true,
+		MaxLookups: maxLookups,
+		Progress: func(progress lfx.EnrichmentProgress) {
+			s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
+				run.Total = progress.Total
+				run.Processed = progress.Processed
+				run.Current = progress.Current
+				applyLFXRunSummary(run, progress.Summary)
+			})
+		},
+	}
+	summary, err := enricher.EnrichProject(ctx, model.Project{}, nil)
+	finishedAt := time.Now().UTC()
+	s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
+		run.FinishedAt = &finishedAt
+		run.Current = ""
+		applyLFXRunSummary(run, summary)
+		if err != nil {
+			run.Status = lfxRunFailed
+			run.Error = err.Error()
+		} else {
+			run.Status = lfxRunSucceeded
+		}
+	})
+	s.logLFXEnrichmentRun(runID, requestedBy, staffID, summary, delay, maxLookups, err)
+}
+
+func applyLFXRunSummary(run *lfxEnrichmentRun, summary dotproject.EnrichmentSummary) {
+	run.Attempted = summary.Attempted
+	run.Matched = summary.Matched
+	run.Ambiguous = summary.Ambiguous
+	run.Unmatched = summary.Unmatched
+	run.Errored = summary.Errored
+	run.SkippedRecent = summary.SkippedRecent
+	run.SkippedLimit = summary.SkippedLimit
+}
+
+func (s *server) logLFXEnrichmentRun(runID, requestedBy string, staffID *uint, summary dotproject.EnrichmentSummary, delay time.Duration, maxLookups int, runErr error) {
+	if s == nil || s.store == nil || s.store.DB() == nil {
+		return
+	}
+	metadata := map[string]any{
+		"run_id":         runID,
+		"requested_by":   requestedBy,
+		"request_delay":  delay.String(),
+		"max_lookups":    maxLookups,
+		"attempted":      summary.Attempted,
+		"matched":        summary.Matched,
+		"ambiguous":      summary.Ambiguous,
+		"unmatched":      summary.Unmatched,
+		"errored":        summary.Errored,
+		"skipped_recent": summary.SkippedRecent,
+		"skipped_limit":  summary.SkippedLimit,
+	}
+	action := "LFX_ENRICHMENT_RUN_SUCCEEDED"
+	message := fmt.Sprintf("LFX enrichment run %s completed by %s", runID, requestedBy)
+	if runErr != nil {
+		action = "LFX_ENRICHMENT_RUN_FAILED"
+		message = fmt.Sprintf("LFX enrichment run %s failed for %s", runID, requestedBy)
+		metadata["error"] = runErr.Error()
+	}
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		s.logger.Printf("web-bff: LFX enrichment audit metadata encode error: %v", err)
+		return
+	}
+	event := model.AuditLog{
+		StaffID:  staffID,
+		Action:   action,
+		Message:  message,
+		Metadata: string(body),
+	}
+	if err := s.store.DB().Create(&event).Error; err != nil {
+		s.logger.Printf("web-bff: LFX enrichment audit log failed: %v", err)
+	}
+}
+
+func (s *server) ensureLFXRuns() *lfxEnrichmentRunStore {
+	if s.lfxRuns != nil {
+		return s.lfxRuns
+	}
+	s.lfxRuns = newLFXEnrichmentRunStore()
+	return s.lfxRuns
+}
+
+func (s *server) capabilitiesForSession(session *session) []string {
+	if s.canRunLFXEnrichment(session) {
+		return []string{capabilityLFXEnrichment}
+	}
+	return []string{}
+}
+
+func (s *server) canRunLFXEnrichment(session *session) bool {
+	if session == nil || session.Role != roleStaff {
+		return false
+	}
+	login := strings.ToLower(strings.TrimSpace(session.Login))
+	if login == "" {
+		return false
+	}
+	for _, allowed := range lfxEnrichmentAdminLogins() {
+		if strings.EqualFold(allowed, login) {
+			return true
+		}
+	}
+	return false
+}
+
+func lfxEnrichmentAdminLogins() []string {
+	raw := strings.TrimSpace(os.Getenv(lfxAdminLoginsEnv))
+	if raw == "" {
+		return []string{}
+	}
+	seen := make(map[string]struct{})
+	logins := []string{}
+	for _, part := range strings.Split(raw, ",") {
+		login := strings.ToLower(strings.TrimSpace(part))
+		if login == "" {
+			continue
+		}
+		if _, ok := seen[login]; ok {
+			continue
+		}
+		seen[login] = struct{}{}
+		logins = append(logins, login)
+	}
+	sort.Strings(logins)
+	return logins
+}
+
+func lfxRequestDelay(requestsPerSecond float64) (float64, time.Duration, error) {
+	if requestsPerSecond == 0 {
+		requestsPerSecond = 4
+	}
+	if requestsPerSecond < 0.25 || requestsPerSecond > 4 {
+		return 0, 0, fmt.Errorf("requestsPerSecond must be between 0.25 and 4")
+	}
+	delay := time.Duration(float64(time.Second) / requestsPerSecond)
+	if delay < 250*time.Millisecond {
+		delay = 250 * time.Millisecond
+	}
+	return requestsPerSecond, delay, nil
+}
+
+func newLFXEnrichmentClient(token, acl string, delay time.Duration) lfxEnrichmentClient {
+	return &lfx.Client{
+		BaseURL: strings.TrimSpace(envOr("LFX_BASE_URL", lfx.DefaultBaseURL)),
+		HTTPClient: &http.Client{
+			Timeout: parseDuration(os.Getenv("LFX_TIMEOUT"), 30*time.Second),
+		},
+		MinDelay: delay,
+		Token:    strings.TrimSpace(token),
+		ACL:      strings.TrimSpace(acl),
+		Username: strings.TrimSpace(os.Getenv("LFX_USERNAME")),
+		Email:    strings.TrimSpace(os.Getenv("LFX_EMAIL")),
+	}
 }
 
 func (s *server) handleOnboardingIssues(w http.ResponseWriter, r *http.Request) {

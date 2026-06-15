@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"maintainerd/db"
+	"maintainerd/lfx"
 	"maintainerd/model"
 
 	"github.com/google/go-github/v55/github"
@@ -85,6 +86,7 @@ func setupPostgresTestDB(t *testing.T) *gorm.DB {
 		&model.FoundationOfficer{},
 		&model.Collaborator{},
 		&model.MaintainerProject{},
+		&model.MaintainerIdentityObservation{},
 		&model.Service{},
 		&model.RemoteTeam{},
 		&model.RemoteUser{},
@@ -1445,4 +1447,159 @@ func TestFossaChooseRequiresRemoteTeamIDFromFossa(t *testing.T) {
 	var count int64
 	require.NoError(t, dbConn.Model(&model.RemoteTeam{}).Count(&count).Error)
 	assert.Equal(t, int64(0), count)
+}
+
+type fakeLFXEnrichmentClient struct {
+	checkErr error
+}
+
+func (f fakeLFXEnrichmentClient) CheckToken(_ context.Context) error {
+	return f.checkErr
+}
+
+func (f fakeLFXEnrichmentClient) SearchUsers(_ context.Context, query lfx.UserSearch) ([]lfx.User, error) {
+	if strings.EqualFold(query.GitHubID, "alice-example") {
+		return []lfx.User{{
+			ID:       "003-alice",
+			Name:     "Alice Example",
+			Email:    "alice@example.org",
+			Username: "alice-lfid",
+		}}, nil
+	}
+	return []lfx.User{}, nil
+}
+
+func (f fakeLFXEnrichmentClient) GetUserIdentities(_ context.Context, _ string) ([]lfx.Identity, error) {
+	return []lfx.Identity{{
+		Source:   "github",
+		Username: "alice-example",
+		Email:    "alice@example.org",
+	}}, nil
+}
+
+func TestLFXEnrichmentAccessUsesEnvAllowlist(t *testing.T) {
+	t.Setenv(lfxAdminLoginsEnv, "staff-tester, other-admin")
+	now := time.Now().UTC()
+	s := &server{
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+	}
+	s.sessions.Set(session{
+		ID:        "staff-session",
+		Login:     "staff-tester",
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/lfx/enrichment/access", nil)
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: "staff-session"})
+	rec := httptest.NewRecorder()
+	s.requireSession(http.HandlerFunc(s.handleLFXEnrichmentAccess)).ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var response lfxEnrichmentAccessResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	assert.True(t, response.CanRun)
+	assert.Equal(t, []string{"other-admin", "staff-tester"}, response.AllowedLogins)
+}
+
+func TestLFXEnrichmentRunStartsAsyncAndRecordsProgress(t *testing.T) {
+	t.Setenv(lfxAdminLoginsEnv, "staff-tester")
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now().UTC()
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+	alice := model.Maintainer{
+		Name:             "Alice Example",
+		Email:            "alice@example.org",
+		GitHubAccount:    "alice-example",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&alice).Error)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		lfxRuns:    newLFXEnrichmentRunStore(),
+		newLFXClient: func(_, _ string, _ time.Duration) lfxEnrichmentClient {
+			return fakeLFXEnrichmentClient{}
+		},
+	}
+	s.sessions.Set(session{
+		ID:        "staff-session",
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/lfx/enrichment/runs", strings.NewReader(`{"token":"short-lived","requestsPerSecond":4,"maxLookups":5}`))
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: "staff-session"})
+	rec := httptest.NewRecorder()
+	s.requireSession(http.HandlerFunc(s.handleLFXEnrichmentRuns)).ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusAccepted, rec.Code)
+	var created lfxEnrichmentRun
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&created))
+	require.NotEmpty(t, created.ID)
+	assert.Equal(t, 4.0, created.RequestsPerSecond)
+	assert.Equal(t, "250ms", created.RequestDelay)
+
+	require.Eventually(t, func() bool {
+		run, ok := s.lfxRuns.Get(created.ID)
+		return ok && run.Status == lfxRunSucceeded && run.Matched == 1
+	}, 2*time.Second, 20*time.Millisecond)
+
+	run, ok := s.lfxRuns.Get(created.ID)
+	require.True(t, ok)
+	assert.Equal(t, 1, run.Total)
+	assert.Equal(t, 1, run.Processed)
+	assert.Equal(t, 1, run.Attempted)
+
+	var observation model.MaintainerIdentityObservation
+	require.NoError(t, dbConn.Where("source = ? AND maintainer_id = ?", "lfx", alice.ID).First(&observation).Error)
+	assert.Equal(t, "003-alice", observation.SourceUserID)
+	assert.Equal(t, "exact", observation.Confidence)
+
+	var audit model.AuditLog
+	require.NoError(t, dbConn.Where("action = ?", "LFX_ENRICHMENT_RUN_SUCCEEDED").First(&audit).Error)
+	assert.NotContains(t, audit.Metadata, "short-lived")
+}
+
+func TestLFXEnrichmentRunRejectsNonAllowedStaff(t *testing.T) {
+	t.Setenv(lfxAdminLoginsEnv, "other-admin")
+	now := time.Now().UTC()
+	s := &server{
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		lfxRuns:    newLFXEnrichmentRunStore(),
+		newLFXClient: func(_, _ string, _ time.Duration) lfxEnrichmentClient {
+			return fakeLFXEnrichmentClient{}
+		},
+	}
+	s.sessions.Set(session{
+		ID:        "staff-session",
+		Login:     "staff-tester",
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/lfx/enrichment/runs", strings.NewReader(`{"token":"short-lived"}`))
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: "staff-session"})
+	rec := httptest.NewRecorder()
+	s.requireSession(http.HandlerFunc(s.handleLFXEnrichmentRuns)).ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusForbidden, rec.Code)
 }
