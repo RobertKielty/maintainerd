@@ -70,7 +70,7 @@ export default function LFXPage() {
   const [maxLookups, setMaxLookups] = useState("50");
   const [writeGist, setWriteGist] = useState(false);
   const [gistId, setGistId] = useState("");
-  const [gistFilename, setGistFilename] = useState("dot-project-repos.csv");
+  const [gistFilename, setGistFilename] = useState("dot-project-repos.md");
   const [gistDescription, setGistDescription] = useState("maintainer-d dot-project repository report");
   const [status, setStatus] = useState<"idle" | "loading" | "ready">("idle");
   const [submitting, setSubmitting] = useState(false);

@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGistReportCSV(t *testing.T) {
+func TestGistReportMarkdown(t *testing.T) {
 	t.Parallel()
 
 	count := uint(3)
@@ -25,10 +25,10 @@ func TestGistReportCSV(t *testing.T) {
 	})
 	require.True(t, ok)
 
-	csv, err := GistReportCSV([]GistReportRow{row})
+	markdown, err := GistReportMarkdown([]GistReportRow{row})
 	require.NoError(t, err)
 
-	assert.Equal(t, "Project Name,project.yaml,maintainers.yaml,Maintainer Count,SECURITY.md,CONTRIBUTING.md,GOVERNANCE.md,Warning\nExample,https://github.com/example/.project/blob/main/project.yaml,https://github.com/example/.project/blob/main/maintainers.yaml,3,https://github.com/example/.project/blob/main/SECURITY.md,,https://raw.githubusercontent.com/example/.project/main/GOVERNANCE.md,\n", csv)
+	assert.Equal(t, "| Project Name | project.yaml | maintainers.yaml | Maintainer Count | SECURITY.md | CONTRIBUTING.md | GOVERNANCE.md | Warning |\n| --- | --- | --- | ---: | --- | --- | --- | --- |\n| Example | [project.yaml](https://github.com/example/.project/blob/main/project.yaml) | [maintainers.yaml](https://github.com/example/.project/blob/main/maintainers.yaml) | 3 | [SECURITY.md](https://github.com/example/.project/blob/main/SECURITY.md) |  | [GOVERNANCE.md](https://raw.githubusercontent.com/example/.project/main/GOVERNANCE.md) |  |\n", markdown)
 }
 
 func TestBuildGistReportRowIncludesMaintainersWarning(t *testing.T) {

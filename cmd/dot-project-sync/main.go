@@ -81,6 +81,10 @@ func main() {
 	}
 
 	store := db.NewSQLStore(dbConn)
+	logger := zap.NewNop().Sugar()
+	if err := store.LogAuditEvent(logger, buildStartAuditEvent(cfg)); err != nil {
+		log.Printf("dot-project sync start audit log failed: %v", err)
+	}
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
 	tc := oauth2.NewClient(ctx, ts)
 	client := github.NewClient(tc)
@@ -129,7 +133,6 @@ func main() {
 		log.Printf("dot-project sync post-sync metrics failed: %v", metricsErr)
 	}
 
-	logger := zap.NewNop().Sugar()
 	if err := store.LogAuditEvent(logger, buildAuditEvent(summary, metrics, metricsErr, cfg)); err != nil {
 		log.Printf("dot-project sync audit log failed: %v", err)
 	}
@@ -175,10 +178,10 @@ func parseFlags() syncConfig {
 	flag.StringVar(&cfg.FoundationRepo, "foundation-csv-repo", "foundation", "GitHub repository for foundation project-maintainers.csv")
 	flag.StringVar(&cfg.FoundationRef, "foundation-csv-ref", "main", "Git ref for foundation project-maintainers.csv")
 	flag.StringVar(&cfg.FoundationPath, "foundation-csv-path", "project-maintainers.csv", "Path to foundation project-maintainers.csv")
-	flag.BoolVar(&cfg.WriteGist, "write-gist", false, "write a public gist containing the dot-project CSV report")
+	flag.BoolVar(&cfg.WriteGist, "write-gist", false, "write a public gist containing the dot-project Markdown report")
 	flag.StringVar(&cfg.GistID, "gist-id", "", "existing gist ID to update; leave empty to create a new public gist")
-	flag.StringVar(&cfg.GistFilename, "gist-filename", "dot-project-repos.csv", "filename for the dot-project CSV gist")
-	flag.StringVar(&cfg.GistDescription, "gist-description", "maintainer-d dot-project repository report", "description for the dot-project CSV gist")
+	flag.StringVar(&cfg.GistFilename, "gist-filename", "dot-project-repos.md", "filename for the dot-project Markdown gist")
+	flag.StringVar(&cfg.GistDescription, "gist-description", "maintainer-d dot-project repository report", "description for the dot-project Markdown gist")
 	flag.Parse()
 	return cfg
 }
@@ -187,13 +190,13 @@ func publishDotProjectGist(ctx context.Context, client *github.Client, cfg syncC
 	if client == nil {
 		return nil, fmt.Errorf("github client is required")
 	}
-	content, err := dotproject.GistReportCSV(rows)
+	content, err := dotproject.GistReportMarkdown(rows)
 	if err != nil {
 		return nil, err
 	}
 	filename := strings.TrimSpace(cfg.GistFilename)
 	if filename == "" {
-		filename = "dot-project-repos.csv"
+		filename = "dot-project-repos.md"
 	}
 	gist := &github.Gist{
 		Description: github.String(strings.TrimSpace(cfg.GistDescription)),
@@ -575,12 +578,6 @@ func buildAuditEvent(summary dotproject.SyncSummary, metrics *postSyncMetrics, m
 		"gist_filename":                 strings.TrimSpace(cfg.GistFilename),
 		"gist_report_rows":              len(summary.GistReportRows),
 	}
-	if len(summary.AutoAdd.WouldCreate) > 0 {
-		metadata["auto_add_would_create_handles"] = summary.AutoAdd.WouldCreate
-	}
-	if len(summary.AutoAdd.WouldLink) > 0 {
-		metadata["auto_add_would_link_handles"] = summary.AutoAdd.WouldLink
-	}
 	if len(summary.ErrorSummaries) > 0 {
 		metadata["errors"] = summary.ErrorSummaries
 	}
@@ -620,8 +617,36 @@ func buildAuditEvent(summary dotproject.SyncSummary, metrics *postSyncMetrics, m
 		summary.AutoAdd.LinkedMaintainers,
 	)
 	return model.AuditLog{
-		Action:   "DOT_PROJECT_SYNC_RUN",
+		Action:   "DOT_PROJECT_SYNC_RUN_FINISHED",
 		Message:  message,
+		Metadata: string(body),
+	}
+}
+
+func buildStartAuditEvent(cfg syncConfig) model.AuditLog {
+	metadata := map[string]any{
+		"check_foundation_csv":   cfg.CheckFoundationCSV,
+		"auto_add_maintainers":   cfg.AutoAddMaintainers,
+		"dot_project_sync_actor": strings.TrimSpace(cfg.Actor),
+		"foundation_csv_owner":   strings.TrimSpace(cfg.FoundationOwner),
+		"foundation_csv_repo":    strings.TrimSpace(cfg.FoundationRepo),
+		"foundation_csv_ref":     strings.TrimSpace(cfg.FoundationRef),
+		"foundation_csv_path":    strings.TrimSpace(cfg.FoundationPath),
+		"write_gist":             cfg.WriteGist,
+		"gist_id":                strings.TrimSpace(cfg.GistID),
+		"gist_filename":          strings.TrimSpace(cfg.GistFilename),
+	}
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		body = []byte("{}")
+	}
+	actor := strings.TrimSpace(cfg.Actor)
+	if actor == "" {
+		actor = "dot-project-sync"
+	}
+	return model.AuditLog{
+		Action:   "DOT_PROJECT_SYNC_RUN_STARTED",
+		Message:  fmt.Sprintf("DOT_PROJECT_SYNC_RUN_STARTED: actor=%s auto_add_maintainers=%t check_foundation_csv=%t", actor, cfg.AutoAddMaintainers, cfg.CheckFoundationCSV),
 		Metadata: string(body),
 	}
 }
