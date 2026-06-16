@@ -1531,7 +1531,7 @@ func TestLFXEnrichmentRunStartsAsyncAndRecordsProgress(t *testing.T) {
 		cookieName: defaultSessionCookieName,
 		logger:     log.New(io.Discard, "", 0),
 		lfxRuns:    newLFXEnrichmentRunStore(),
-		newLFXClient: func(_, _ string, _ time.Duration) lfxEnrichmentClient {
+		newLFXClient: func(_, _ string, _, _ time.Duration) lfxEnrichmentClient {
 			return fakeLFXEnrichmentClient{}
 		},
 	}
@@ -1543,7 +1543,7 @@ func TestLFXEnrichmentRunStartsAsyncAndRecordsProgress(t *testing.T) {
 		ExpiresAt: now.Add(time.Hour),
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/lfx/enrichment/runs", strings.NewReader(`{"token":"short-lived","requestsPerSecond":4,"maxLookups":5}`))
+	req := httptest.NewRequest(http.MethodPost, "/api/lfx/enrichment/runs", strings.NewReader(`{"token":"short-lived","requestsPerSecond":4,"maxLookups":5,"checkFoundationCsv":false}`))
 	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: "staff-session"})
 	rec := httptest.NewRecorder()
 	s.requireSession(http.HandlerFunc(s.handleLFXEnrichmentRuns)).ServeHTTP(rec, req)
@@ -1621,7 +1621,7 @@ func TestLFXEnrichmentRunRejectsNonAllowedStaff(t *testing.T) {
 		cookieName: defaultSessionCookieName,
 		logger:     log.New(io.Discard, "", 0),
 		lfxRuns:    newLFXEnrichmentRunStore(),
-		newLFXClient: func(_, _ string, _ time.Duration) lfxEnrichmentClient {
+		newLFXClient: func(_, _ string, _, _ time.Duration) lfxEnrichmentClient {
 			return fakeLFXEnrichmentClient{}
 		},
 	}
