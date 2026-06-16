@@ -18,7 +18,16 @@ type LFXRun = {
   finishedAt?: string;
   requestDelay: string;
   requestsPerSecond: number;
+  lfxTimeout?: string;
+  syncTimeout?: string;
   maxLookups: number;
+  enrichAll: boolean;
+  checkFoundationCsv: boolean;
+  autoAddMaintainers: boolean;
+  foundationOwner?: string;
+  foundationRepo?: string;
+  foundationRef?: string;
+  foundationPath?: string;
   total: number;
   processed: number;
   current?: string;
@@ -67,7 +76,16 @@ export default function LFXPage() {
   const [token, setToken] = useState("");
   const [acl, setACL] = useState("");
   const [requestsPerSecond, setRequestsPerSecond] = useState("4");
+  const [lfxTimeout, setLfxTimeout] = useState("30s");
+  const [syncTimeout, setSyncTimeout] = useState("1h");
   const [maxLookups, setMaxLookups] = useState("50");
+  const [enrichAll, setEnrichAll] = useState(true);
+  const [checkFoundationCsv, setCheckFoundationCsv] = useState(true);
+  const [autoAddMaintainers, setAutoAddMaintainers] = useState(false);
+  const [foundationOwner, setFoundationOwner] = useState("cncf");
+  const [foundationRepo, setFoundationRepo] = useState("foundation");
+  const [foundationRef, setFoundationRef] = useState("main");
+  const [foundationPath, setFoundationPath] = useState("project-maintainers.csv");
   const [writeGist, setWriteGist] = useState(false);
   const [gistId, setGistId] = useState("");
   const [gistFilename, setGistFilename] = useState("dot-project-repos.md");
@@ -175,7 +193,16 @@ export default function LFXPage() {
           token,
           acl,
           requestsPerSecond: Number(requestsPerSecond),
+          lfxTimeout,
+          syncTimeout,
           maxLookups: Number(maxLookups),
+          enrichAll,
+          checkFoundationCsv,
+          autoAddMaintainers,
+          foundationOwner,
+          foundationRepo,
+          foundationRef,
+          foundationPath,
           writeGist,
           gistId,
           gistFilename,
@@ -269,6 +296,97 @@ export default function LFXPage() {
                     />
                   </label>
                 </div>
+                <div className={styles.fieldRow}>
+                  <label className={styles.field}>
+                    <span>LFX timeout</span>
+                    <input
+                      name="lfx-timeout"
+                      onChange={(event) => setLfxTimeout(event.target.value)}
+                      type="text"
+                      value={lfxTimeout}
+                    />
+                  </label>
+                  <label className={styles.field}>
+                    <span>Run timeout</span>
+                    <input
+                      name="sync-timeout"
+                      onChange={(event) => setSyncTimeout(event.target.value)}
+                      type="text"
+                      value={syncTimeout}
+                    />
+                  </label>
+                </div>
+                <div className={styles.optionGroup}>
+                  <label className={styles.checkboxField}>
+                    <input
+                      checked={enrichAll}
+                      onChange={(event) => setEnrichAll(event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span>Enrich all maintainers without a current LFX observation</span>
+                  </label>
+                  <label className={styles.checkboxField}>
+                    <input
+                      checked={autoAddMaintainers}
+                      onChange={(event) => setAutoAddMaintainers(event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span>Auto-add eligible maintainers found in dot-project files</span>
+                  </label>
+                  <label className={styles.checkboxField}>
+                    <input
+                      checked={checkFoundationCsv}
+                      onChange={(event) => setCheckFoundationCsv(event.target.checked)}
+                      type="checkbox"
+                    />
+                    <span>Require foundation project-maintainers.csv corroboration</span>
+                  </label>
+                </div>
+                {checkFoundationCsv ? (
+                  <div className={styles.gistOptions}>
+                    <h3 className={styles.sectionTitle}>Foundation CSV</h3>
+                    <div className={styles.fieldRow}>
+                      <label className={styles.field}>
+                        <span>Owner</span>
+                        <input
+                          name="foundation-owner"
+                          onChange={(event) => setFoundationOwner(event.target.value)}
+                          type="text"
+                          value={foundationOwner}
+                        />
+                      </label>
+                      <label className={styles.field}>
+                        <span>Repository</span>
+                        <input
+                          name="foundation-repo"
+                          onChange={(event) => setFoundationRepo(event.target.value)}
+                          type="text"
+                          value={foundationRepo}
+                        />
+                      </label>
+                    </div>
+                    <div className={styles.fieldRow}>
+                      <label className={styles.field}>
+                        <span>Ref</span>
+                        <input
+                          name="foundation-ref"
+                          onChange={(event) => setFoundationRef(event.target.value)}
+                          type="text"
+                          value={foundationRef}
+                        />
+                      </label>
+                      <label className={styles.field}>
+                        <span>Path</span>
+                        <input
+                          name="foundation-path"
+                          onChange={(event) => setFoundationPath(event.target.value)}
+                          type="text"
+                          value={foundationPath}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ) : null}
                 <p className={styles.bodyText}>
                   Runs continue asynchronously. Keep this page open to watch progress, or return later for recent run status.
                 </p>
@@ -313,7 +431,7 @@ export default function LFXPage() {
                   </div>
                 ) : null}
                 <button className={styles.primaryButton} disabled={submitting || !token.trim()} type="submit">
-                  {submitting ? "Starting..." : "Start enrichment"}
+                  {submitting ? "Starting..." : "Start dot-project sync"}
                 </button>
               </form>
 
@@ -349,8 +467,20 @@ export default function LFXPage() {
                     </dl>
                     <div className={styles.runMeta}>
                       Request delay {activeRun.requestDelay}; max lookups{" "}
-                      {activeRun.maxLookups === 0 ? "unlimited" : activeRun.maxLookups.toLocaleString()}.
+                      {activeRun.maxLookups === 0 ? "unlimited" : activeRun.maxLookups.toLocaleString()}; LFX timeout{" "}
+                      {activeRun.lfxTimeout || "-"}; run timeout {activeRun.syncTimeout || "-"}.
                     </div>
+                    <div className={styles.runMeta}>
+                      Enrich all {activeRun.enrichAll ? "enabled" : "disabled"}; auto-add{" "}
+                      {activeRun.autoAddMaintainers ? "enabled" : "disabled"}; foundation CSV{" "}
+                      {activeRun.checkFoundationCsv ? "enabled" : "disabled"}.
+                    </div>
+                    {activeRun.checkFoundationCsv ? (
+                      <div className={styles.runMeta}>
+                        Foundation source {activeRun.foundationOwner || "cncf"}/{activeRun.foundationRepo || "foundation"}@
+                        {activeRun.foundationRef || "main"} {activeRun.foundationPath || "project-maintainers.csv"}.
+                      </div>
+                    ) : null}
                     {activeRun.writeGist ? (
                       <div className={styles.gistResult}>
                         <span>Gist</span>

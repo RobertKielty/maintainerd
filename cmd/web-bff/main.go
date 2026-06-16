@@ -101,7 +101,7 @@ type server struct {
 	createDotProjectPullRequest func(ctx context.Context, input dotProjectPullRequestInput, githubToken string) (*dotProjectPullRequestResponse, error)
 	githubClient                func(ctx context.Context, token string) *github.Client
 	lfxRuns                     *lfxEnrichmentRunStore
-	newLFXClient                func(token, acl string, delay time.Duration) lfxEnrichmentClient
+	newLFXClient                func(token, acl string, delay, timeout time.Duration) lfxEnrichmentClient
 	fossaTeamCacheMu            sync.RWMutex
 	fossaTeamCache              map[uint]cachedFossaTeam
 }
@@ -4492,31 +4492,40 @@ const (
 )
 
 type lfxEnrichmentRun struct {
-	ID                string                 `json:"id"`
-	Status            lfxEnrichmentRunStatus `json:"status"`
-	RequestedBy       string                 `json:"requestedBy"`
-	CreatedAt         time.Time              `json:"createdAt"`
-	StartedAt         *time.Time             `json:"startedAt,omitempty"`
-	FinishedAt        *time.Time             `json:"finishedAt,omitempty"`
-	RequestDelay      string                 `json:"requestDelay"`
-	RequestsPerSecond float64                `json:"requestsPerSecond"`
-	MaxLookups        int                    `json:"maxLookups"`
-	Total             int                    `json:"total"`
-	Processed         int                    `json:"processed"`
-	Current           string                 `json:"current,omitempty"`
-	Attempted         int                    `json:"attempted"`
-	Matched           int                    `json:"matched"`
-	Ambiguous         int                    `json:"ambiguous"`
-	Unmatched         int                    `json:"unmatched"`
-	Errored           int                    `json:"errored"`
-	SkippedRecent     int                    `json:"skippedRecent"`
-	SkippedLimit      int                    `json:"skippedLimit"`
-	WriteGist         bool                   `json:"writeGist"`
-	GistID            string                 `json:"gistId,omitempty"`
-	GistURL           string                 `json:"gistUrl,omitempty"`
-	GistFilename      string                 `json:"gistFilename,omitempty"`
-	GistRows          int                    `json:"gistRows,omitempty"`
-	Error             string                 `json:"error,omitempty"`
+	ID                 string                 `json:"id"`
+	Status             lfxEnrichmentRunStatus `json:"status"`
+	RequestedBy        string                 `json:"requestedBy"`
+	CreatedAt          time.Time              `json:"createdAt"`
+	StartedAt          *time.Time             `json:"startedAt,omitempty"`
+	FinishedAt         *time.Time             `json:"finishedAt,omitempty"`
+	RequestDelay       string                 `json:"requestDelay"`
+	RequestsPerSecond  float64                `json:"requestsPerSecond"`
+	LFXTimeout         string                 `json:"lfxTimeout,omitempty"`
+	SyncTimeout        string                 `json:"syncTimeout,omitempty"`
+	MaxLookups         int                    `json:"maxLookups"`
+	EnrichAll          bool                   `json:"enrichAll"`
+	CheckFoundationCSV bool                   `json:"checkFoundationCsv"`
+	AutoAddMaintainers bool                   `json:"autoAddMaintainers"`
+	FoundationOwner    string                 `json:"foundationOwner,omitempty"`
+	FoundationRepo     string                 `json:"foundationRepo,omitempty"`
+	FoundationRef      string                 `json:"foundationRef,omitempty"`
+	FoundationPath     string                 `json:"foundationPath,omitempty"`
+	Total              int                    `json:"total"`
+	Processed          int                    `json:"processed"`
+	Current            string                 `json:"current,omitempty"`
+	Attempted          int                    `json:"attempted"`
+	Matched            int                    `json:"matched"`
+	Ambiguous          int                    `json:"ambiguous"`
+	Unmatched          int                    `json:"unmatched"`
+	Errored            int                    `json:"errored"`
+	SkippedRecent      int                    `json:"skippedRecent"`
+	SkippedLimit       int                    `json:"skippedLimit"`
+	WriteGist          bool                   `json:"writeGist"`
+	GistID             string                 `json:"gistId,omitempty"`
+	GistURL            string                 `json:"gistUrl,omitempty"`
+	GistFilename       string                 `json:"gistFilename,omitempty"`
+	GistRows           int                    `json:"gistRows,omitempty"`
+	Error              string                 `json:"error,omitempty"`
 }
 
 type lfxEnrichmentRunStore struct {
@@ -4591,14 +4600,40 @@ type lfxEnrichmentRunsResponse struct {
 }
 
 type lfxEnrichmentRunRequest struct {
-	Token             string  `json:"token"`
-	ACL               string  `json:"acl,omitempty"`
-	RequestsPerSecond float64 `json:"requestsPerSecond,omitempty"`
-	MaxLookups        int     `json:"maxLookups,omitempty"`
-	WriteGist         bool    `json:"writeGist,omitempty"`
-	GistID            string  `json:"gistId,omitempty"`
-	GistFilename      string  `json:"gistFilename,omitempty"`
-	GistDescription   string  `json:"gistDescription,omitempty"`
+	Token              string  `json:"token"`
+	ACL                string  `json:"acl,omitempty"`
+	RequestsPerSecond  float64 `json:"requestsPerSecond,omitempty"`
+	LFXTimeout         string  `json:"lfxTimeout,omitempty"`
+	SyncTimeout        string  `json:"syncTimeout,omitempty"`
+	MaxLookups         int     `json:"maxLookups,omitempty"`
+	EnrichAll          *bool   `json:"enrichAll,omitempty"`
+	CheckFoundationCSV *bool   `json:"checkFoundationCsv,omitempty"`
+	AutoAddMaintainers bool    `json:"autoAddMaintainers,omitempty"`
+	FoundationOwner    string  `json:"foundationOwner,omitempty"`
+	FoundationRepo     string  `json:"foundationRepo,omitempty"`
+	FoundationRef      string  `json:"foundationRef,omitempty"`
+	FoundationPath     string  `json:"foundationPath,omitempty"`
+	WriteGist          bool    `json:"writeGist,omitempty"`
+	GistID             string  `json:"gistId,omitempty"`
+	GistFilename       string  `json:"gistFilename,omitempty"`
+	GistDescription    string  `json:"gistDescription,omitempty"`
+}
+
+type lfxEnrichmentRunOptions struct {
+	Token              string
+	ACL                string
+	RequestsPerSecond  float64
+	RequestDelay       time.Duration
+	LFXTimeout         time.Duration
+	SyncTimeout        time.Duration
+	MaxLookups         int
+	EnrichAll          bool
+	CheckFoundationCSV bool
+	AutoAddMaintainers bool
+	FoundationOwner    string
+	FoundationRepo     string
+	FoundationRef      string
+	FoundationPath     string
 }
 
 type lfxEnrichmentGistOptions struct {
@@ -4692,9 +4727,43 @@ func (s *server) handleLFXEnrichmentRunCreate(w http.ResponseWriter, r *http.Req
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	lfxTimeout := parseDuration(strings.TrimSpace(req.LFXTimeout), parseDuration(os.Getenv("LFX_TIMEOUT"), 30*time.Second))
 	maxLookups := req.MaxLookups
 	if maxLookups < 0 {
 		http.Error(w, "maxLookups must be zero or greater", http.StatusBadRequest)
+		return
+	}
+	enrichAll := true
+	if req.EnrichAll != nil {
+		enrichAll = *req.EnrichAll
+	}
+	defaultSyncTimeout := 10 * time.Minute
+	if enrichAll {
+		defaultSyncTimeout = time.Hour
+	}
+	syncTimeout := parseDuration(strings.TrimSpace(req.SyncTimeout), defaultSyncTimeout)
+	checkFoundationCSV := true
+	if req.CheckFoundationCSV != nil {
+		checkFoundationCSV = *req.CheckFoundationCSV
+	}
+	options := lfxEnrichmentRunOptions{
+		Token:              token,
+		ACL:                strings.TrimSpace(req.ACL),
+		RequestsPerSecond:  rps,
+		RequestDelay:       delay,
+		LFXTimeout:         lfxTimeout,
+		SyncTimeout:        syncTimeout,
+		MaxLookups:         maxLookups,
+		EnrichAll:          enrichAll,
+		CheckFoundationCSV: checkFoundationCSV,
+		AutoAddMaintainers: req.AutoAddMaintainers,
+		FoundationOwner:    strings.TrimSpace(firstNonEmpty(req.FoundationOwner, "cncf")),
+		FoundationRepo:     strings.TrimSpace(firstNonEmpty(req.FoundationRepo, "foundation")),
+		FoundationRef:      strings.TrimSpace(firstNonEmpty(req.FoundationRef, "main")),
+		FoundationPath:     strings.TrimSpace(firstNonEmpty(req.FoundationPath, "project-maintainers.csv")),
+	}
+	if options.CheckFoundationCSV && (options.FoundationOwner == "" || options.FoundationRepo == "" || options.FoundationRef == "" || options.FoundationPath == "") {
+		http.Error(w, "foundation owner, repo, ref, and path are required when foundation CSV checking is enabled", http.StatusBadRequest)
 		return
 	}
 	gistOptions := lfxEnrichmentGistOptions{
@@ -4711,7 +4780,7 @@ func (s *server) handleLFXEnrichmentRunCreate(w http.ResponseWriter, r *http.Req
 	if clientFactory == nil {
 		clientFactory = newLFXEnrichmentClient
 	}
-	client := clientFactory(token, strings.TrimSpace(req.ACL), delay)
+	client := clientFactory(token, options.ACL, delay, lfxTimeout)
 	if err := client.CheckToken(r.Context()); err != nil {
 		http.Error(w, lfx.PlatformAccessError(err).Error(), http.StatusBadGateway)
 		return
@@ -4719,19 +4788,28 @@ func (s *server) handleLFXEnrichmentRunCreate(w http.ResponseWriter, r *http.Req
 
 	now := time.Now().UTC()
 	run := s.ensureLFXRuns().Create(&lfxEnrichmentRun{
-		Status:            lfxRunRunning,
-		RequestedBy:       session.Login,
-		CreatedAt:         now,
-		StartedAt:         &now,
-		RequestDelay:      delay.String(),
-		RequestsPerSecond: rps,
-		MaxLookups:        maxLookups,
-		WriteGist:         gistOptions.Write,
-		GistID:            gistOptions.ID,
-		GistFilename:      lfxGistFilename(gistOptions.Filename),
+		Status:             lfxRunRunning,
+		RequestedBy:        session.Login,
+		CreatedAt:          now,
+		StartedAt:          &now,
+		RequestDelay:       delay.String(),
+		RequestsPerSecond:  rps,
+		LFXTimeout:         lfxTimeout.String(),
+		SyncTimeout:        syncTimeout.String(),
+		MaxLookups:         maxLookups,
+		EnrichAll:          options.EnrichAll,
+		CheckFoundationCSV: options.CheckFoundationCSV,
+		AutoAddMaintainers: options.AutoAddMaintainers,
+		FoundationOwner:    options.FoundationOwner,
+		FoundationRepo:     options.FoundationRepo,
+		FoundationRef:      options.FoundationRef,
+		FoundationPath:     options.FoundationPath,
+		WriteGist:          gistOptions.Write,
+		GistID:             gistOptions.ID,
+		GistFilename:       lfxGistFilename(gistOptions.Filename),
 	})
 	staffID := lookupStaffID(s.store, session.Login)
-	go s.runLFXEnrichment(run.ID, token, strings.TrimSpace(req.ACL), delay, maxLookups, session.Login, staffID, gistOptions) //nolint:gosec // enrichment must outlive the request context
+	go s.runLFXEnrichment(run.ID, options, session.Login, staffID, gistOptions) //nolint:gosec // enrichment must outlive the request context
 
 	w.Header().Set(headerContentType, contentTypeJSON)
 	w.WriteHeader(http.StatusAccepted)
@@ -4740,30 +4818,63 @@ func (s *server) handleLFXEnrichmentRunCreate(w http.ResponseWriter, r *http.Req
 	}
 }
 
-func (s *server) runLFXEnrichment(runID, token, acl string, delay time.Duration, maxLookups int, requestedBy string, staffID *uint, gistOptions lfxEnrichmentGistOptions) {
+func (s *server) runLFXEnrichment(runID string, options lfxEnrichmentRunOptions, requestedBy string, staffID *uint, gistOptions lfxEnrichmentGistOptions) {
 	clientFactory := s.newLFXClient
 	if clientFactory == nil {
 		clientFactory = newLFXEnrichmentClient
 	}
-	client := clientFactory(token, acl, delay)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Minute)
+	client := clientFactory(options.Token, options.ACL, options.RequestDelay, options.LFXTimeout)
+	timeout := options.SyncTimeout
+	if timeout <= 0 {
+		timeout = 90 * time.Minute
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
+	summary := dotproject.SyncSummary{}
+	foundationIndex, err := s.loadLFXFoundationMaintainers(ctx, options)
+	if err == nil {
+		var syncEnricher dotproject.MaintainerEnricher
+		if !options.EnrichAll {
+			syncEnricher = &lfx.Enricher{
+				Store:      s.store,
+				Client:     client,
+				EnrichAll:  false,
+				MaxLookups: options.MaxLookups,
+				Progress:   s.lfxProgressUpdater(runID),
+			}
+		}
+		syncer := &dotproject.Syncer{
+			Store: s.store,
+			Discoverer: &dotproject.Discoverer{
+				Client: &dotproject.GitHubRepositoryClient{Client: s.githubClientForToken(ctx, s.githubToken)},
+			},
+			AutoAdder: &dotproject.AutoMaintainerAdder{
+				Store:              s.store,
+				Foundation:         foundationIndex,
+				LFX:                lfxIdentityResolver{client: client},
+				Actor:              requestedBy,
+				CheckFoundationCSV: options.CheckFoundationCSV,
+				AutoAddMaintainers: options.AutoAddMaintainers,
+				Logger:             nil,
+			},
+			Enricher: syncEnricher,
+		}
+		summary, err = syncer.SyncAll(ctx)
+	}
+	if err != nil && summary.Enrichment.Errored == 0 {
+		summary.Enrichment.Errored++
+	}
 	enricher := &lfx.Enricher{
 		Store:      s.store,
 		Client:     client,
-		EnrichAll:  true,
-		MaxLookups: maxLookups,
-		Progress: func(progress lfx.EnrichmentProgress) {
-			s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
-				run.Total = progress.Total
-				run.Processed = progress.Processed
-				run.Current = progress.Current
-				applyLFXRunSummary(run, progress.Summary)
-			})
-		},
+		EnrichAll:  options.EnrichAll,
+		MaxLookups: options.MaxLookups,
+		Progress:   s.lfxProgressUpdater(runID),
 	}
-	summary, err := enricher.EnrichProject(ctx, model.Project{}, nil)
+	if err == nil && options.EnrichAll && summary.Enrichment.Attempted == 0 && summary.Enrichment.SkippedLimit == 0 {
+		summary.Enrichment, err = enricher.EnrichProject(ctx, model.Project{}, nil)
+	}
 	gistID := strings.TrimSpace(gistOptions.ID)
 	gistURL := ""
 	gistRows := 0
@@ -4781,7 +4892,7 @@ func (s *server) runLFXEnrichment(runID, token, acl string, delay time.Duration,
 	s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
 		run.FinishedAt = &finishedAt
 		run.Current = ""
-		applyLFXRunSummary(run, summary)
+		applyLFXRunSummary(run, summary.Enrichment)
 		run.GistID = gistID
 		run.GistURL = gistURL
 		run.GistRows = gistRows
@@ -4792,7 +4903,18 @@ func (s *server) runLFXEnrichment(runID, token, acl string, delay time.Duration,
 			run.Status = lfxRunSucceeded
 		}
 	})
-	s.logLFXEnrichmentRun(runID, requestedBy, staffID, summary, delay, maxLookups, gistOptions, gistID, gistURL, gistRows, err)
+	s.logLFXEnrichmentRun(runID, requestedBy, staffID, summary.Enrichment, options, gistOptions, gistID, gistURL, gistRows, err)
+}
+
+func (s *server) lfxProgressUpdater(runID string) func(lfx.EnrichmentProgress) {
+	return func(progress lfx.EnrichmentProgress) {
+		s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
+			run.Total = progress.Total
+			run.Processed = progress.Processed
+			run.Current = progress.Current
+			applyLFXRunSummary(run, progress.Summary)
+		})
+	}
 }
 
 func applyLFXRunSummary(run *lfxEnrichmentRun, summary dotproject.EnrichmentSummary) {
@@ -4803,6 +4925,125 @@ func applyLFXRunSummary(run *lfxEnrichmentRun, summary dotproject.EnrichmentSumm
 	run.Errored = summary.Errored
 	run.SkippedRecent = summary.SkippedRecent
 	run.SkippedLimit = summary.SkippedLimit
+}
+
+func (s *server) loadLFXFoundationMaintainers(ctx context.Context, options lfxEnrichmentRunOptions) (*dotproject.FoundationMaintainerIndex, error) {
+	if !options.CheckFoundationCSV {
+		return nil, nil
+	}
+	owner := strings.TrimSpace(options.FoundationOwner)
+	repo := strings.TrimSpace(options.FoundationRepo)
+	ref := strings.TrimSpace(options.FoundationRef)
+	path := strings.TrimSpace(options.FoundationPath)
+	if owner == "" || repo == "" || ref == "" || path == "" {
+		return nil, fmt.Errorf("foundation owner, repo, ref, and path are required")
+	}
+	client := s.githubClientForToken(ctx, s.githubToken)
+	branch, _, err := client.Repositories.GetBranch(ctx, owner, repo, ref, false)
+	if err != nil {
+		return nil, fmt.Errorf("get foundation csv branch %s/%s@%s: %w", owner, repo, ref, err)
+	}
+	commitSHA := branch.GetCommit().GetSHA()
+	if commitSHA == "" {
+		return nil, fmt.Errorf("foundation csv branch %s/%s@%s did not return a commit SHA", owner, repo, ref)
+	}
+	file, _, _, err := client.Repositories.GetContents(ctx, owner, repo, path, &github.RepositoryContentGetOptions{Ref: commitSHA})
+	if err != nil {
+		return nil, fmt.Errorf("get foundation csv content %s/%s/%s@%s: %w", owner, repo, path, commitSHA, err)
+	}
+	if file == nil {
+		return nil, fmt.Errorf("foundation csv path %s/%s/%s@%s is not a file", owner, repo, path, commitSHA)
+	}
+	content, err := file.GetContent()
+	if err != nil {
+		return nil, fmt.Errorf("decode foundation csv content: %w", err)
+	}
+	index, err := dotproject.ParseFoundationMaintainersCSV(strings.NewReader(content))
+	if err != nil {
+		return nil, err
+	}
+	index.CommitSHA = commitSHA
+	index.SourceURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s?plain=1", owner, repo, commitSHA, path)
+	return index, nil
+}
+
+type lfxIdentityResolver struct {
+	client lfx.UserSearcher
+}
+
+func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, githubHandle, email string) (dotproject.LFXIdentityResult, error) {
+	githubHandle = strings.TrimSpace(githubHandle)
+	email = strings.TrimSpace(email)
+	if r.client == nil || (githubHandle == "" && email == "") {
+		return dotproject.LFXIdentityResult{}, nil
+	}
+	var users []lfx.User
+	var err error
+	if githubHandle != "" {
+		users, err = r.client.SearchUsers(ctx, lfx.UserSearch{GitHubID: githubHandle, PageSize: 10})
+		if err != nil {
+			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
+		}
+	}
+	if len(users) == 0 && email != "" {
+		users, err = r.client.SearchUsers(ctx, lfx.UserSearch{Email: email, PageSize: 10})
+		if err != nil {
+			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
+		}
+	}
+	if len(users) != 1 {
+		return dotproject.LFXIdentityResult{Confidence: "unmatched", Reason: "LFX user search did not return a single user"}, nil
+	}
+	user := users[0]
+	identities, err := r.client.GetUserIdentities(ctx, user.ID)
+	if err != nil {
+		return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
+	}
+	result := dotproject.LFXIdentityResult{
+		UserID:     strings.TrimSpace(user.ID),
+		LFID:       strings.TrimSpace(user.Username),
+		Name:       firstNonEmpty(strings.TrimSpace(user.Name), strings.TrimSpace(user.FirstName+" "+user.LastName)),
+		Email:      strings.TrimSpace(user.Email),
+		GitHubUser: githubHandle,
+		Confidence: "strong",
+		Reason:     "single LFX user match",
+	}
+	for _, identity := range identities {
+		if strings.EqualFold(strings.TrimSpace(identity.Source), "github") && githubHandle != "" && strings.EqualFold(identity.Username, githubHandle) {
+			result.Confidence = "exact"
+			result.Reason = "LFX github identity matched maintainer handle"
+			if result.Email == "" {
+				result.Email = strings.TrimSpace(identity.Email)
+			}
+			break
+		}
+	}
+	result.Company = lfxAccountCompanyName(user.Account)
+	raw := struct {
+		User       lfx.User       `json:"user"`
+		Identities []lfx.Identity `json:"identities,omitempty"`
+	}{User: user, Identities: identities}
+	body, err := json.Marshal(raw)
+	if err != nil {
+		return result, err
+	}
+	result.RawPayload = string(body)
+	return result, nil
+}
+
+func lfxAccountCompanyName(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var payload struct {
+		Name        string `json:"name"`
+		DisplayName string `json:"displayName"`
+		CompanyName string `json:"companyName"`
+	}
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return ""
+	}
+	return firstNonEmpty(payload.CompanyName, payload.DisplayName, payload.Name)
 }
 
 func (s *server) publishLFXDotProjectGist(ctx context.Context, options lfxEnrichmentGistOptions) (*github.Gist, int, error) {
@@ -4940,23 +5181,33 @@ func lfxGistFilename(value string) string {
 	return value
 }
 
-func (s *server) logLFXEnrichmentRun(runID, requestedBy string, staffID *uint, summary dotproject.EnrichmentSummary, delay time.Duration, maxLookups int, gistOptions lfxEnrichmentGistOptions, gistID, gistURL string, gistRows int, runErr error) {
+func (s *server) logLFXEnrichmentRun(runID, requestedBy string, staffID *uint, summary dotproject.EnrichmentSummary, options lfxEnrichmentRunOptions, gistOptions lfxEnrichmentGistOptions, gistID, gistURL string, gistRows int, runErr error) {
 	if s == nil || s.store == nil || s.store.DB() == nil {
 		return
 	}
 	metadata := map[string]any{
-		"run_id":         runID,
-		"requested_by":   requestedBy,
-		"request_delay":  delay.String(),
-		"max_lookups":    maxLookups,
-		"attempted":      summary.Attempted,
-		"matched":        summary.Matched,
-		"ambiguous":      summary.Ambiguous,
-		"unmatched":      summary.Unmatched,
-		"errored":        summary.Errored,
-		"skipped_recent": summary.SkippedRecent,
-		"skipped_limit":  summary.SkippedLimit,
-		"write_gist":     gistOptions.Write,
+		"run_id":               runID,
+		"requested_by":         requestedBy,
+		"request_delay":        options.RequestDelay.String(),
+		"requests_per_second":  options.RequestsPerSecond,
+		"lfx_timeout":          options.LFXTimeout.String(),
+		"sync_timeout":         options.SyncTimeout.String(),
+		"max_lookups":          options.MaxLookups,
+		"enrich_all":           options.EnrichAll,
+		"check_foundation_csv": options.CheckFoundationCSV,
+		"auto_add_maintainers": options.AutoAddMaintainers,
+		"foundation_owner":     options.FoundationOwner,
+		"foundation_repo":      options.FoundationRepo,
+		"foundation_ref":       options.FoundationRef,
+		"foundation_path":      options.FoundationPath,
+		"attempted":            summary.Attempted,
+		"matched":              summary.Matched,
+		"ambiguous":            summary.Ambiguous,
+		"unmatched":            summary.Unmatched,
+		"errored":              summary.Errored,
+		"skipped_recent":       summary.SkippedRecent,
+		"skipped_limit":        summary.SkippedLimit,
+		"write_gist":           gistOptions.Write,
 	}
 	if gistOptions.Write {
 		metadata["gist_id"] = strings.TrimSpace(gistID)
@@ -5054,11 +5305,14 @@ func lfxRequestDelay(requestsPerSecond float64) (float64, time.Duration, error) 
 	return requestsPerSecond, delay, nil
 }
 
-func newLFXEnrichmentClient(token, acl string, delay time.Duration) lfxEnrichmentClient {
+func newLFXEnrichmentClient(token, acl string, delay, timeout time.Duration) lfxEnrichmentClient {
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
 	return &lfx.Client{
 		BaseURL: strings.TrimSpace(envOr("LFX_BASE_URL", lfx.DefaultBaseURL)),
 		HTTPClient: &http.Client{
-			Timeout: parseDuration(os.Getenv("LFX_TIMEOUT"), 30*time.Second),
+			Timeout: timeout,
 		},
 		MinDelay: delay,
 		Token:    strings.TrimSpace(token),
