@@ -203,9 +203,6 @@ func (a *AutoMaintainerAdder) ProcessProject(ctx context.Context, project model.
 			if !a.AutoAddMaintainers {
 				summary.WouldLinkMaintainers++
 				summary.WouldLink = append(summary.WouldLink, entry)
-				if err := a.logAutoAdd(project, &existing, record, result, nil, now, "would_link"); err != nil {
-					summary.AuditFailures++
-				}
 				continue
 			}
 			maintainer, _, didLink, err := a.Store.UpsertMaintainerWithIdentity(project.ID, existing.Name, existing.Email, existing.GitHubAccount, companyName(existing.Company.Name, record.Company), existing.LFXUserID)
@@ -242,9 +239,6 @@ func (a *AutoMaintainerAdder) ProcessProject(ctx context.Context, project model.
 		if !a.AutoAddMaintainers {
 			summary.WouldCreateMaintainers++
 			summary.WouldCreate = append(summary.WouldCreate, entry)
-			if err := a.logAutoAdd(project, nil, record, result, &identity, now, "would_create"); err != nil {
-				summary.AuditFailures++
-			}
 			continue
 		}
 

@@ -4813,7 +4813,7 @@ func (s *server) publishLFXDotProjectGist(ctx context.Context, options lfxEnrich
 	if err != nil {
 		return nil, 0, err
 	}
-	content, err := dotproject.GistReportCSV(rows)
+	content, err := dotproject.GistReportMarkdown(rows)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -4935,7 +4935,7 @@ func (s *server) buildDotProjectGistRows() ([]dotproject.GistReportRow, error) {
 func lfxGistFilename(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return "dot-project-repos.csv"
+		return "dot-project-repos.md"
 	}
 	return value
 }

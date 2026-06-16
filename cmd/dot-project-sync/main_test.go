@@ -108,10 +108,10 @@ func TestBuildAuditEvent(t *testing.T) {
 		FoundationRepo:     "foundation",
 		FoundationRef:      "main",
 		FoundationPath:     "project-maintainers.csv",
-		GistFilename:       "dot-project-repos.csv",
+		GistFilename:       "dot-project-repos.md",
 	})
 
-	assert.Equal(t, "DOT_PROJECT_SYNC_RUN", event.Action)
+	assert.Equal(t, "DOT_PROJECT_SYNC_RUN_FINISHED", event.Action)
 	assert.Contains(t, event.Message, "scanned=20")
 	assert.Contains(t, event.Message, "rate_limit_errors=1")
 
@@ -138,13 +138,41 @@ func TestBuildAuditEvent(t *testing.T) {
 	assert.Equal(t, false, metadata["auto_add_maintainers"])
 	assert.Equal(t, "staff-tester", metadata["dot_project_sync_actor"])
 	assert.Equal(t, "cncf", metadata["foundation_csv_owner"])
-	wouldCreate, ok := metadata["auto_add_would_create_handles"].([]any)
-	require.True(t, ok)
-	assert.Len(t, wouldCreate, 1)
+	assert.NotContains(t, metadata, "auto_add_would_create_handles")
+	assert.NotContains(t, metadata, "auto_add_would_link_handles")
 	errorsValue, ok := metadata["errors"].([]any)
 	require.True(t, ok)
 	assert.Len(t, errorsValue, 2)
 	warningsValue, ok := metadata["warnings"].([]any)
 	require.True(t, ok)
 	assert.Len(t, warningsValue, 1)
+}
+
+func TestBuildStartAuditEvent(t *testing.T) {
+	t.Parallel()
+
+	event := buildStartAuditEvent(syncConfig{
+		CheckFoundationCSV: true,
+		AutoAddMaintainers: true,
+		Actor:              "staff-tester",
+		FoundationOwner:    "cncf",
+		FoundationRepo:     "foundation",
+		FoundationRef:      "main",
+		FoundationPath:     "project-maintainers.csv",
+		WriteGist:          true,
+		GistID:             "abc123",
+		GistFilename:       "dot-project-repos.md",
+	})
+
+	assert.Equal(t, "DOT_PROJECT_SYNC_RUN_STARTED", event.Action)
+	assert.Contains(t, event.Message, "actor=staff-tester")
+	assert.Contains(t, event.Message, "auto_add_maintainers=true")
+
+	var metadata map[string]any
+	require.NoError(t, json.Unmarshal([]byte(event.Metadata), &metadata))
+	assert.Equal(t, true, metadata["check_foundation_csv"])
+	assert.Equal(t, true, metadata["auto_add_maintainers"])
+	assert.Equal(t, "staff-tester", metadata["dot_project_sync_actor"])
+	assert.Equal(t, true, metadata["write_gist"])
+	assert.Equal(t, "abc123", metadata["gist_id"])
 }
