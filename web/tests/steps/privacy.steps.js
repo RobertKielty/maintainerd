@@ -121,7 +121,7 @@ When("I edit my maintainer profile with field {string} set to {string}", async f
   }
 
   if (field === "email") {
-    const emailInput = this.page.getByRole("textbox", { name: "Email" });
+    const emailInput = this.page.getByRole("textbox", { name: "Email", exact: true });
     await expect(emailInput).toBeEnabled({ timeout: 15000 });
     await emailInput.fill(value);
     return;

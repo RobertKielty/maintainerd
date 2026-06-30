@@ -33,15 +33,20 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APPLY=false
 HANDLE=""
 ENV="local"
+WEB_BASE=""
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/merge-safe-duplicate-maintainers.sh [--env local|prod] [--apply] [--handle <normalized_github>]
+Usage: scripts/merge-safe-duplicate-maintainers.sh [--env local|prod] [--web-base <url>] [--apply] [--handle <normalized_github>]
 
   --env <target>       Which database to target (default: local).
                          local -> scripts/psql-local-maintainerd.sh (podman compose DB)
                          prod  -> scripts/psql-maintainerd.sh        (production DB)
                        Accepts --env=<target> or --env <target>.
+  --web-base <url>     Base URL for maintainerd web UI links in the review report.
+                       Defaults to http://localhost:3000 for --env local and
+                       https://maintainer-d.cncf.io for --env prod.
+                       Accepts --web-base=<url> or --web-base <url>.
   --apply              Commit the merges. Without it, the script runs as a dry-run
                        and rolls back (prints exactly what it would change).
   --handle <handle>    Restrict to a single normalized GitHub handle (lower-cased),
@@ -52,6 +57,7 @@ Examples:
   scripts/merge-safe-duplicate-maintainers.sh                              # dry-run, local, all SAFE groups
   scripts/merge-safe-duplicate-maintainers.sh --handle robertkielty        # dry-run, local, one group
   scripts/merge-safe-duplicate-maintainers.sh --env prod --handle robertkielty --apply
+  scripts/merge-safe-duplicate-maintainers.sh --env prod --web-base https://maintainer-d.cncf.io
 USAGE
 }
 
@@ -69,6 +75,19 @@ while [[ $# -gt 0 ]]; do
       fi
       HANDLE="$2"
       shift 2
+      ;;
+    --web-base)
+      if [[ $# -lt 2 ]]; then
+        echo "--web-base requires a value" >&2
+        usage >&2
+        exit 1
+      fi
+      WEB_BASE="$2"
+      shift 2
+      ;;
+    --web-base=*)
+      WEB_BASE="${1#--web-base=}"
+      shift
       ;;
     --env)
       if [[ $# -lt 2 ]]; then
@@ -98,9 +117,11 @@ done
 case "$ENV" in
   local)
     PSQL="${SCRIPT_DIR}/psql-local-maintainerd.sh"
+    [[ -z "$WEB_BASE" ]] && WEB_BASE="http://localhost:3000"
     ;;
   prod|production)
     PSQL="${SCRIPT_DIR}/psql-maintainerd.sh"
+    [[ -z "$WEB_BASE" ]] && WEB_BASE="https://maintainer-d.cncf.io"
     ;;
   *)
     echo "Invalid --env value: ${ENV} (expected local or prod)" >&2
@@ -115,9 +136,11 @@ if [[ ! -x "$PSQL" ]]; then
 fi
 
 echo "Target environment: ${ENV} (${PSQL})" >&2
+echo "Web base URL: ${WEB_BASE}" >&2
 
 SQL_FILE="$(mktemp -t merge-safe-duplicate-maintainers.XXXXXX.sql)"
 trap 'rm -f "$SQL_FILE"' EXIT
+echo "SQL script: ${SQL_FILE}" >&2
 
 cat > "$SQL_FILE" <<'SQL'
 \set ON_ERROR_STOP on
@@ -131,11 +154,16 @@ cat > "$SQL_FILE" <<'SQL'
 \else
   \set handle ''
 \endif
+\if :{?web_base}
+\else
+  \set web_base 'http://localhost:3000'
+\endif
 
 \echo '============================================================'
 \echo 'SAFE_MERGE duplicate maintainers'
 \echo 'apply mode =' :apply
 \echo 'handle filter =' :'handle'
+\echo 'web base URL =' :'web_base'
 \echo '============================================================'
 
 begin;
@@ -148,6 +176,7 @@ with base as (
     m.id,
     m.name,
     m.email,
+    m.git_hub_email,
     m.maintainer_status,
     m.created_at,
     lower(btrim(m.git_hub_account)) as norm_gh,
@@ -351,11 +380,6 @@ begin
       coalesce(array_length(v_after, 1), 0),
       v_obs, v_audit, v_rtu, v_inv, v_del
     );
-
-    raise notice 'handle % -> canonical % (%): merged % duplicate(s), % project(s) preserved',
-      g.norm_gh, g.canonical_id, coalesce(v_status, ''),
-      coalesce(array_length(v_dups, 1), 0),
-      coalesce(array_length(v_after, 1), 0);
   end loop;
 end $$;
 
@@ -375,16 +399,180 @@ select
 from merge_audit;
 
 \echo ''
-\echo '------------ GROUPS NOT MERGED (left for human review) ---------'
-select
-  norm_gh,
-  rec_count,
-  distinct_lfids,
-  classification
-from dup_group_stats
-where classification <> 'SAFE'
-  and (:'handle' = '' or norm_gh = :'handle')
-order by classification, norm_gh;
+\echo '======== GROUPS NOT MERGED — human review required ==============='
+
+-- Stash psql variables into session GUCs so the do-block can read them.
+-- (psql :variables are not substituted inside $$ ... $$ blocks.)
+\o /dev/null
+select set_config('merge.handle_filter', :'handle',   true),
+       set_config('merge.web_base',      :'web_base', true);
+\o
+
+-- Collect all review output here so it prints clean (no psql:file:line: NOTICE: prefix).
+create temporary table review_report (
+  seq  bigserial primary key,
+  line text not null default ''
+) on commit drop;
+
+do $$
+declare
+  g    record;
+  r    record;
+  obs  record;
+  proj record;
+  v_handle   text := current_setting('merge.handle_filter', true);
+  v_web      text := current_setting('merge.web_base',      true);
+  v_proj_cnt int;
+begin
+  for g in
+    select norm_gh, rec_count, distinct_lfids, classification
+    from dup_group_stats
+    where classification <> 'SAFE'
+      and (v_handle = '' or norm_gh = v_handle)
+    order by classification, norm_gh
+  loop
+    insert into review_report(line) values
+      (''),
+      ('----------------------------------------------------------------'),
+      (format('HANDLE  : %s', g.norm_gh)),
+      (format('REASON  : %s', g.classification)),
+      (format('RECORDS : %s', g.rec_count));
+
+    -- Per-record detail
+    for r in
+      select
+        db.id,
+        db.name,
+        db.email,
+        db.git_hub_email,
+        db.lfx,
+        db.maintainer_status,
+        db.created_at::date as created
+      from dup_base db
+      where db.norm_gh = g.norm_gh
+      order by db.created_at asc, db.id asc
+    loop
+      -- Count and list projects for this specific maintainer record
+      select count(distinct mp.project_id)
+        into v_proj_cnt
+        from maintainer_projects mp
+       where mp.maintainer_id = r.id;
+
+      insert into review_report(line) values
+        (format('  -- record id=%s  created=%s', r.id, r.created)),
+        (format('     name         : %s', coalesce(r.name,          '<null>'))),
+        (format('     email        : %s', coalesce(r.email,         '<null>'))),
+        (format('     github email : %s', coalesce(r.git_hub_email, '<null>'))),
+        (format('     lfx          : %s', coalesce(r.lfx,           '<null>'))),
+        (format('     status       : %s', coalesce(r.maintainer_status, '<blank>'))),
+        (format('     web          : %s/maintainers/%s', v_web, r.id)),
+        (format('     projects (%s):', v_proj_cnt));
+
+      -- Per-project references
+      for proj in
+        select
+          p.id,
+          p.name                                          as proj_name,
+          nullif(btrim(p.maintainer_ref),       '')      as legacy_ref,
+          nullif(btrim(p.dot_project_yaml_ref), '')      as yaml_ref,
+          coalesce(st.maintainers_file_exists, false)    as yaml_exists
+        from maintainer_projects mp
+        join projects p             on p.id = mp.project_id and p.deleted_at is null
+        left join dot_project_sync_states st on st.project_id = p.id
+        where mp.maintainer_id = r.id
+        order by p.name, p.id
+      loop
+        insert into review_report(line) values
+          (format('       - %s', proj.proj_name)),
+          (format('           route    : %s/projects/%s', v_web, proj.id)),
+          (format('           legacy   : %s', coalesce(proj.legacy_ref, '<none>'))),
+          (case
+             when proj.yaml_exists and proj.yaml_ref is not null
+               then format('           .project : %s', proj.yaml_ref)
+             when proj.yaml_exists
+               then          '           .project : maintainers.yaml exists (URL not stored)'
+             else             '           .project : maintainers.yaml not found'
+           end);
+      end loop;
+    end loop;
+
+    -- Conflicting LFX observation detail
+    if g.distinct_lfids > 1 then
+      insert into review_report(line) values ('  -- conflicting identity observations:');
+      for obs in
+        select
+          o.id              as obs_id,
+          o.maintainer_id,
+          o.lf_id,
+          o.name            as obs_name,
+          o.source,
+          o.match_status,
+          o.confidence,
+          o.observed_at::date as observed
+        from maintainer_identity_observations o
+        join dup_base db on db.id = o.maintainer_id
+        where db.norm_gh = g.norm_gh
+          and coalesce(btrim(o.lf_id), '') <> ''
+          and o.deleted_at is null
+        order by o.maintainer_id, o.observed_at desc
+      loop
+        insert into review_report(line) values (format(
+          '     obs id=%s  maintainer=%s  lf_id=%s  name=%s  source=%s  status=%s  confidence=%s  observed=%s',
+          obs.obs_id, obs.maintainer_id, obs.lf_id, coalesce(obs.obs_name, ''),
+          coalesce(obs.source, ''), coalesce(obs.match_status, ''),
+          coalesce(obs.confidence, ''), obs.observed));
+      end loop;
+    end if;
+
+    -- Guidance keyed to classification
+    insert into review_report(line) values ('  GUIDANCE:');
+    case
+      when g.classification = 'REVIEW: name mismatch' then
+        insert into review_report(line) values
+          ('    Names do not token-sort to the same key — likely two different people'),
+          ('    sharing this handle, or a name data entry error on one record.'),
+          ('    Check each record via the web links above.'),
+          ('    If same person: correct the name on the odd record, then re-run.'),
+          ('    If different people: one record needs a corrected github_account.');
+      when g.classification = 'REVIEW: conflicting lfx_user_id' then
+        insert into review_report(line) values
+          ('    Two records carry different non-empty lfx_user_id values.'),
+          ('    Verify which LFX ID is correct for this GitHub handle via LFX.'),
+          ('    Blank the wrong lfx_user_id, then re-run.');
+      when g.classification = 'REVIEW: conflicting observation LFID' then
+        insert into review_report(line) values
+          ('    Identity observations reference more than one distinct LF ID (see above).'),
+          ('    The observations may have been attached to the wrong maintainer record,'),
+          ('    or the handle is shared by two real people.'),
+          ('    Investigate via LFX, then either re-key the bad observation or'),
+          ('    correct the github_account on the mis-matched record.');
+      when g.classification = 'REVIEW: empty or missing name' then
+        insert into review_report(line) values
+          ('    At least one record has a blank/null name field.'),
+          ('    Add a name to the incomplete record and re-run.');
+      when g.classification like 'CORRUPT%' then
+        insert into review_report(line) values
+          ('    An identity field holds non-identity freeform text (not a sentinel).'),
+          ('    Identify the garbage value above and either replace it with the correct'),
+          ('    value or a recognised sentinel (EMAIL_MISSING / GITHUB_MISSING /'),
+          ('    GITHUB_EMAIL_MISSING), then re-run.');
+      else
+        insert into review_report(line) values
+          ('    Inspect the records above and resolve the classification reason.');
+    end case;
+
+  end loop;
+end $$;
+
+\set QUIET on
+\pset format unaligned
+\pset tuples_only on
+\set QUIET off
+select line from review_report order by seq;
+\set QUIET on
+\pset tuples_only off
+\pset format aligned
+\set QUIET off
 
 \if :apply
   commit;
@@ -397,4 +585,4 @@ order by classification, norm_gh;
 \endif
 SQL
 
-exec "$PSQL" -v "apply=${APPLY}" -v "handle=${HANDLE}" -f "$SQL_FILE"
+exec "$PSQL" -v "apply=${APPLY}" -v "handle=${HANDLE}" -v "web_base=${WEB_BASE}" -f "$SQL_FILE"

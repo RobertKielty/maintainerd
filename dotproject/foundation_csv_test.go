@@ -38,7 +38,7 @@ Graduated,Prometheus,Carol Example,Grafana,carol,
 	assert.False(t, ok, "project matching is exact after trimming")
 }
 
-func TestParseFoundationMaintainersCSV_LineNumberUsesGitHubField(t *testing.T) {
+func TestParseFoundationMaintainersCSV_LineNumberUsesRowStart(t *testing.T) {
 	t.Parallel()
 
 	index, err := ParseFoundationMaintainersCSV(strings.NewReader(",Project,Maintainer Name,Company,Github Name\nGraduated,Kubernetes,\"Alice\nExample\",Acme,AliceExample\n"))
@@ -46,5 +46,5 @@ func TestParseFoundationMaintainersCSV_LineNumberUsesGitHubField(t *testing.T) {
 
 	alice, ok := index.Lookup("Kubernetes", "aliceexample")
 	require.True(t, ok)
-	assert.Equal(t, 3, alice.LineNumber)
+	assert.Equal(t, 2, alice.LineNumber)
 }

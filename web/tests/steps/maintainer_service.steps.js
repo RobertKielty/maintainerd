@@ -191,7 +191,7 @@ When("I update the maintainer email address", async function () {
   const editButton = editCard.getByRole("button", { name: "Edit" });
   await expect(editButton).toBeVisible({ timeout: 15000 });
   await editButton.click();
-  const emailInput = this.page.getByRole("textbox", { name: "Email" });
+  const emailInput = this.page.getByRole("textbox", { name: "Email", exact: true });
   await expect(emailInput).toBeEnabled({ timeout: 15000 });
   await emailInput.fill(nextEmail);
   this.updatedMaintainerEmail = nextEmail;

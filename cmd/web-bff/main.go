@@ -2336,12 +2336,14 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 			status = before.MaintainerStatus
 			req.Name = before.Name
 			req.GitHub = before.GitHubAccount
+			req.GitHubEmail = before.GitHubEmail
+			req.Location = before.Location
 		}
 		if !status.IsValid() {
 			http.Error(w, "invalid status", http.StatusBadRequest)
 			return
 		}
-		updated, err := s.store.UpdateMaintainerDetails(id, req.Name, req.Email, req.GitHub, status, req.CompanyID)
+		updated, err := s.store.UpdateMaintainerDetails(id, req.Name, req.Email, req.GitHub, req.GitHubEmail, req.Location, status, req.CompanyID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				http.Error(w, "maintainer not found", http.StatusNotFound)
@@ -2420,6 +2422,28 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 			}
 			changes["company"] = map[string]string{"from": beforeCompanyName, "to": afterCompanyName}
 		}
+		beforeGitHubEmail := normalizeValue(before.GitHubEmail, "GITHUB_MISSING")
+		afterGitHubEmail := normalizeValue(updated.GitHubEmail, "GITHUB_MISSING")
+		if beforeGitHubEmail != afterGitHubEmail {
+			changes["githubEmail"] = map[string]string{"from": beforeGitHubEmail, "to": afterGitHubEmail}
+		}
+		beforeLocation := ""
+		if before.Location != nil {
+			beforeLocation = strings.TrimSpace(*before.Location)
+		}
+		if beforeLocation == "" {
+			beforeLocation = "LOCATION_MISSING"
+		}
+		afterLocation := ""
+		if updated.Location != nil {
+			afterLocation = strings.TrimSpace(*updated.Location)
+		}
+		if afterLocation == "" {
+			afterLocation = "LOCATION_MISSING"
+		}
+		if beforeLocation != afterLocation {
+			changes["location"] = map[string]string{"from": beforeLocation, "to": afterLocation}
+		}
 
 		metadata := map[string]any{
 			"actor": map[string]string{
@@ -2452,35 +2476,7 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		projects := make([]maintainerProjectResponse, 0, len(updated.Projects))
-		for _, project := range updated.Projects {
-			projects = append(projects, maintainerProjectResponse{
-				ID:   project.ID,
-				Name: project.Name,
-			})
-		}
-
-		response := maintainerDetailResponse{
-			ID:          updated.ID,
-			Name:        updated.Name,
-			Email:       normalizeValue(updated.Email, "EMAIL_MISSING"),
-			GitHub:      normalizeValue(updated.GitHubAccount, "GITHUB_MISSING"),
-			GitHubEmail: normalizeValue(updated.GitHubEmail, "GITHUB_MISSING"),
-			Status:      string(updated.MaintainerStatus),
-			Projects:    projects,
-			CreatedAt:   updated.CreatedAt,
-			UpdatedAt:   updated.UpdatedAt,
-		}
-		if updated.DeletedAt.Valid {
-			deleted := updated.DeletedAt.Time
-			response.DeletedAt = &deleted
-		}
-		if updated.CompanyID != nil {
-			response.CompanyID = updated.CompanyID
-		}
-		if updated.Company.Name != "" {
-			response.Company = updated.Company.Name
-		}
+		response := s.buildMaintainerDetailResponse(*updated, false)
 		if staffName != "" {
 			response.UpdatedBy = staffName
 		}
@@ -3434,11 +3430,13 @@ func (s *server) handleAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 type maintainerUpdateRequest struct {
-	Name      string `json:"name"`
-	Email     string `json:"email"`
-	GitHub    string `json:"github"`
-	Status    string `json:"status"`
-	CompanyID *uint  `json:"companyId"`
+	Name        string  `json:"name"`
+	Email       string  `json:"email"`
+	GitHub      string  `json:"github"`
+	GitHubEmail string  `json:"githubEmail"`
+	Location    *string `json:"location"`
+	Status      string  `json:"status"`
+	CompanyID   *uint   `json:"companyId"`
 }
 
 type maintainerStatusUpdateRequest struct {

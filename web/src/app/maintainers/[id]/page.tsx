@@ -248,6 +248,8 @@ export default function MaintainerPage() {
       name: maintainer.name || "",
       email: maintainer.email || "",
       github: maintainer.github || "",
+      githubEmail: maintainer.githubEmail || "",
+      location: maintainer.location || "",
       status: maintainer.status || "Active",
       companyId: maintainer.companyId ?? null,
     });
@@ -259,6 +261,8 @@ export default function MaintainerPage() {
     (maintainer.name !== editDraft.name ||
       maintainer.email !== editDraft.email ||
       maintainer.github !== editDraft.github ||
+      (maintainer.githubEmail || "") !== editDraft.githubEmail ||
+      (maintainer.location || "") !== editDraft.location ||
       maintainer.status !== editDraft.status ||
       (maintainer.companyId ?? null) !== editDraft.companyId);
 
@@ -285,6 +289,8 @@ export default function MaintainerPage() {
           name: editDraft.name,
           email: editDraft.email,
           github: editDraft.github,
+          githubEmail: editDraft.githubEmail,
+          location: editDraft.location || null,
           status: editDraft.status,
           companyId: editDraft.companyId,
         }),
@@ -395,6 +401,8 @@ export default function MaintainerPage() {
               saveError={saveError}
               disableName={disableNonStaffFields}
               disableGitHub={disableNonStaffFields}
+              disableGitHubEmail={disableNonStaffFields}
+              disableLocation={disableNonStaffFields}
               disableStatus={disableNonStaffFields}
               disableCompanyAdd={companySaveStatus === "saving"}
               onEdit={() => {
@@ -408,6 +416,8 @@ export default function MaintainerPage() {
                   name: maintainer.name || "",
                   email: maintainer.email || "",
                   github: maintainer.github || "",
+                  githubEmail: maintainer.githubEmail || "",
+                  location: maintainer.location || "",
                   status: maintainer.status || "Active",
                   companyId: maintainer.companyId ?? null,
                 });

@@ -7,6 +7,8 @@ export type MaintainerEditDraft = {
   name: string;
   email: string;
   github: string;
+  githubEmail: string;
+  location: string;
   status: string;
   companyId: number | null;
 };
@@ -25,6 +27,8 @@ type MaintainerEditCardProps = {
   saveError: string | null;
   disableName?: boolean;
   disableGitHub?: boolean;
+  disableGitHubEmail?: boolean;
+  disableLocation?: boolean;
   disableStatus?: boolean;
   disableCompanyAdd?: boolean;
   onEdit: () => void;
@@ -43,6 +47,8 @@ export default function MaintainerEditCard({
   saveError,
   disableName = false,
   disableGitHub = false,
+  disableGitHubEmail = false,
+  disableLocation = false,
   disableStatus = false,
   disableCompanyAdd = false,
   onEdit,
@@ -107,6 +113,34 @@ export default function MaintainerEditCard({
                 onChange({ ...draft, github: event.target.value })
               }
               disabled={!isEditing || disableGitHub}
+            />
+          </label>
+          <label
+            className={styles.field}
+            title={!isEditing ? "Click Edit to update this record." : undefined}
+          >
+            <span>GitHub Email</span>
+            <input
+              type="email"
+              value={draft.githubEmail}
+              onChange={(event) =>
+                onChange({ ...draft, githubEmail: event.target.value })
+              }
+              disabled={!isEditing || disableGitHubEmail}
+            />
+          </label>
+          <label
+            className={styles.field}
+            title={!isEditing ? "Click Edit to update this record." : undefined}
+          >
+            <span>Location</span>
+            <input
+              type="text"
+              value={draft.location}
+              onChange={(event) =>
+                onChange({ ...draft, location: event.target.value })
+              }
+              disabled={!isEditing || disableLocation}
             />
           </label>
           <label

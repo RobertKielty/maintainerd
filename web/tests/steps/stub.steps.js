@@ -43,10 +43,6 @@ When("I view the staff dashboard", pending);
 When("I attempt to view project {string}", pending);
 When("I attempt to edit project {string}", pending);
 When(
-  "I edit the {string} record {string} with field {string} set to {string}",
-  pending
-);
-When(
   "I edit maintainer {string} for project {string} with field {string} set to {string}",
   pending
 );
@@ -64,14 +60,8 @@ Then("I am denied access to project {string}", pending);
 Then("the change is rejected", pending);
 Then("the project {string} record is not updated in the database", pending);
 Then("no audit log entry is recorded for project {string}", pending);
-Then("the {string} record {string} is updated in the database", pending);
 Then("my maintainer profile is updated in the database", pending);
 Then("the maintainer record is updated in the database", pending);
-Then("an audit log entry is recorded for {string} {string}", pending);
-Then("an audit log entry is recorded for maintainer {string}", pending);
-Then("an audit log entry is recorded with actor {string}", pending);
-Then("the audit log entry action is {string}", pending);
-Then("the audit log entry target is {string} {string}", pending);
 Then("I see search results that include {string}", pending);
 Then("I can open the {string} result {string}", pending);
 Then("I see a list of recently visited projects", pending);

@@ -36,7 +36,7 @@ type Store interface {
 	UpdateMaintainerStatus(maintainerID uint, status model.MaintainerStatus) error
 	UpdateMaintainersStatus(ids []uint, status model.MaintainerStatus) error
 	UpdateMaintainerGitHubEmail(maintainerID uint, githubEmail string) error
-	UpdateMaintainerDetails(maintainerID uint, name, email, github string, status model.MaintainerStatus, companyID *uint) (*model.Maintainer, error)
+	UpdateMaintainerDetails(maintainerID uint, name, email, github, githubEmail string, location *string, status model.MaintainerStatus, companyID *uint) (*model.Maintainer, error)
 	ListCompanies() ([]model.Company, error)
 	ListStaffMembers() ([]model.StaffMember, error)
 	ListServiceInvitations(projectID uint, serviceID uint) ([]model.ServiceInvitation, error)
