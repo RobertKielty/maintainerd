@@ -1136,6 +1136,53 @@ func TestHandleProjectCreate(t *testing.T) {
 	assert.Equal(t, "exampleorg", response.GitHubOrg)
 }
 
+func TestRewriteMaintainerRefURL(t *testing.T) {
+	tests := []struct {
+		name    string
+		refURL  string
+		want    string
+		wantErr bool
+	}{
+		{
+			name:   "rewrites github blob urls",
+			refURL: "https://github.com/etcd-io/etcd/blob/main/OWNERS",
+			want:   "https://raw.githubusercontent.com/etcd-io/etcd/main/OWNERS",
+		},
+		{
+			name:   "keeps raw github urls",
+			refURL: "https://raw.githubusercontent.com/etcd-io/etcd/main/OWNERS",
+			want:   "https://raw.githubusercontent.com/etcd-io/etcd/main/OWNERS",
+		},
+		{
+			name:   "keeps raw gist urls",
+			refURL: "https://gist.githubusercontent.com/RobertKielty/a00d784f6d501296b739846f3f17c430/raw/d7f9508f71d8a687883ffc5ae8f8ee0c3f81b51a/gistfile1.txt",
+			want:   "https://gist.githubusercontent.com/RobertKielty/a00d784f6d501296b739846f3f17c430/raw/d7f9508f71d8a687883ffc5ae8f8ee0c3f81b51a/gistfile1.txt",
+		},
+		{
+			name:    "rejects non-https raw github urls",
+			refURL:  "http://raw.githubusercontent.com/etcd-io/etcd/main/OWNERS",
+			wantErr: true,
+		},
+		{
+			name:    "rejects unrelated hosts",
+			refURL:  "https://example.com/OWNERS",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := rewriteMaintainerRefURL(tt.refURL)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestHandleProjectsNamePrefix(t *testing.T) {
 	dbConn := setupPostgresTestDB(t)
 	store := db.NewSQLStore(dbConn)

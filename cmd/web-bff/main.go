@@ -7426,7 +7426,8 @@ func rewriteMaintainerRefURL(refURL string) (string, error) {
 	if !strings.EqualFold(parsed.Scheme, "https") {
 		return "", fmt.Errorf("invalid maintainer ref url")
 	}
-	if !strings.EqualFold(parsed.Host, "raw.githubusercontent.com") {
+	if !strings.EqualFold(parsed.Host, "raw.githubusercontent.com") &&
+		!strings.EqualFold(parsed.Host, "gist.githubusercontent.com") {
 		return "", fmt.Errorf("invalid maintainer ref url")
 	}
 	return parsed.String(), nil
