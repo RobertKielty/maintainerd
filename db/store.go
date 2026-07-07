@@ -54,5 +54,6 @@ type Store interface {
 	UpsertMaintainerIdentityObservation(observation *model.MaintainerIdentityObservation) (*model.MaintainerIdentityObservation, error)
 	GetLatestMaintainerIdentityObservation(source string, maintainerID uint) (*model.MaintainerIdentityObservation, error)
 	GetLatestMaintainerIdentityObservationByRef(source string, projectID uint, sourceRef string) (*model.MaintainerIdentityObservation, error)
+	ListMaintainerIdentityObservations(maintainerID uint) ([]model.MaintainerIdentityObservation, error)
 	MergeCompanies(fromID, toID uint) error
 }

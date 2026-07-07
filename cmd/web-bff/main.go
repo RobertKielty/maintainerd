@@ -2145,28 +2145,44 @@ func (s *server) handleProjectMaturityUpdate(w http.ResponseWriter, r *http.Requ
 }
 
 type maintainerDetailResponse struct {
-	ID          uint                        `json:"id"`
-	Name        string                      `json:"name"`
-	Email       string                      `json:"email"`
-	GitHub      string                      `json:"github"`
-	GitHubEmail string                      `json:"githubEmail"`
-	Status      string                      `json:"status"`
-	CompanyID   *uint                       `json:"companyId,omitempty"`
-	Company     string                      `json:"company,omitempty"`
-	Location    string                      `json:"location,omitempty"`
-	Country     string                      `json:"country,omitempty"`
-	Timezone    string                      `json:"timezone,omitempty"`
-	Projects    []maintainerProjectResponse `json:"projects"`
-	Services    []maintainerServiceResponse `json:"services,omitempty"`
-	CreatedAt   time.Time                   `json:"createdAt"`
-	UpdatedAt   time.Time                   `json:"updatedAt"`
-	DeletedAt   *time.Time                  `json:"deletedAt,omitempty"`
-	UpdatedBy   string                      `json:"updatedBy,omitempty"`
+	ID           uint                                    `json:"id"`
+	Name         string                                  `json:"name"`
+	Email        string                                  `json:"email"`
+	GitHub       string                                  `json:"github"`
+	GitHubEmail  string                                  `json:"githubEmail"`
+	Status       string                                  `json:"status"`
+	CompanyID    *uint                                   `json:"companyId,omitempty"`
+	Company      string                                  `json:"company,omitempty"`
+	Location     string                                  `json:"location,omitempty"`
+	Country      string                                  `json:"country,omitempty"`
+	Timezone     string                                  `json:"timezone,omitempty"`
+	Projects     []maintainerProjectResponse             `json:"projects"`
+	Services     []maintainerServiceResponse             `json:"services,omitempty"`
+	Observations []maintainerIdentityObservationResponse `json:"observations,omitempty"`
+	CreatedAt    time.Time                               `json:"createdAt"`
+	UpdatedAt    time.Time                               `json:"updatedAt"`
+	DeletedAt    *time.Time                              `json:"deletedAt,omitempty"`
+	UpdatedBy    string                                  `json:"updatedBy,omitempty"`
 }
 
 type maintainerProjectResponse struct {
 	ID   uint   `json:"id"`
 	Name string `json:"name"`
+}
+
+type maintainerIdentityObservationResponse struct {
+	Source      string    `json:"source"`
+	SourceRef   string    `json:"sourceRef,omitempty"`
+	Name        string    `json:"name,omitempty"`
+	Email       string    `json:"email,omitempty"`
+	GitHubUser  string    `json:"githubUser,omitempty"`
+	LFID        string    `json:"lfid,omitempty"`
+	CompanyName string    `json:"companyName,omitempty"`
+	MatchStatus string    `json:"matchStatus,omitempty"`
+	MatchReason string    `json:"matchReason,omitempty"`
+	Confidence  string    `json:"confidence,omitempty"`
+	ProjectID   *uint     `json:"projectId,omitempty"`
+	ObservedAt  time.Time `json:"observedAt"`
 }
 
 type maintainerServiceResponse struct {
@@ -2290,6 +2306,15 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 				if staff.Name != "" {
 					response.UpdatedBy = staff.Name
 				}
+			}
+		}
+
+		if session.Role == roleStaff {
+			obs, err := s.store.ListMaintainerIdentityObservations(id)
+			if err != nil {
+				s.logger.Printf("web-bff: list identity observations id=%d err=%v", id, err)
+			} else {
+				response.Observations = mapMaintainerObservations(obs)
 			}
 		}
 
@@ -2557,6 +2582,28 @@ func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, incl
 		response.Timezone = *maintainer.Timezone
 	}
 	return response
+}
+
+func mapMaintainerObservations(obs []model.MaintainerIdentityObservation) []maintainerIdentityObservationResponse {
+	out := make([]maintainerIdentityObservationResponse, 0, len(obs))
+	for _, o := range obs {
+		r := maintainerIdentityObservationResponse{
+			Source:      o.Source,
+			SourceRef:   o.SourceRef,
+			Name:        o.Name,
+			Email:       o.Email,
+			GitHubUser:  o.GitHubUser,
+			LFID:        o.LFID,
+			CompanyName: o.CompanyName,
+			MatchStatus: o.MatchStatus,
+			MatchReason: o.MatchReason,
+			Confidence:  o.Confidence,
+			ProjectID:   o.ProjectID,
+			ObservedAt:  o.ObservedAt,
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 func (s *server) buildMaintainerFossaService(maintainer model.Maintainer) (maintainerServiceResponse, bool) {

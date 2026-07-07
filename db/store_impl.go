@@ -911,6 +911,15 @@ func (s *SQLStore) GetLatestMaintainerIdentityObservationByRef(source string, pr
 	return &observation, nil
 }
 
+func (s *SQLStore) ListMaintainerIdentityObservations(maintainerID uint) ([]model.MaintainerIdentityObservation, error) {
+	var observations []model.MaintainerIdentityObservation
+	err := s.db.
+		Where("maintainer_id = ?", maintainerID).
+		Order("observed_at DESC, id DESC").
+		Find(&observations).Error
+	return observations, err
+}
+
 // IsStaffGitHubAccount returns true if the GitHub account belongs to a staff member.
 func (s *SQLStore) IsStaffGitHubAccount(githubAccount string) (bool, error) {
 	if githubAccount == "" {
