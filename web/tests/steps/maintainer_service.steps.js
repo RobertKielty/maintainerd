@@ -183,12 +183,7 @@ When("I update the maintainer email address", async function () {
   await openMaintainerPage(this);
   const nextEmail =
     process.env.TEST_UPDATED_MAINTAINER_EMAIL || "bob@affiliated-company.tld";
-  const editCard = this.page
-    .getByRole("heading", { name: "Update maintainer" })
-    .first()
-    .locator("..");
-  await expect(editCard).toBeVisible({ timeout: 15000 });
-  const editButton = editCard.getByRole("button", { name: "Edit" });
+  const editButton = this.page.getByRole("button", { name: "Edit" });
   await expect(editButton).toBeVisible({ timeout: 15000 });
   await editButton.click();
   const emailInput = this.page.getByRole("textbox", { name: "Email", exact: true });
@@ -212,7 +207,7 @@ When("I save the maintainer record", async function () {
     throw new Error(`Save maintainer failed: ${response.status()} ${await response.text()}`);
   }
   await expect(
-    this.page.getByRole("heading", { name: "Update maintainer" })
+    this.page.getByRole("button", { name: "Edit" })
   ).toBeVisible({ timeout: 15000 });
 });
 

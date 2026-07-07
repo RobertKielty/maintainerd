@@ -3,14 +3,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
-import MaintainerCard from "@/components/MaintainerCard";
-import MaintainerEditCard, {
+import MaintainerCard, {
   CompanyOption,
   MaintainerEditDraft,
-} from "@/components/MaintainerEditCard";
+} from "@/components/MaintainerCard";
 import MaintainerServicesPanel, {
   MaintainerServiceView,
 } from "@/components/MaintainerServicesPanel";
+import MaintainerIdentityPanel, {
+  IdentityObservation,
+} from "@/components/MaintainerIdentityPanel";
 import CompanyCreateModal from "@/components/CompanyCreateModal";
 import { getAuthBaseUrl, redirectToAuthLogin } from "@/utils/auth";
 import styles from "./page.module.css";
@@ -29,6 +31,7 @@ type MaintainerDetail = {
   timezone?: string;
   projects: { id: number; name: string }[];
   services?: MaintainerServiceView[];
+  observations?: IdentityObservation[];
   createdAt: string;
   updatedAt: string;
   updatedBy?: string;
@@ -391,47 +394,6 @@ export default function MaintainerPage() {
         <div className={styles.container}>
           {status === "loading" && <div className={styles.banner}>Loading…</div>}
           {error && <div className={styles.banner}>{error}</div>}
-          {canEditRecord && maintainer && editDraft && (
-            <MaintainerEditCard
-              draft={editDraft}
-              companies={companies}
-              isEditing={isEditing}
-              isDirty={isDirty}
-              saveStatus={saveStatus}
-              saveError={saveError}
-              disableName={disableNonStaffFields}
-              disableGitHub={disableNonStaffFields}
-              disableGitHubEmail={disableNonStaffFields}
-              disableLocation={disableNonStaffFields}
-              disableStatus={disableNonStaffFields}
-              disableCompanyAdd={companySaveStatus === "saving"}
-              onEdit={() => {
-                setIsEditing(true);
-                setSaveError(null);
-              }}
-              onCancel={() => {
-                setIsEditing(false);
-                setSaveError(null);
-                setEditDraft({
-                  name: maintainer.name || "",
-                  email: maintainer.email || "",
-                  github: maintainer.github || "",
-                  githubEmail: maintainer.githubEmail || "",
-                  location: maintainer.location || "",
-                  status: maintainer.status || "Active",
-                  companyId: maintainer.companyId ?? null,
-                });
-              }}
-              onChange={(next) => setEditDraft(next)}
-              onSave={handleSave}
-              onAddCompany={() => {
-                setCompanyDraftName("");
-                setSelectedCompanyId(null);
-                setCompanySaveError(null);
-                setIsCompanyModalOpen(true);
-              }}
-            />
-          )}
           {canEditRecord && isCompanyModalOpen && (
             <CompanyCreateModal
               name={companyDraftName}
@@ -464,6 +426,42 @@ export default function MaintainerPage() {
               updatedAt={maintainer.updatedAt}
               updatedBy={maintainer.updatedBy}
               updatedNotice={saveNotice}
+              isEditing={isEditing}
+              editConfig={canEditRecord && editDraft ? {
+                draft: editDraft,
+                companies,
+                isDirty,
+                saveStatus,
+                saveError,
+                disableName: disableNonStaffFields,
+                disableGitHub: disableNonStaffFields,
+                disableGitHubEmail: disableNonStaffFields,
+                disableLocation: disableNonStaffFields,
+                disableStatus: disableNonStaffFields,
+                disableCompanyAdd: companySaveStatus === "saving",
+                onEdit: () => { setIsEditing(true); setSaveError(null); },
+                onCancel: () => {
+                  setIsEditing(false);
+                  setSaveError(null);
+                  setEditDraft({
+                    name: maintainer.name || "",
+                    email: maintainer.email || "",
+                    github: maintainer.github || "",
+                    githubEmail: maintainer.githubEmail || "",
+                    location: maintainer.location || "",
+                    status: maintainer.status || "Active",
+                    companyId: maintainer.companyId ?? null,
+                  });
+                },
+                onChange: (next) => setEditDraft(next),
+                onSave: handleSave,
+                onAddCompany: () => {
+                  setCompanyDraftName("");
+                  setSelectedCompanyId(null);
+                  setCompanySaveError(null);
+                  setIsCompanyModalOpen(true);
+                },
+              } : undefined}
             />
           )}
           {role === "staff" && maintainer?.services?.length ? (
@@ -479,6 +477,9 @@ export default function MaintainerPage() {
               }}
               services={maintainer.services}
             />
+          ) : null}
+          {role === "staff" && maintainer?.observations?.length ? (
+            <MaintainerIdentityPanel observations={maintainer.observations} />
           ) : null}
         </div>
       </div>

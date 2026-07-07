@@ -87,16 +87,10 @@ When(
       const id = await resolveMaintainerIdByLogin(this, recordName);
       await this.page.goto(`${this.baseUrl}/maintainers/${id}`);
 
-      // Open the edit panel
-      const editCard = this.page
-        .getByRole("heading", { name: "Update maintainer" })
-        .first()
-        .locator("..");
-      await expect(editCard).toBeVisible({ timeout: 15000 });
-      const editButton = editCard.getByRole("button", { name: "Edit" });
-      if (await editButton.isVisible()) {
-        await editButton.click();
-      }
+      // Open the edit panel — wait for the Edit button to confirm the card has loaded
+      const editButton = this.page.getByRole("button", { name: "Edit" });
+      await expect(editButton).toBeVisible({ timeout: 15000 });
+      await editButton.click();
 
       // Fill the field
       const labelOpts = maintainerFieldLabel[field];
@@ -108,7 +102,7 @@ When(
       await input.fill(value);
 
       // Save and wait for PATCH response
-      const saveButton = editCard.getByRole("button", { name: "Save changes" });
+      const saveButton = this.page.getByRole("button", { name: "Save changes" });
       await expect(saveButton).toBeEnabled({ timeout: 15000 });
       const responsePromise = this.page.waitForResponse(
         (response) =>
@@ -128,19 +122,15 @@ When(
       this.lastEdit = { recordType, recordName, id, field, value };
     } else if (recordType === "project") {
       const id = await resolveProjectIdByName(this, recordName);
-      await this.page.goto(`${this.baseUrl}/projects/${id}`);
+      await this.page.goto(`${this.baseUrl}/projects/${id}/github`);
+      await expect(
+        this.page.getByRole("heading", { name: recordName, exact: true })
+      ).toBeVisible({ timeout: 15000 });
 
       if (field === "maturity") {
         // Maturity is edited via a modal: click "MOVE LEVEL" → modal opens → click the target level button
         const moveLevelButton = this.page.getByRole("button", { name: "MOVE LEVEL" });
         await expect(moveLevelButton).toBeVisible({ timeout: 15000 });
-
-        const responsePromise = this.page.waitForResponse(
-          (response) =>
-            response.request().method() === "PATCH" &&
-            response.url().includes(`/api/projects/${id}/maturity`),
-          { timeout: 20000 }
-        );
         await moveLevelButton.click();
 
         // Modal opens — click the button with the target maturity label
@@ -148,6 +138,12 @@ When(
         await expect(modal).toBeVisible({ timeout: 10000 });
         const targetButton = modal.getByRole("button", { name: value, exact: true });
         await expect(targetButton).toBeEnabled({ timeout: 10000 });
+        const responsePromise = this.page.waitForResponse(
+          (response) =>
+            response.request().method() === "PATCH" &&
+            response.url().includes(`/api/projects/${id}/maturity`),
+          { timeout: 20000 }
+        );
         await targetButton.click();
 
         const patchResponse = await responsePromise;

@@ -16,7 +16,7 @@ Feature: Editing permissions and persistence
       | record_type | record_name      | field_name  | new_value                    |
       | maintainer  | antonio-example  | githubEmail | antonio.commits@example.dev  |
       | maintainer  | renee-sample     | location    | Berlin, Germany              |
-      | maintainer  | alex-example     | email       | alex.updated@example.dev     |
+      | maintainer  | diego-placeholder | email      | diego.updated@example.dev    |
       | project     | Project Beacon   | maturity    | Graduated                    |
 
   Scenario Outline: Audit log captures editor identity and action
@@ -28,5 +28,5 @@ Feature: Editing permissions and persistence
 
     Examples:
       | role  | editor_login | record_type | record_name     | field_name  | new_value                   | action                  |
-      | staff | staff-tester | maintainer  | antonio-example | githubEmail | antonio.commits@example.dev | MAINTAINER_UPDATE       |
-      | staff | staff-tester | project     | Project Beacon  | maturity    | Graduated                   | PROJECT_MATURITY_UPDATE |
+      | staff | staff-tester | maintainer  | antonio-example | githubEmail | antonio.audit@example.dev   | MAINTAINER_UPDATE       |
+      | staff | staff-tester | project     | Project Beacon  | maturity    | Incubating                  | PROJECT_MATURITY_UPDATE |
