@@ -277,6 +277,28 @@ function ServiceTargetMembershipTable({
   );
 }
 
+function fossaSummaryText(service: MaintainerServiceView): string {
+  if (service.account.state !== "registered") {
+    return "Not yet set up on CNCF FOSSA.";
+  }
+
+  const memberTeams = service.targets
+    .filter((target) => target.state === "member")
+    .map((target) => target.targetName);
+  const issueCount = service.targets.filter((target) => target.state !== "member").length;
+
+  if (memberTeams.length === 0) {
+    return issueCount > 0
+      ? `On CNCF FOSSA, but not yet on a project team (${issueCount} need attention).`
+      : "On CNCF FOSSA.";
+  }
+
+  const teams = memberTeams.join(", ");
+  return issueCount > 0
+    ? `On CNCF FOSSA — member of: ${teams} (${issueCount} need attention)`
+    : `On CNCF FOSSA — member of: ${teams}`;
+}
+
 function actionLabel(action: "refresh" | "invite" | "reconcile") {
   switch (action) {
     case "refresh":
@@ -308,6 +330,7 @@ function MaintainerServiceCard({
   const [activeAction, setActiveAction] = useState<"refresh" | "invite" | "reconcile" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [actionNotice, setActionNotice] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
 
   const canInvite = service.kind === "fossa" && service.account.state === "not_registered";
   const canReconcile =
@@ -354,53 +377,66 @@ function MaintainerServiceCard({
         <div className={styles.header}>
           <div>
             <h2 className={styles.title}>{service.label}</h2>
+            <p className={styles.summaryLine}>{fossaSummaryText(service)}</p>
           </div>
-          <div className={styles.summary}>
-            <span className={styles.summaryItem}>{service.targets.length} targets</span>
-            <span className={styles.summaryItem}>{missingCount} missing</span>
-            <span className={styles.summaryItem}>{pendingCount} pending</span>
-          </div>
-        </div>
-
-        <div className={styles.actions}>
           <button
-            className={styles.actionButton}
-            disabled={disabled || activeAction !== null}
-            onClick={() => void handleAction("refresh")}
+            className={styles.toggleButton}
+            onClick={() => setExpanded((current) => !current)}
             type="button"
           >
-            {activeAction === "refresh" ? "Refreshing…" : "Refresh"}
+            {expanded ? "Hide details" : `Manage ${service.label}`}
           </button>
-          {canReconcile ? (
-            <button
-              className={styles.actionButton}
-              disabled={disabled || activeAction !== null}
-              onClick={() => void handleAction("reconcile")}
-              type="button"
-            >
-              {activeAction === "reconcile" ? "Reconciling…" : "Reconcile Missing"}
-            </button>
-          ) : null}
         </div>
-        {actionNotice ? <div className={styles.notice}>{actionNotice}</div> : null}
-        {actionError ? <div className={styles.errorText}>{actionError}</div> : null}
 
-        <section className={styles.section}>
-          <h3 className={styles.sectionTitle}>Remote Service User Account</h3>
-          <ServiceAccountStatus
-            account={service.account}
-            canInvite={canInvite}
-            disabled={disabled || activeAction !== null}
-            isInviting={activeAction === "invite"}
-            onInvite={() => void handleAction("invite")}
-            serviceKind={service.kind}
-          />
-        </section>
+        {expanded ? (
+          <>
+            <div className={styles.actions}>
+              <button
+                className={styles.actionButton}
+                disabled={disabled || activeAction !== null}
+                onClick={() => void handleAction("refresh")}
+                type="button"
+              >
+                {activeAction === "refresh" ? "Refreshing…" : "Refresh"}
+              </button>
+              {canReconcile ? (
+                <button
+                  className={styles.actionButton}
+                  disabled={disabled || activeAction !== null}
+                  onClick={() => void handleAction("reconcile")}
+                  type="button"
+                >
+                  {activeAction === "reconcile" ? "Reconciling…" : "Reconcile Missing"}
+                </button>
+              ) : null}
+            </div>
+            {actionNotice ? <div className={styles.notice}>{actionNotice}</div> : null}
+            {actionError ? <div className={styles.errorText}>{actionError}</div> : null}
 
-        <section className={styles.section}>
-          <h3 className={styles.sectionTitle}>Project Target Memberships</h3>
-          <ServiceTargetMembershipTable serviceKind={service.kind} targets={service.targets} />
-        </section>
+            <div className={styles.summary}>
+              <span className={styles.summaryItem}>{service.targets.length} targets</span>
+              <span className={styles.summaryItem}>{missingCount} missing</span>
+              <span className={styles.summaryItem}>{pendingCount} pending</span>
+            </div>
+
+            <section className={styles.section}>
+              <h3 className={styles.sectionTitle}>Remote Service User Account</h3>
+              <ServiceAccountStatus
+                account={service.account}
+                canInvite={canInvite}
+                disabled={disabled || activeAction !== null}
+                isInviting={activeAction === "invite"}
+                onInvite={() => void handleAction("invite")}
+                serviceKind={service.kind}
+              />
+            </section>
+
+            <section className={styles.section}>
+              <h3 className={styles.sectionTitle}>Project Target Memberships</h3>
+              <ServiceTargetMembershipTable serviceKind={service.kind} targets={service.targets} />
+            </section>
+          </>
+        ) : null}
       </div>
     </Card>
   );
