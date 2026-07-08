@@ -36,6 +36,14 @@
   user-select: none;
 }
 
+.avatarImage {
+  flex-shrink: 0;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  object-fit: cover;
+}
+
 .heroInfo {
   flex: 1;
   min-width: 0;
@@ -248,6 +256,9 @@ a.companyPill:focus-visible .icon {
 }
 
 .contactLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 14px;
   font-weight: 600;
   color: #d62293;
@@ -255,6 +266,14 @@ a.companyPill:focus-visible .icon {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.githubAvatar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  object-fit: cover;
 }
 
 .contactLink:hover {

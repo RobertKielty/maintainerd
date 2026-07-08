@@ -192,15 +192,27 @@ export default function MaintainerCard({
   const draft = editConfig?.draft;
   const canEdit = !!editConfig;
 
+  const [erroredAvatarHandle, setErroredAvatarHandle] = useState<string | null>(null);
+  const showAvatarPhoto = !isEditing && !!githubHandle && erroredAvatarHandle !== githubHandle;
+
   return (
     <Card hoverable={false} className={styles.card}>
       <div className={styles.content}>
 
         {/* ── Hero ── */}
         <div className={styles.hero}>
-          <div className={styles.avatar} style={{ background: color }} aria-hidden="true">
-            {initials(isEditing && draft?.name ? draft.name : displayName)}
-          </div>
+          {showAvatarPhoto ? (
+            <img
+              className={styles.avatarImage}
+              src={`https://github.com/${githubHandle}.png?size=112`}
+              alt={`${displayName} on GitHub`}
+              onError={() => setErroredAvatarHandle(githubHandle)}
+            />
+          ) : (
+            <div className={styles.avatar} style={{ background: color }} aria-hidden="true">
+              {initials(isEditing && draft?.name ? draft.name : displayName)}
+            </div>
+          )}
           <div className={styles.heroInfo}>
             {isEditing && draft && !editConfig?.disableName ? (
               <input
@@ -334,6 +346,13 @@ export default function MaintainerCard({
                   rel="noreferrer"
                   aria-label={`GitHub: ${githubHandle}`}
                 >
+                  <img
+                    className={styles.githubAvatar}
+                    src={`https://github.com/${githubHandle}.png?size=40`}
+                    alt=""
+                    aria-hidden="true"
+                    onError={(e) => { e.currentTarget.style.display = "none"; }}
+                  />
                   {githubHandle}
                 </a>
               </div>
