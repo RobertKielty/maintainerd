@@ -189,6 +189,20 @@ export default function MaintainerCard({
     }
   };
 
+  const [lfidCopyNotice, setLfidCopyNotice] = useState(false);
+  const lfidCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleCopyLfid = async () => {
+    if (!lfxProfile?.lfid) return;
+    try {
+      await navigator.clipboard.writeText(lfxProfile.lfid);
+      setLfidCopyNotice(true);
+      if (lfidCopyTimer.current) clearTimeout(lfidCopyTimer.current);
+      lfidCopyTimer.current = setTimeout(() => setLfidCopyNotice(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
+
   const draft = editConfig?.draft;
   const canEdit = !!editConfig;
 
@@ -386,15 +400,34 @@ export default function MaintainerCard({
               <div className={styles.contactRow}>
                 <LfxIcon />
                 {openProfileHref ? (
-                  <a
-                    className={styles.contactLink}
-                    href={openProfileHref}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label="OpenProfile.dev profile"
-                  >
-                    OpenProfile.dev
-                  </a>
+                  <span className={styles.contactValue} aria-label="OpenProfile.dev">
+                    <a
+                      className={styles.contactLink}
+                      href={openProfileHref}
+                      target="_blank"
+                      rel="noreferrer"
+                      aria-label="OpenProfile.dev profile"
+                      onClick={handleCopyLfid}
+                    >
+                      OpenProfile.dev
+                    </a>
+                    <span
+                      className={styles.contactTag}
+                      title="openprofile.dev has a known issue where it may report this profile as private regardless of the maintainer's settings. Clicking the search link copies the LFX ID to your clipboard so you can paste it into openprofile.dev's own search if the link doesn't work."
+                    >
+                      known issue · ID copied on click
+                    </span>
+                    <button
+                      className={styles.copyButton}
+                      type="button"
+                      onClick={handleCopyLfid}
+                      aria-label="Copy LFX ID"
+                      title="Copy LFX ID to search directly on openprofile.dev"
+                    >
+                      <CopyIcon />
+                    </button>
+                    {lfidCopyNotice ? <span className={styles.copyToast}>Copied</span> : null}
+                  </span>
                 ) : (
                   <span className={styles.contactSecondary} aria-label="OpenProfile.dev status">
                     Not on OpenProfile.dev
