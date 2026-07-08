@@ -2145,28 +2145,44 @@ func (s *server) handleProjectMaturityUpdate(w http.ResponseWriter, r *http.Requ
 }
 
 type maintainerDetailResponse struct {
-	ID          uint                        `json:"id"`
-	Name        string                      `json:"name"`
-	Email       string                      `json:"email"`
-	GitHub      string                      `json:"github"`
-	GitHubEmail string                      `json:"githubEmail"`
-	Status      string                      `json:"status"`
-	CompanyID   *uint                       `json:"companyId,omitempty"`
-	Company     string                      `json:"company,omitempty"`
-	Location    string                      `json:"location,omitempty"`
-	Country     string                      `json:"country,omitempty"`
-	Timezone    string                      `json:"timezone,omitempty"`
-	Projects    []maintainerProjectResponse `json:"projects"`
-	Services    []maintainerServiceResponse `json:"services,omitempty"`
-	CreatedAt   time.Time                   `json:"createdAt"`
-	UpdatedAt   time.Time                   `json:"updatedAt"`
-	DeletedAt   *time.Time                  `json:"deletedAt,omitempty"`
-	UpdatedBy   string                      `json:"updatedBy,omitempty"`
+	ID           uint                                    `json:"id"`
+	Name         string                                  `json:"name"`
+	Email        string                                  `json:"email"`
+	GitHub       string                                  `json:"github"`
+	GitHubEmail  string                                  `json:"githubEmail"`
+	Status       string                                  `json:"status"`
+	CompanyID    *uint                                   `json:"companyId,omitempty"`
+	Company      string                                  `json:"company,omitempty"`
+	Location     string                                  `json:"location,omitempty"`
+	Country      string                                  `json:"country,omitempty"`
+	Timezone     string                                  `json:"timezone,omitempty"`
+	Projects     []maintainerProjectResponse             `json:"projects"`
+	Services     []maintainerServiceResponse             `json:"services,omitempty"`
+	Observations []maintainerIdentityObservationResponse `json:"observations,omitempty"`
+	CreatedAt    time.Time                               `json:"createdAt"`
+	UpdatedAt    time.Time                               `json:"updatedAt"`
+	DeletedAt    *time.Time                              `json:"deletedAt,omitempty"`
+	UpdatedBy    string                                  `json:"updatedBy,omitempty"`
 }
 
 type maintainerProjectResponse struct {
 	ID   uint   `json:"id"`
 	Name string `json:"name"`
+}
+
+type maintainerIdentityObservationResponse struct {
+	Source      string    `json:"source"`
+	SourceRef   string    `json:"sourceRef,omitempty"`
+	Name        string    `json:"name,omitempty"`
+	Email       string    `json:"email,omitempty"`
+	GitHubUser  string    `json:"githubUser,omitempty"`
+	LFID        string    `json:"lfid,omitempty"`
+	CompanyName string    `json:"companyName,omitempty"`
+	MatchStatus string    `json:"matchStatus,omitempty"`
+	MatchReason string    `json:"matchReason,omitempty"`
+	Confidence  string    `json:"confidence,omitempty"`
+	ProjectID   *uint     `json:"projectId,omitempty"`
+	ObservedAt  time.Time `json:"observedAt"`
 }
 
 type maintainerServiceResponse struct {
@@ -2293,6 +2309,15 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if session.Role == roleStaff {
+			obs, err := s.store.ListMaintainerIdentityObservations(id)
+			if err != nil {
+				s.logger.Printf("web-bff: list identity observations id=%d err=%v", id, err)
+			} else {
+				response.Observations = mapMaintainerObservations(obs)
+			}
+		}
+
 		w.Header().Set(headerContentType, contentTypeJSON)
 		isSelf := requester != nil && requester.ID == id
 		if session.Role != roleStaff && !isSelf {
@@ -2336,12 +2361,14 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 			status = before.MaintainerStatus
 			req.Name = before.Name
 			req.GitHub = before.GitHubAccount
+			req.GitHubEmail = before.GitHubEmail
+			req.Location = before.Location
 		}
 		if !status.IsValid() {
 			http.Error(w, "invalid status", http.StatusBadRequest)
 			return
 		}
-		updated, err := s.store.UpdateMaintainerDetails(id, req.Name, req.Email, req.GitHub, status, req.CompanyID)
+		updated, err := s.store.UpdateMaintainerDetails(id, req.Name, req.Email, req.GitHub, req.GitHubEmail, req.Location, status, req.CompanyID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				http.Error(w, "maintainer not found", http.StatusNotFound)
@@ -2420,6 +2447,28 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 			}
 			changes["company"] = map[string]string{"from": beforeCompanyName, "to": afterCompanyName}
 		}
+		beforeGitHubEmail := normalizeValue(before.GitHubEmail, "GITHUB_MISSING")
+		afterGitHubEmail := normalizeValue(updated.GitHubEmail, "GITHUB_MISSING")
+		if beforeGitHubEmail != afterGitHubEmail {
+			changes["githubEmail"] = map[string]string{"from": beforeGitHubEmail, "to": afterGitHubEmail}
+		}
+		beforeLocation := ""
+		if before.Location != nil {
+			beforeLocation = strings.TrimSpace(*before.Location)
+		}
+		if beforeLocation == "" {
+			beforeLocation = "LOCATION_MISSING"
+		}
+		afterLocation := ""
+		if updated.Location != nil {
+			afterLocation = strings.TrimSpace(*updated.Location)
+		}
+		if afterLocation == "" {
+			afterLocation = "LOCATION_MISSING"
+		}
+		if beforeLocation != afterLocation {
+			changes["location"] = map[string]string{"from": beforeLocation, "to": afterLocation}
+		}
 
 		metadata := map[string]any{
 			"actor": map[string]string{
@@ -2452,35 +2501,7 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		projects := make([]maintainerProjectResponse, 0, len(updated.Projects))
-		for _, project := range updated.Projects {
-			projects = append(projects, maintainerProjectResponse{
-				ID:   project.ID,
-				Name: project.Name,
-			})
-		}
-
-		response := maintainerDetailResponse{
-			ID:          updated.ID,
-			Name:        updated.Name,
-			Email:       normalizeValue(updated.Email, "EMAIL_MISSING"),
-			GitHub:      normalizeValue(updated.GitHubAccount, "GITHUB_MISSING"),
-			GitHubEmail: normalizeValue(updated.GitHubEmail, "GITHUB_MISSING"),
-			Status:      string(updated.MaintainerStatus),
-			Projects:    projects,
-			CreatedAt:   updated.CreatedAt,
-			UpdatedAt:   updated.UpdatedAt,
-		}
-		if updated.DeletedAt.Valid {
-			deleted := updated.DeletedAt.Time
-			response.DeletedAt = &deleted
-		}
-		if updated.CompanyID != nil {
-			response.CompanyID = updated.CompanyID
-		}
-		if updated.Company.Name != "" {
-			response.Company = updated.Company.Name
-		}
+		response := s.buildMaintainerDetailResponse(*updated, false)
 		if staffName != "" {
 			response.UpdatedBy = staffName
 		}
@@ -2561,6 +2582,28 @@ func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, incl
 		response.Timezone = *maintainer.Timezone
 	}
 	return response
+}
+
+func mapMaintainerObservations(obs []model.MaintainerIdentityObservation) []maintainerIdentityObservationResponse {
+	out := make([]maintainerIdentityObservationResponse, 0, len(obs))
+	for _, o := range obs {
+		r := maintainerIdentityObservationResponse{
+			Source:      o.Source,
+			SourceRef:   o.SourceRef,
+			Name:        o.Name,
+			Email:       o.Email,
+			GitHubUser:  o.GitHubUser,
+			LFID:        o.LFID,
+			CompanyName: o.CompanyName,
+			MatchStatus: o.MatchStatus,
+			MatchReason: o.MatchReason,
+			Confidence:  o.Confidence,
+			ProjectID:   o.ProjectID,
+			ObservedAt:  o.ObservedAt,
+		}
+		out = append(out, r)
+	}
+	return out
 }
 
 func (s *server) buildMaintainerFossaService(maintainer model.Maintainer) (maintainerServiceResponse, bool) {
@@ -3434,11 +3477,13 @@ func (s *server) handleAudit(w http.ResponseWriter, r *http.Request) {
 }
 
 type maintainerUpdateRequest struct {
-	Name      string `json:"name"`
-	Email     string `json:"email"`
-	GitHub    string `json:"github"`
-	Status    string `json:"status"`
-	CompanyID *uint  `json:"companyId"`
+	Name        string  `json:"name"`
+	Email       string  `json:"email"`
+	GitHub      string  `json:"github"`
+	GitHubEmail string  `json:"githubEmail"`
+	Location    *string `json:"location"`
+	Status      string  `json:"status"`
+	CompanyID   *uint   `json:"companyId"`
 }
 
 type maintainerStatusUpdateRequest struct {
@@ -7428,7 +7473,8 @@ func rewriteMaintainerRefURL(refURL string) (string, error) {
 	if !strings.EqualFold(parsed.Scheme, "https") {
 		return "", fmt.Errorf("invalid maintainer ref url")
 	}
-	if !strings.EqualFold(parsed.Host, "raw.githubusercontent.com") {
+	if !strings.EqualFold(parsed.Host, "raw.githubusercontent.com") &&
+		!strings.EqualFold(parsed.Host, "gist.githubusercontent.com") {
 		return "", fmt.Errorf("invalid maintainer ref url")
 	}
 	return parsed.String(), nil

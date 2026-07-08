@@ -307,7 +307,7 @@ func (s *SQLStore) UpsertMaintainerWithIdentity(projectID uint, name, email, git
 	if !status.IsValid() {
 		status = model.ActiveMaintainer
 	}
-	updatedMaintainer, err := s.UpdateMaintainerDetails(maintainer.ID, finalName, finalEmail, finalGitHub, status, finalCompanyID)
+	updatedMaintainer, err := s.UpdateMaintainerDetails(maintainer.ID, finalName, finalEmail, finalGitHub, maintainer.GitHubEmail, maintainer.Location, status, finalCompanyID)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -397,7 +397,7 @@ func (s *SQLStore) UpdateMaintainersStatus(ids []uint, status model.MaintainerSt
 }
 
 // UpdateMaintainerDetails updates a maintainer's editable fields and returns the updated record.
-func (s *SQLStore) UpdateMaintainerDetails(maintainerID uint, name, email, github string, status model.MaintainerStatus, companyID *uint) (*model.Maintainer, error) {
+func (s *SQLStore) UpdateMaintainerDetails(maintainerID uint, name, email, github, githubEmail string, location *string, status model.MaintainerStatus, companyID *uint) (*model.Maintainer, error) {
 	if !status.IsValid() {
 		return nil, fmt.Errorf("invalid maintainer status %q", status)
 	}
@@ -409,10 +409,18 @@ func (s *SQLStore) UpdateMaintainerDetails(maintainerID uint, name, email, githu
 		}
 	}
 
+	var locationValue interface{}
+	if location != nil && strings.TrimSpace(*location) != "" {
+		trimmed := strings.TrimSpace(*location)
+		locationValue = trimmed
+	}
+
 	updates := map[string]interface{}{
 		"name":              strings.TrimSpace(name),
 		"email":             normalizeOrSentinel(email, "EMAIL_MISSING"),
 		"git_hub_account":   normalizeOrSentinel(github, "GITHUB_MISSING"),
+		"git_hub_email":     normalizeOrSentinel(githubEmail, "GITHUB_MISSING"),
+		"location":          locationValue,
 		"maintainer_status": status,
 		"company_id":        companyID,
 	}
@@ -901,6 +909,15 @@ func (s *SQLStore) GetLatestMaintainerIdentityObservationByRef(source string, pr
 		return nil, nil
 	}
 	return &observation, nil
+}
+
+func (s *SQLStore) ListMaintainerIdentityObservations(maintainerID uint) ([]model.MaintainerIdentityObservation, error) {
+	var observations []model.MaintainerIdentityObservation
+	err := s.db.
+		Where("maintainer_id = ?", maintainerID).
+		Order("observed_at DESC, id DESC").
+		Find(&observations).Error
+	return observations, err
 }
 
 // IsStaffGitHubAccount returns true if the GitHub account belongs to a staff member.

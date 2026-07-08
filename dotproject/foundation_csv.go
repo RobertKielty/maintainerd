@@ -71,7 +71,7 @@ func ParseFoundationMaintainersCSV(r io.Reader) (*FoundationMaintainerIndex, err
 		if err != nil {
 			return nil, fmt.Errorf("read foundation csv row: %w", err)
 		}
-		lineNumber, _ := reader.FieldPos(githubCol)
+		lineNumber, _ := reader.FieldPos(0)
 		if project := strings.TrimSpace(csvValue(row, projectCol)); project != "" {
 			currentProject = project
 		}

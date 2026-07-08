@@ -129,6 +129,16 @@ const openMaintainerPage = async (world) => {
 const serviceCard = (world, label = "CNCF FOSSA") =>
   world.page.getByRole("heading", { name: label });
 
+const ensureServiceDetailsExpanded = async (world, label = "CNCF FOSSA") => {
+  const toggle = world.page.getByRole("button", { name: `Manage ${label}` });
+  if ((await toggle.count()) > 0) {
+    await toggle.click();
+    await expect(world.page.getByRole("button", { name: "Hide details" })).toBeVisible({
+      timeout: 15000,
+    });
+  }
+};
+
 Given("a maintainer exists in maintainer-d", async function () {
   const response = await this.page.request.get(`${this.bffBaseUrl}/healthz`);
   if (!response.ok()) {
@@ -183,15 +193,10 @@ When("I update the maintainer email address", async function () {
   await openMaintainerPage(this);
   const nextEmail =
     process.env.TEST_UPDATED_MAINTAINER_EMAIL || "bob@affiliated-company.tld";
-  const editCard = this.page
-    .getByRole("heading", { name: "Update maintainer" })
-    .first()
-    .locator("..");
-  await expect(editCard).toBeVisible({ timeout: 15000 });
-  const editButton = editCard.getByRole("button", { name: "Edit" });
+  const editButton = this.page.getByRole("button", { name: "Edit" });
   await expect(editButton).toBeVisible({ timeout: 15000 });
   await editButton.click();
-  const emailInput = this.page.getByRole("textbox", { name: "Email" });
+  const emailInput = this.page.getByRole("textbox", { name: "Email", exact: true });
   await expect(emailInput).toBeEnabled({ timeout: 15000 });
   await emailInput.fill(nextEmail);
   this.updatedMaintainerEmail = nextEmail;
@@ -212,12 +217,13 @@ When("I save the maintainer record", async function () {
     throw new Error(`Save maintainer failed: ${response.status()} ${await response.text()}`);
   }
   await expect(
-    this.page.getByRole("heading", { name: "Update maintainer" })
+    this.page.getByRole("button", { name: "Edit" })
   ).toBeVisible({ timeout: 15000 });
 });
 
 When("I refresh the maintainer's remote service associations", async function () {
   await openMaintainerPage(this);
+  await ensureServiceDetailsExpanded(this);
   const button = this.page.getByRole("button", { name: "Refresh" });
   await expect(button).toBeVisible({ timeout: 15000 });
   const responsePromise = this.page.waitForResponse(
@@ -236,6 +242,7 @@ When("I refresh the maintainer's remote service associations", async function ()
 
 When("I reconcile the maintainer's FOSSA access from the maintainer page", async function () {
   await openMaintainerPage(this);
+  await ensureServiceDetailsExpanded(this);
   const button = this.page.getByRole("button", { name: "Reconcile Missing" });
   await expect(button).toBeVisible({ timeout: 15000 });
   const responsePromise = this.page.waitForResponse(
@@ -254,6 +261,7 @@ When("I reconcile the maintainer's FOSSA access from the maintainer page", async
 
 When("I send a CNCF FOSSA invite from the maintainer page", async function () {
   await openMaintainerPage(this);
+  await ensureServiceDetailsExpanded(this);
   const button = this.page.getByRole("button", { name: "Send Invite" });
   await expect(button).toBeVisible({ timeout: 15000 });
   const responsePromise = this.page.waitForResponse(
@@ -276,6 +284,7 @@ When("the FOSSA invitation is accepted", function () {
 
 Then("I see a service associations section", async function () {
   await expect(serviceCard(this)).toBeVisible({ timeout: 15000 });
+  await ensureServiceDetailsExpanded(this);
   await expect(
     this.page.getByRole("heading", { name: "Remote Service User Account" })
   ).toBeVisible({ timeout: 15000 });
@@ -288,6 +297,7 @@ Then("I see which remote services the maintainer is associated with", async func
 });
 
 Then("I see which project service assignments imply that the maintainer should be associated with those services", async function () {
+  await ensureServiceDetailsExpanded(this);
   await expect(this.page.getByRole("heading", { name: "Project Target Memberships" })).toBeVisible({
     timeout: 15000,
   });
@@ -309,6 +319,7 @@ Then("maintainer-d checks whether the maintainer exists on the remote service us
     : [];
   const matched = services.some((service) => service?.account?.emailUsed === email);
   expect(matched).toBeTruthy();
+  await ensureServiceDetailsExpanded(this);
   await expect(this.page.locator('[class*="stateEmail"]').getByText(email, { exact: true }).first()).toBeVisible({
     timeout: 15000,
   });
@@ -319,16 +330,19 @@ Then("maintainer-d may also check using the maintainer GitHub email address", fu
 });
 
 Then("the maintainer page shows the updated remote service association status", async function () {
+  await ensureServiceDetailsExpanded(this);
   await expect(this.page.locator('[class*="badge_"]').first()).toBeVisible({
     timeout: 15000,
   });
 });
 
 Then("I see that the maintainer is associated with CNCF FOSSA", async function () {
+  await ensureServiceDetailsExpanded(this);
   await expect(this.page.getByText("Registered").first()).toBeVisible({ timeout: 15000 });
 });
 
 Then("I see that the maintainer is missing from the FOSSA team required by the project", async function () {
+  await ensureServiceDetailsExpanded(this);
   await expect(this.page.getByText("Missing").first()).toBeVisible({
     timeout: 15000,
   });
@@ -339,11 +353,13 @@ Then("maintainer-d adds the maintainer to every missing required FOSSA team usin
 });
 
 Then("the maintainer page shows the full set of required FOSSA teams for the maintainer", async function () {
+  await ensureServiceDetailsExpanded(this);
   const rows = this.page.locator("tbody tr");
   await expect.poll(async () => rows.count(), { timeout: 15000 }).toBeGreaterThan(0);
 });
 
 Then("the maintainer page shows that the maintainer is now associated with those FOSSA teams", async function () {
+  await ensureServiceDetailsExpanded(this);
   const memberBadges = this.page.getByText("Member");
   await expect(memberBadges.first()).toBeVisible({ timeout: 15000 });
 });
@@ -353,6 +369,7 @@ Then("maintainer-d sends a CNCF FOSSA invitation to the maintainer", function ()
 });
 
 Then("the maintainer page shows that FOSSA onboarding is pending", async function () {
+  await ensureServiceDetailsExpanded(this);
   await expect(this.page.getByText("Invited").first()).toBeVisible({ timeout: 15000 });
 });
 
@@ -361,11 +378,13 @@ Then("maintainer-d reconciles the maintainer to each required FOSSA team", funct
 });
 
 Then("the maintainer page shows that the maintainer is associated with those FOSSA teams", async function () {
+  await ensureServiceDetailsExpanded(this);
   const memberBadges = this.page.getByText("Member");
   await expect(memberBadges.first()).toBeVisible({ timeout: 15000 });
 });
 
 Then("I see whether the maintainer was matched by maintainer email address or GitHub email address", async function () {
+  await ensureServiceDetailsExpanded(this);
   const workSource = this.page.locator('[class*="stateSource"]').getByText("Work", {
     exact: true,
   });

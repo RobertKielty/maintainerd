@@ -36,7 +36,7 @@ type Store interface {
 	UpdateMaintainerStatus(maintainerID uint, status model.MaintainerStatus) error
 	UpdateMaintainersStatus(ids []uint, status model.MaintainerStatus) error
 	UpdateMaintainerGitHubEmail(maintainerID uint, githubEmail string) error
-	UpdateMaintainerDetails(maintainerID uint, name, email, github string, status model.MaintainerStatus, companyID *uint) (*model.Maintainer, error)
+	UpdateMaintainerDetails(maintainerID uint, name, email, github, githubEmail string, location *string, status model.MaintainerStatus, companyID *uint) (*model.Maintainer, error)
 	ListCompanies() ([]model.Company, error)
 	ListStaffMembers() ([]model.StaffMember, error)
 	ListServiceInvitations(projectID uint, serviceID uint) ([]model.ServiceInvitation, error)
@@ -54,5 +54,6 @@ type Store interface {
 	UpsertMaintainerIdentityObservation(observation *model.MaintainerIdentityObservation) (*model.MaintainerIdentityObservation, error)
 	GetLatestMaintainerIdentityObservation(source string, maintainerID uint) (*model.MaintainerIdentityObservation, error)
 	GetLatestMaintainerIdentityObservationByRef(source string, projectID uint, sourceRef string) (*model.MaintainerIdentityObservation, error)
+	ListMaintainerIdentityObservations(maintainerID uint) ([]model.MaintainerIdentityObservation, error)
 	MergeCompanies(fromID, toID uint) error
 }

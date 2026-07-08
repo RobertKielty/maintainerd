@@ -44,3 +44,7 @@ web/testdata/
 web/**/testdata/
 .next/
 ./testdata/
+
+# Maintainer PII — never commit raw reports or private data-ops notes.
+reports/
+data-operations/

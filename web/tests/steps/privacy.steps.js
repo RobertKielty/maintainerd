@@ -110,18 +110,17 @@ When("I view the projects list", async function () {
 });
 
 When("I edit my maintainer profile with field {string} set to {string}", async function (field, value) {
-  const editCard = this.page
-    .getByRole("heading", { name: "Update maintainer" })
-    .first()
-    .locator("..");
-  await expect(editCard).toBeVisible({ timeout: 15000 });
-  const editButton = editCard.getByRole("button", { name: "Edit" });
-  if (await editButton.isVisible()) {
+  const emailInput = this.page.getByRole("textbox", { name: "Email", exact: true });
+  const companySelect = this.page.getByRole("combobox", { name: "Company" });
+  const alreadyEditing = (await emailInput.count()) > 0 || (await companySelect.count()) > 0;
+  if (!alreadyEditing) {
+    const editButton = this.page.getByRole("button", { name: "Edit" });
+    await expect(editButton).toBeVisible({ timeout: 15000 });
     await editButton.click();
   }
 
   if (field === "email") {
-    const emailInput = this.page.getByRole("textbox", { name: "Email" });
+    const emailInput = this.page.getByRole("textbox", { name: "Email", exact: true });
     await expect(emailInput).toBeEnabled({ timeout: 15000 });
     await emailInput.fill(value);
     return;
@@ -180,6 +179,6 @@ Then("my maintainer profile shows email {string}", async function (email) {
 });
 
 Then("my maintainer profile shows no company", async function () {
-  const companySelect = this.page.getByRole("combobox", { name: "Company" });
-  await expect(companySelect).toHaveValue("");
+  await expect(this.page.getByRole("combobox", { name: "Company" })).toHaveCount(0);
+  await expect(this.page.locator('[class*="company"]')).toHaveCount(0);
 });

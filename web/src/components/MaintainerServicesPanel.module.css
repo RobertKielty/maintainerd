@@ -36,6 +36,29 @@
   line-height: 1.4;
 }
 
+.summaryLine {
+  margin: 6px 0 0;
+  color: var(--md-card-text, #0f172a);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.toggleButton {
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.16));
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: transparent;
+  color: var(--md-card-text-strong, #0b1220);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toggleButton:hover {
+  background: rgba(15, 23, 42, 0.06);
+}
+
 .summary {
   display: flex;
   flex-wrap: wrap;
