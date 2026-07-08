@@ -39,6 +39,11 @@ type EditConfig = {
   onAddCompany: () => void;
 };
 
+export type LfxProfileSummary = {
+  lfid?: string;
+  matchStatus?: string;
+};
+
 type MaintainerCardProps = {
   name: string;
   email: string;
@@ -46,6 +51,7 @@ type MaintainerCardProps = {
   githubEmail: string;
   status: string;
   company?: string;
+  companyId?: number | null;
   location?: string;
   country?: string;
   timezone?: string;
@@ -56,6 +62,7 @@ type MaintainerCardProps = {
   updatedNotice?: string | null;
   isEditing?: boolean;
   editConfig?: EditConfig;
+  lfxProfile?: LfxProfileSummary | null;
 };
 
 function initials(name: string) {
@@ -113,6 +120,22 @@ function PinIcon() {
   );
 }
 
+function BuildingIcon() {
+  return (
+    <svg aria-hidden="true" className={styles.icon} viewBox="0 0 24 24">
+      <path d="M4 21V4.5A1.5 1.5 0 0 1 5.5 3h7A1.5 1.5 0 0 1 14 4.5V21h-2v-2.5H8V21H4Zm2-2h4v-2H6v2Zm0-4h4v-2H6v2Zm0-4h4V9H6v2ZM16 21v-9.5a1.5 1.5 0 0 1 1.5-1.5h3A1.5 1.5 0 0 1 22 11.5V21h-2v-2h-2v2h-2Zm2-4h2v-2h-2v2Z" fill="currentColor"/>
+    </svg>
+  );
+}
+
+function LfxIcon() {
+  return (
+    <svg aria-hidden="true" className={styles.icon} viewBox="0 0 24 24">
+      <path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 1.5a8.5 8.5 0 0 1 6.36 14.15c-.83-1.6-2.86-2.9-6.36-2.9s-5.53 1.3-6.36 2.9A8.5 8.5 0 0 1 12 3.5Zm0 3a3 3 0 1 1 0 6 3 3 0 0 1 0-6Z" fill="currentColor"/>
+    </svg>
+  );
+}
+
 function CopyIcon() {
   return (
     <svg className={styles.copyIcon} viewBox="0 0 24 24" aria-hidden="true">
@@ -129,6 +152,7 @@ export default function MaintainerCard({
   githubEmail,
   status,
   company,
+  companyId,
   location,
   country,
   timezone,
@@ -138,12 +162,16 @@ export default function MaintainerCard({
   updatedNotice,
   isEditing = false,
   editConfig,
+  lfxProfile,
 }: MaintainerCardProps) {
   const displayName = name || "Unknown maintainer";
   const hasEmail = email && email !== "—" && email !== "EMAIL_MISSING";
   const githubHandle = github && github !== "—" && github !== "GITHUB_MISSING" ? github : "";
   const hasGithubEmail = githubEmail && githubEmail !== "—" && githubEmail !== "GITHUB_MISSING" && githubEmail !== email;
   const locationLine = [location, country, timezone].filter(Boolean).join(" · ");
+  const openProfileHref = lfxProfile?.lfid
+    ? `https://openprofile.dev/profile/${encodeURIComponent(lfxProfile.lfid)}`
+    : null;
   const color = avatarColor(displayName);
   const ago = timeAgo(updatedAt);
 
@@ -202,9 +230,19 @@ export default function MaintainerCard({
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
-            ) : (
-              company ? <p className={styles.company}>{company}</p> : null
-            )}
+            ) : company ? (
+              companyId ? (
+                <Link href={`/companies/${companyId}`} className={styles.companyPill}>
+                  <BuildingIcon />
+                  {company}
+                </Link>
+              ) : (
+                <span className={styles.companyPill}>
+                  <BuildingIcon />
+                  {company}
+                </span>
+              )
+            ) : null}
           </div>
           <div className={styles.heroMeta}>
             {updatedNotice ? (
@@ -321,6 +359,28 @@ export default function MaintainerCard({
                   {githubEmail}
                   <span className={styles.contactTag}>git</span>
                 </span>
+              </div>
+            ) : null}
+
+            {/* LFX / OpenProfile.dev */}
+            {!isEditing && lfxProfile ? (
+              <div className={styles.contactRow}>
+                <LfxIcon />
+                {openProfileHref ? (
+                  <a
+                    className={styles.contactLink}
+                    href={openProfileHref}
+                    target="_blank"
+                    rel="noreferrer"
+                    aria-label="OpenProfile.dev profile"
+                  >
+                    OpenProfile.dev
+                  </a>
+                ) : (
+                  <span className={styles.contactSecondary} aria-label="OpenProfile.dev status">
+                    Not on OpenProfile.dev
+                  </span>
+                )}
               </div>
             ) : null}
 

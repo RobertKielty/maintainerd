@@ -71,13 +71,34 @@
   border-bottom-color: #a91578;
 }
 
-.company {
-  margin: 0;
-  font-size: 14px;
-  color: var(--md-card-muted, rgba(15, 23, 42, 0.65));
+.companyPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-top: 2px;
+  padding: 3px 12px 3px 10px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.06);
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.75));
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  max-width: 100%;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+a.companyPill:hover,
+a.companyPill:focus-visible {
+  background: rgba(214, 34, 147, 0.12);
+  color: #d62293;
+}
+
+a.companyPill:hover .icon,
+a.companyPill:focus-visible .icon {
+  color: #d62293;
 }
 
 .companySelect {

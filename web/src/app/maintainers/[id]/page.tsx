@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/AppShell";
 import MaintainerCard, {
   CompanyOption,
+  LfxProfileSummary,
   MaintainerEditDraft,
 } from "@/components/MaintainerCard";
 import MaintainerServicesPanel, {
@@ -360,6 +361,20 @@ export default function MaintainerPage() {
     }
   };
 
+  const lfxProfile: LfxProfileSummary | null = useMemo(() => {
+    const lfxObservations = (maintainer?.observations || []).filter(
+      (observation) => observation.source === "lfx"
+    );
+    if (lfxObservations.length === 0) {
+      return null;
+    }
+    const best =
+      lfxObservations.find((observation) => observation.matchStatus === "matched" && observation.lfid) ||
+      lfxObservations.find((observation) => observation.lfid) ||
+      lfxObservations[0];
+    return { lfid: best.lfid, matchStatus: best.matchStatus };
+  }, [maintainer?.observations]);
+
   const companySuggestions = useMemo(() => {
     const query = companyDraftName.trim().toLowerCase();
     if (query.length < 2) {
@@ -418,6 +433,7 @@ export default function MaintainerPage() {
               githubEmail={maintainer.githubEmail}
               status={maintainer.status}
               company={maintainer.company}
+              companyId={maintainer.companyId}
               location={maintainer.location}
               country={maintainer.country}
               timezone={maintainer.timezone}
@@ -426,6 +442,7 @@ export default function MaintainerPage() {
               updatedAt={maintainer.updatedAt}
               updatedBy={maintainer.updatedBy}
               updatedNotice={saveNotice}
+              lfxProfile={lfxProfile}
               isEditing={isEditing}
               editConfig={canEditRecord && editDraft ? {
                 draft: editDraft,
