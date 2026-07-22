@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card } from "clo-ui/components/Card";
 import ReactMarkdown from "react-markdown";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -152,6 +152,7 @@ type ProjectReconciliationCardProps = {
   dotProjectSyncState?: DotProjectSyncStateSummary | null;
   dotProjectMaintainerCache?: DotProjectMaintainerCacheSummary | null;
   dotProjectMaintainerPullRequest?: DotProjectMaintainerPullRequestSummary | null;
+  dotProjectGeneratedMaintainersYaml?: string | null;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -294,6 +295,7 @@ export default function ProjectReconciliationCard({
   dotProjectSyncState,
   dotProjectMaintainerCache,
   dotProjectMaintainerPullRequest,
+  dotProjectGeneratedMaintainersYaml,
   maintainerRefStatus,
   maintainerRefBody,
   refLines,
@@ -338,6 +340,20 @@ export default function ProjectReconciliationCard({
     dotProjectMaintainerCache?.filename || dotProjectMaintainersFilename || "maintainers.yaml";
   const openDotProjectMaintainerPR =
     dotProjectMaintainerPullRequest?.status === "open" ? dotProjectMaintainerPullRequest : null;
+  const generatedMaintainersYaml = dotProjectGeneratedMaintainersYaml?.trim() ? dotProjectGeneratedMaintainersYaml : "";
+  const [generatedYamlCopyNotice, setGeneratedYamlCopyNotice] = useState(false);
+  const generatedYamlCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleCopyGeneratedMaintainersYaml = async () => {
+    if (!generatedMaintainersYaml) return;
+    try {
+      await navigator.clipboard.writeText(generatedMaintainersYaml);
+      setGeneratedYamlCopyNotice(true);
+      if (generatedYamlCopyTimer.current) clearTimeout(generatedYamlCopyTimer.current);
+      generatedYamlCopyTimer.current = setTimeout(() => setGeneratedYamlCopyNotice(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
   const dotProjectFiles = [
     {
       label: ".project repo",
@@ -947,6 +963,30 @@ export default function ProjectReconciliationCard({
             }}
             source={dotProjectMaintainerCacheBody}
           />
+        </div>
+      ) : dotProjectMissing && generatedMaintainersYaml ? (
+        <div className={styles.tableSection}>
+          <div className={styles.tableHeader}>
+            <h3 className={styles.tableTitle}>Generate MAINTAINERS.yaml</h3>
+          </div>
+          <p className={styles.secondary}>
+            This project does not have a <code>.project</code> repo yet. The draft below is generated from the
+            project&apos;s active maintainer-d roster — review it, then copy it into a new <code>MAINTAINERS.yaml</code>
+            file in the project&apos;s <code>.project</code> repo.
+          </p>
+          <div className={styles.dotProjectGeneratedYamlActions}>
+            <button
+              type="button"
+              className={styles.dotProjectPreviewButton}
+              onClick={handleCopyGeneratedMaintainersYaml}
+            >
+              Copy to clipboard
+            </button>
+            {generatedYamlCopyNotice ? <span className={styles.copyToast}>Copied</span> : null}
+          </div>
+          <pre className={styles.dotProjectGeneratedYamlBlock}>
+            <code>{generatedMaintainersYaml}</code>
+          </pre>
         </div>
       ) : null}
       <div className={styles.tableSection}>

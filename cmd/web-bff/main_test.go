@@ -381,6 +381,76 @@ func TestProjectDetailIncludesDotProjectMaintainerCache(t *testing.T) {
 	assert.True(t, response.DotProjectMaintainerCache.LastCheckedAt.Equal(now))
 }
 
+func TestProjectDetailGeneratesMaintainersYamlWhenNoDotProjectFile(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now().UTC().Truncate(time.Second)
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	project := model.Project{
+		Name:                     "Project Nofile",
+		Maturity:                 model.Sandbox,
+		GitHubOrg:                "project-nofile",
+		DotProjectAdoptionStatus: "not_found",
+	}
+	require.NoError(t, dbConn.Create(&project).Error)
+
+	alice := model.Maintainer{
+		Name:             "Alice Example",
+		Email:            "alice@example.org",
+		GitHubAccount:    "alice-example",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&alice).Error)
+
+	archived := model.Maintainer{
+		Name:             "Departed Maintainer",
+		Email:            "departed@example.org",
+		GitHubAccount:    "departed-example",
+		MaintainerStatus: model.ArchivedMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&archived).Error)
+
+	require.NoError(t, dbConn.Model(&project).Association("Maintainers").Append(&alice, &archived))
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+	}
+
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/projects/%d", project.ID), nil)
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+	rec := httptest.NewRecorder()
+	handler := s.requireSession(http.HandlerFunc(s.handleProject))
+	handler.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var response projectDetailResponse
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&response))
+	require.Nil(t, response.DotProjectMaintainerCache)
+	require.NotEmpty(t, response.DotProjectGeneratedMaintainersYaml)
+	assert.Contains(t, response.DotProjectGeneratedMaintainersYaml, `name: "project-maintainers"`)
+	assert.Contains(t, response.DotProjectGeneratedMaintainersYaml, "- alice-example")
+	assert.NotContains(t, response.DotProjectGeneratedMaintainersYaml, "departed-example")
+}
+
 func TestProjectDetailIncludesOpenDotProjectMaintainerPullRequestFromGitHub(t *testing.T) {
 	dbConn := setupPostgresTestDB(t)
 	store := db.NewSQLStore(dbConn)
