@@ -679,42 +679,43 @@ type maintainerRefStatus struct {
 }
 
 type projectDetailResponse struct {
-	ID                        uint                           `json:"id"`
-	Name                      string                         `json:"name"`
-	Maturity                  string                         `json:"maturity"`
-	ParentProjectID           *uint                          `json:"parentProjectId,omitempty"`
-	LegacyMaintainerRef       string                         `json:"legacyMaintainerRef,omitempty"`
-	DotProjectRepoRef         string                         `json:"dotProjectRepoRef,omitempty"`
-	DotProjectProjectRef      string                         `json:"dotProjectProjectRef,omitempty"`
-	DotProjectMaintainerRef   string                         `json:"dotProjectMaintainerRef,omitempty"`
-	DotProjectSecurityRef     string                         `json:"dotProjectSecurityRef,omitempty"`
-	DotProjectContributingRef string                         `json:"dotProjectContributingRef,omitempty"`
-	DotProjectGovernanceRef   string                         `json:"dotProjectGovernanceRef,omitempty"`
-	DotProjectSchemaVersion   string                         `json:"dotProjectSchemaVersion,omitempty"`
-	DotProjectMaintainerCount *uint                          `json:"dotProjectMaintainerCount,omitempty"`
-	DotProjectLastSyncedAt    *time.Time                     `json:"dotProjectLastSyncedAt,omitempty"`
-	DotProjectAdoptionStatus  string                         `json:"dotProjectAdoptionStatus,omitempty"`
-	DotProjectSyncState       *dotProjectSyncStateResponse   `json:"dotProjectSyncState,omitempty"`
-	DotProjectMaintainerCache *dotProjectMaintainerCacheBody `json:"dotProjectMaintainerCache,omitempty"`
-	DotProjectMaintainerPR    *dotProjectMaintainerPRStatus  `json:"dotProjectMaintainerPullRequest,omitempty"`
-	RefStatus                 maintainerRefStatus            `json:"maintainerRefStatus"`
-	LegacyMaintainerRefBody   string                         `json:"legacyMaintainerRefBody,omitempty"`
-	RefOnlyGitHub             []string                       `json:"refOnlyGitHub"`
-	RefLines                  map[string]string              `json:"refLines,omitempty"`
-	OnboardingIssue           string                         `json:"onboardingIssue,omitempty"`
-	MailingList               string                         `json:"mailingList,omitempty"`
-	Maintainers               []projectMaintainerDetail      `json:"maintainers"`
-	Services                  []serviceSummary               `json:"services"`
-	FossaTeamID               *uint                          `json:"fossaTeamId,omitempty"`
-	FossaTeamName             string                         `json:"fossaTeamName,omitempty"`
-	FossaTeamMembers          []fossaTeamMemberSummary       `json:"fossaTeamMembers,omitempty"`
-	FossaInviteIneligible     []fossaInviteIneligibleSummary `json:"fossaInviteIneligible,omitempty"`
-	FossaInviteCandidates     []fossaInviteCandidateSummary  `json:"fossaInviteCandidates,omitempty"`
-	CreatedAt                 time.Time                      `json:"createdAt"`
-	UpdatedAt                 time.Time                      `json:"updatedAt"`
-	DeletedAt                 *time.Time                     `json:"deletedAt,omitempty"`
-	UpdatedBy                 string                         `json:"updatedBy,omitempty"`
-	UpdatedAuditID            *uint                          `json:"updatedAuditId,omitempty"`
+	ID                                 uint                           `json:"id"`
+	Name                               string                         `json:"name"`
+	Maturity                           string                         `json:"maturity"`
+	ParentProjectID                    *uint                          `json:"parentProjectId,omitempty"`
+	LegacyMaintainerRef                string                         `json:"legacyMaintainerRef,omitempty"`
+	DotProjectRepoRef                  string                         `json:"dotProjectRepoRef,omitempty"`
+	DotProjectProjectRef               string                         `json:"dotProjectProjectRef,omitempty"`
+	DotProjectMaintainerRef            string                         `json:"dotProjectMaintainerRef,omitempty"`
+	DotProjectSecurityRef              string                         `json:"dotProjectSecurityRef,omitempty"`
+	DotProjectContributingRef          string                         `json:"dotProjectContributingRef,omitempty"`
+	DotProjectGovernanceRef            string                         `json:"dotProjectGovernanceRef,omitempty"`
+	DotProjectSchemaVersion            string                         `json:"dotProjectSchemaVersion,omitempty"`
+	DotProjectMaintainerCount          *uint                          `json:"dotProjectMaintainerCount,omitempty"`
+	DotProjectLastSyncedAt             *time.Time                     `json:"dotProjectLastSyncedAt,omitempty"`
+	DotProjectAdoptionStatus           string                         `json:"dotProjectAdoptionStatus,omitempty"`
+	DotProjectSyncState                *dotProjectSyncStateResponse   `json:"dotProjectSyncState,omitempty"`
+	DotProjectMaintainerCache          *dotProjectMaintainerCacheBody `json:"dotProjectMaintainerCache,omitempty"`
+	DotProjectMaintainerPR             *dotProjectMaintainerPRStatus  `json:"dotProjectMaintainerPullRequest,omitempty"`
+	DotProjectGeneratedMaintainersYaml string                         `json:"dotProjectGeneratedMaintainersYaml,omitempty"`
+	RefStatus                          maintainerRefStatus            `json:"maintainerRefStatus"`
+	LegacyMaintainerRefBody            string                         `json:"legacyMaintainerRefBody,omitempty"`
+	RefOnlyGitHub                      []string                       `json:"refOnlyGitHub"`
+	RefLines                           map[string]string              `json:"refLines,omitempty"`
+	OnboardingIssue                    string                         `json:"onboardingIssue,omitempty"`
+	MailingList                        string                         `json:"mailingList,omitempty"`
+	Maintainers                        []projectMaintainerDetail      `json:"maintainers"`
+	Services                           []serviceSummary               `json:"services"`
+	FossaTeamID                        *uint                          `json:"fossaTeamId,omitempty"`
+	FossaTeamName                      string                         `json:"fossaTeamName,omitempty"`
+	FossaTeamMembers                   []fossaTeamMemberSummary       `json:"fossaTeamMembers,omitempty"`
+	FossaInviteIneligible              []fossaInviteIneligibleSummary `json:"fossaInviteIneligible,omitempty"`
+	FossaInviteCandidates              []fossaInviteCandidateSummary  `json:"fossaInviteCandidates,omitempty"`
+	CreatedAt                          time.Time                      `json:"createdAt"`
+	UpdatedAt                          time.Time                      `json:"updatedAt"`
+	DeletedAt                          *time.Time                     `json:"deletedAt,omitempty"`
+	UpdatedBy                          string                         `json:"updatedBy,omitempty"`
+	UpdatedAuditID                     *uint                          `json:"updatedAuditId,omitempty"`
 }
 
 type dotProjectSyncStateResponse struct {
@@ -1492,6 +1493,9 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 		if status := s.dotProjectMaintainerPullRequestStatus(r.Context(), project.ID, owner, ".project", maintainerFilePath, session.AccessToken); status != nil {
 			response.DotProjectMaintainerPR = status
 		}
+	}
+	if response.DotProjectMaintainerCache == nil && response.DotProjectAdoptionStatus == "not_found" {
+		response.DotProjectGeneratedMaintainersYaml = dotproject.GenerateMaintainersRosterYAML(activeProjectMaintainerGitHubHandles(project.Maintainers))
 	}
 	if project.OnboardingIssue != nil {
 		onboardingIssue := strings.TrimSpace(*project.OnboardingIssue)

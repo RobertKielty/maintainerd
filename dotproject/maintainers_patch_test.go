@@ -56,3 +56,35 @@ func TestBuildMaintainerRosterPatchErrorsWhenProjectMaintainersTeamMissing(t *te
 	_, err := BuildMaintainerRosterPatch("maintainers: []\n", []string{"alice"})
 	require.Error(t, err)
 }
+
+func TestGenerateMaintainersRosterYAMLPopulatesActiveHandles(t *testing.T) {
+	yamlContent := GenerateMaintainersRosterYAML([]string{"Bob", "@alice", "alice"})
+
+	assert.Equal(t, `maintainers:
+  - teams:
+      - name: "project-maintainers"
+        members:
+          - bob
+          - alice
+`, yamlContent)
+}
+
+func TestGenerateMaintainersRosterYAMLAddsPlaceholderWhenNoActiveHandles(t *testing.T) {
+	yamlContent := GenerateMaintainersRosterYAML(nil)
+
+	assert.Equal(t, `maintainers:
+  - teams:
+      - name: "project-maintainers"
+        members:
+          # TODO: Add maintainer GitHub handles
+          - github-handle
+`, yamlContent)
+}
+
+func TestGenerateMaintainersRosterYAMLRoundTripsThroughDiscoveryParser(t *testing.T) {
+	yamlContent := GenerateMaintainersRosterYAML([]string{"alice", "bob"})
+
+	handles, status, parseErr := ParseProjectMaintainerHandles(yamlContent)
+	require.Equal(t, ParseStatusParsed, status, parseErr)
+	assert.ElementsMatch(t, []string{"alice", "bob"}, handles)
+}

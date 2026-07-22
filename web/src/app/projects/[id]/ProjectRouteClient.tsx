@@ -79,6 +79,7 @@ type ProjectDetail = {
   dotProjectSyncState?: DotProjectSyncState | null;
   dotProjectMaintainerCache?: DotProjectMaintainerCache | null;
   dotProjectMaintainerPullRequest?: DotProjectMaintainerPullRequest | null;
+  dotProjectGeneratedMaintainersYaml?: string;
   maintainerRefStatus: {
     url?: string;
     status: string;
@@ -188,6 +189,7 @@ const projectDataHasChanged = (current: ProjectDetail | null, next: ProjectDetai
     current.dotProjectMaintainerPullRequest?.number !== next.dotProjectMaintainerPullRequest?.number ||
     current.dotProjectMaintainerPullRequest?.updatedAt !== next.dotProjectMaintainerPullRequest?.updatedAt ||
     current.dotProjectMaintainerPullRequest?.warning !== next.dotProjectMaintainerPullRequest?.warning ||
+    current.dotProjectGeneratedMaintainersYaml !== next.dotProjectGeneratedMaintainersYaml ||
     current.maintainerRefStatus.status !== next.maintainerRefStatus.status ||
     current.maintainerRefStatus.url !== next.maintainerRefStatus.url ||
     current.maintainerRefStatus.checkedAt !== next.maintainerRefStatus.checkedAt ||
@@ -477,6 +479,7 @@ export default function ProjectRouteClient({ children }: ProjectRouteClientProps
                 dotProjectSyncState={project.dotProjectSyncState}
                 dotProjectMaintainerCache={project.dotProjectMaintainerCache}
                 dotProjectMaintainerPullRequest={project.dotProjectMaintainerPullRequest}
+                dotProjectGeneratedMaintainersYaml={project.dotProjectGeneratedMaintainersYaml}
                 maintainerRefStatus={project.maintainerRefStatus}
                 maintainerRefBody={project.legacyMaintainerRefBody}
                 refOnlyGitHub={project.refOnlyGitHub}

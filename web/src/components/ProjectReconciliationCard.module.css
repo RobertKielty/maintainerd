@@ -871,6 +871,32 @@
   box-shadow: none;
 }
 
+.dotProjectGeneratedYamlActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0;
+}
+
+.dotProjectGeneratedYamlBlock {
+  white-space: pre-wrap;
+  word-break: break-word;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--code-block-background, #1e1e1e);
+  color: var(--code-block-foreground, #d4d4d4);
+  font-family: "Fira Mono", "SFMono-Regular", Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-x: auto;
+}
+
+.copyToast {
+  font-size: 11px;
+  color: #d62293;
+  font-weight: 600;
+}
+
 .dotProjectTeamGrid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));

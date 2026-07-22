@@ -172,7 +172,7 @@ func main() {
 			DotProjectLastSyncedAt:    atlasSyncedAt,
 			DotProjectAdoptionStatus:  "adopted",
 		},
-		{Name: "Project Beacon", Maturity: model.Incubating},
+		{Name: "Project Beacon", Maturity: model.Incubating, DotProjectAdoptionStatus: "not_found"},
 		{Name: "Project Comet", Maturity: model.Sandbox},
 		{Name: "Project Fossa Full", Maturity: model.Sandbox},
 		{Name: "Project Fossa Partial", Maturity: model.Sandbox},

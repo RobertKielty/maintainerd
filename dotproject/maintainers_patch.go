@@ -123,6 +123,28 @@ func BuildMaintainerRosterPatch(source string, activeHandles []string) (*Maintai
 	}, nil
 }
 
+// GenerateMaintainersRosterYAML builds a scaffold MAINTAINERS.yaml for a project
+// that does not yet have a .project repo, populating the project-maintainers
+// team from the given active GitHub handles.
+func GenerateMaintainersRosterYAML(activeHandles []string) string {
+	handles := missingActiveHandles(activeHandles, map[string]struct{}{})
+
+	var builder strings.Builder
+	builder.WriteString("maintainers:\n")
+	builder.WriteString("  - teams:\n")
+	builder.WriteString("      - name: \"project-maintainers\"\n")
+	builder.WriteString("        members:\n")
+	if len(handles) == 0 {
+		builder.WriteString("          # TODO: Add maintainer GitHub handles\n")
+		builder.WriteString("          - github-handle\n")
+		return builder.String()
+	}
+	for _, handle := range handles {
+		builder.WriteString("          - " + handle + "\n")
+	}
+	return builder.String()
+}
+
 func NormalizeGitHubHandle(handle string) string {
 	return strings.ToLower(strings.Trim(strings.TrimSpace(handle), `@"'`))
 }
