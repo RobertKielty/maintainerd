@@ -224,6 +224,11 @@ export default function AppShell({
                 AUDIT LOGS
               </Link>
             ) : null}
+            {me?.role === "staff" ? (
+              <Link className={styles.auditButton} href="/audit/sync-runs">
+                SYNC RUNS
+              </Link>
+            ) : null}
             {canRunLFXEnrichment ? (
               <Link className={styles.auditButton} href="/lfx">
                 LFX

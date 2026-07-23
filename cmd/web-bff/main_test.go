@@ -1757,3 +1757,90 @@ func TestLFXEnrichmentRunRejectsNonAllowedStaff(t *testing.T) {
 
 	require.Equal(t, http.StatusForbidden, rec.Code)
 }
+
+func TestHandleAuditFiltersAndExcludesSyncRunsByDefault(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now()
+
+	project := model.Project{Name: "Cedar", Maturity: model.Sandbox}
+	require.NoError(t, dbConn.Create(&project).Error)
+
+	other := model.Project{Name: "Other Project", Maturity: model.Sandbox}
+	require.NoError(t, dbConn.Create(&other).Error)
+
+	old := now.Add(-48 * time.Hour)
+	recent := now.Add(-time.Hour)
+
+	logs := []model.AuditLog{
+		{Action: "PROJECT_MATURITY_UPDATE", ProjectID: &project.ID, Message: "old entry"},
+		{Action: "PROJECT_MATURITY_UPDATE", ProjectID: &other.ID, Message: "other project"},
+		{Action: actionDotProjectSyncRunStarted, Message: "sync started"},
+		{Action: actionDotProjectSyncRunFinished, Message: "sync finished"},
+	}
+	for i := range logs {
+		require.NoError(t, dbConn.Create(&logs[i]).Error)
+	}
+	require.NoError(t, dbConn.Model(&model.AuditLog{}).Where("id = ?", logs[0].ID).Update("created_at", old).Error)
+	require.NoError(t, dbConn.Model(&model.AuditLog{}).Where("id IN ?", []uint{logs[1].ID, logs[2].ID, logs[3].ID}).Update("created_at", recent).Error)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+	}
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     "staff-tester",
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	doRequest := func(query string) auditListResponse {
+		req := httptest.NewRequest(http.MethodGet, "/api/audit?"+query, nil)
+		req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+		rec := httptest.NewRecorder()
+		s.requireSession(http.HandlerFunc(s.handleAudit)).ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var response auditListResponse
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &response))
+		return response
+	}
+
+	t.Run("excludes sync run actions by default", func(t *testing.T) {
+		response := doRequest("limit=50")
+		assert.Equal(t, int64(2), response.Total)
+		for _, entry := range response.Logs {
+			assert.NotEqual(t, actionDotProjectSyncRunStarted, entry.Action)
+			assert.NotEqual(t, actionDotProjectSyncRunFinished, entry.Action)
+		}
+	})
+
+	t.Run("action filter can select sync run actions", func(t *testing.T) {
+		response := doRequest("action=" + actionDotProjectSyncRunStarted)
+		require.Equal(t, int64(1), response.Total)
+		assert.Equal(t, actionDotProjectSyncRunStarted, response.Logs[0].Action)
+	})
+
+	t.Run("filters by start and end time", func(t *testing.T) {
+		startTime := now.Add(-2 * time.Hour).Format(time.RFC3339)
+		response := doRequest("startTime=" + url.QueryEscape(startTime))
+		require.Equal(t, int64(1), response.Total)
+		assert.Equal(t, "other project", response.Logs[0].Message)
+	})
+
+	t.Run("filters by target project name", func(t *testing.T) {
+		response := doRequest("target=" + url.QueryEscape("Cedar"))
+		require.Equal(t, int64(1), response.Total)
+		assert.Equal(t, project.ID, *response.Logs[0].ProjectID)
+	})
+
+	t.Run("filters by numeric target matching project id", func(t *testing.T) {
+		response := doRequest(fmt.Sprintf("target=%d", other.ID))
+		require.Equal(t, int64(1), response.Total)
+		assert.Equal(t, other.ID, *response.Logs[0].ProjectID)
+	})
+}
