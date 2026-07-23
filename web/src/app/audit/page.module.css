@@ -46,6 +46,56 @@
   font-size: 14px;
 }
 
+.filterRow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--md-border, rgba(15, 23, 42, 0.08));
+}
+
+.filterField {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 160px;
+}
+
+.filterLabel {
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.filterInput {
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.16));
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--md-card-text, #0f172a);
+  background: var(--md-card-bg, #ffffff);
+}
+
+.resetButton {
+  border: 1px solid var(--md-border, rgba(15, 23, 42, 0.16));
+  background: transparent;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+  cursor: pointer;
+  height: fit-content;
+}
+
+.resetButton:hover {
+  color: var(--md-card-text-strong, #0b1220);
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;

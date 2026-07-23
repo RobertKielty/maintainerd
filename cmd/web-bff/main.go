@@ -60,23 +60,30 @@ func redactPostgresDSN(dsn string) (string, error) {
 }
 
 const (
-	defaultAddr              = ":8000"
-	defaultSessionCookieName = "md_session"
-	defaultStateCookieName   = "md_oauth_state"
-	defaultSessionTTL        = 8 * time.Hour
-	defaultStateTTL          = 10 * time.Minute
-	defaultDBPath            = "/data/onboarding.db"
-	defaultWebBaseURL        = "http://localhost:3000"
-	defaultRedirectCallback  = "http://localhost:8000/auth/callback"
-	loginRedirectParam       = "next"
-	headerContentType        = "Content-Type"
-	contentTypeJSON          = "application/json"
-	roleStaff                = "staff"
-	roleMaintainer           = "maintainer"
-	capabilityLFXEnrichment  = "lfx:enrichment:run"
-	onboardingIssueCacheTTL  = 15 * time.Minute
-	lfxAdminLoginsEnv        = "LFX_ENRICHMENT_ADMIN_GITHUB_LOGINS"
+	defaultAddr                     = ":8000"
+	defaultSessionCookieName        = "md_session"
+	defaultStateCookieName          = "md_oauth_state"
+	defaultSessionTTL               = 8 * time.Hour
+	defaultStateTTL                 = 10 * time.Minute
+	defaultDBPath                   = "/data/onboarding.db"
+	defaultWebBaseURL               = "http://localhost:3000"
+	defaultRedirectCallback         = "http://localhost:8000/auth/callback"
+	loginRedirectParam              = "next"
+	headerContentType               = "Content-Type"
+	contentTypeJSON                 = "application/json"
+	roleStaff                       = "staff"
+	roleMaintainer                  = "maintainer"
+	capabilityLFXEnrichment         = "lfx:enrichment:run"
+	onboardingIssueCacheTTL         = 15 * time.Minute
+	lfxAdminLoginsEnv               = "LFX_ENRICHMENT_ADMIN_GITHUB_LOGINS"
+	actionDotProjectSyncRunStarted  = "DOT_PROJECT_SYNC_RUN_STARTED"
+	actionDotProjectSyncRunFinished = "DOT_PROJECT_SYNC_RUN_FINISHED"
 )
+
+// syncRunActions are audit actions describing a dot-project sync run's lifecycle.
+// They are excluded from the general audit log view by default and surfaced on
+// their own "Sync Runs" page instead.
+var syncRunActions = []string{actionDotProjectSyncRunStarted, actionDotProjectSyncRunFinished}
 
 type server struct {
 	oauthConfig                 *oauth2.Config
@@ -3363,6 +3370,82 @@ func fossaUserHasTeam(user fossa.User, remoteTeamID uint) bool {
 	return false
 }
 
+// parseAuditActionsParam splits a comma-separated "action" query param into a
+// trimmed, non-empty list of exact action values to filter on.
+func parseAuditActionsParam(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	var actions []string
+	for _, part := range strings.Split(raw, ",") {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			actions = append(actions, trimmed)
+		}
+	}
+	return actions
+}
+
+// auditTimeLayouts are the timestamp formats accepted by the "startTime"/"endTime"
+// audit filters: RFC3339, an HTML datetime-local value (no timezone), and a bare date.
+var auditTimeLayouts = []string{time.RFC3339, "2006-01-02T15:04:05", "2006-01-02T15:04"}
+
+// parseAuditTimeParam parses an RFC3339, datetime-local, or date-only (YYYY-MM-DD)
+// timestamp. When endOfDay is true, a date-only value is treated as the end of that day.
+func parseAuditTimeParam(raw string, endOfDay bool) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	for _, layout := range auditTimeLayouts {
+		if parsed, err := time.Parse(layout, raw); err == nil {
+			return &parsed, nil
+		}
+	}
+	parsed, err := time.Parse("2006-01-02", raw)
+	if err != nil {
+		return nil, err
+	}
+	if endOfDay {
+		parsed = parsed.Add(24*time.Hour - time.Nanosecond)
+	}
+	return &parsed, nil
+}
+
+// resolveAuditTargetFilter resolves a free-text "target" query into the sets of
+// project/maintainer/staff IDs whose names match, plus a numeric ID if the
+// target itself parses as one (matched against project/maintainer/service/staff IDs).
+func (s *server) resolveAuditTargetFilter(target string) (projectIDs, maintainerIDs, staffIDs []uint, numericID uint) {
+	like := "%" + strings.ToLower(target) + "%"
+
+	var projects []model.Project
+	if err := s.store.DB().Select("id").Where("LOWER(name) LIKE ?", like).Find(&projects).Error; err == nil {
+		for _, project := range projects {
+			projectIDs = append(projectIDs, project.ID)
+		}
+	}
+
+	var maintainers []model.Maintainer
+	if err := s.store.DB().Select("id").Where("LOWER(name) LIKE ? OR LOWER(git_hub_account) LIKE ?", like, like).Find(&maintainers).Error; err == nil {
+		for _, maintainer := range maintainers {
+			maintainerIDs = append(maintainerIDs, maintainer.ID)
+		}
+	}
+
+	var staff []model.StaffMember
+	if err := s.store.DB().Select("id").Where("LOWER(name) LIKE ? OR LOWER(git_hub_account) LIKE ?", like, like).Find(&staff).Error; err == nil {
+		for _, member := range staff {
+			staffIDs = append(staffIDs, member.ID)
+		}
+	}
+
+	if value, err := strconv.ParseUint(target, 10, 64); err == nil {
+		numericID = uint(value)
+	}
+
+	return projectIDs, maintainerIDs, staffIDs, numericID
+}
+
 func (s *server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -3381,7 +3464,67 @@ func (s *server) handleAudit(w http.ResponseWriter, r *http.Request) {
 	limit := parseIntParam(r, "limit", 20, 1, 200)
 	offset := parseIntParam(r, "offset", 0, 0, 10_000_000)
 
+	query := r.URL.Query()
+	actions := parseAuditActionsParam(query.Get("action"))
+	startTime, err := parseAuditTimeParam(query.Get("startTime"), false)
+	if err != nil {
+		http.Error(w, "invalid startTime", http.StatusBadRequest)
+		return
+	}
+	endTime, err := parseAuditTimeParam(query.Get("endTime"), true)
+	if err != nil {
+		http.Error(w, "invalid endTime", http.StatusBadRequest)
+		return
+	}
+	target := strings.TrimSpace(query.Get("target"))
+
 	base := s.store.DB().Model(&model.AuditLog{})
+	if len(actions) > 0 {
+		base = base.Where("action IN ?", actions)
+	} else {
+		base = base.Where("action NOT IN ?", syncRunActions)
+	}
+	if startTime != nil {
+		base = base.Where("created_at >= ?", *startTime)
+	}
+	if endTime != nil {
+		base = base.Where("created_at <= ?", *endTime)
+	}
+	if target != "" {
+		projectIDs, maintainerIDs, staffIDs, numericID := s.resolveAuditTargetFilter(target)
+		filter := s.store.DB()
+		hasClause := false
+		addOr := func(clause string, args ...interface{}) {
+			if hasClause {
+				filter = filter.Or(clause, args...)
+			} else {
+				filter = filter.Where(clause, args...)
+			}
+			hasClause = true
+		}
+		if len(projectIDs) > 0 {
+			addOr("project_id IN ?", projectIDs)
+		}
+		if len(maintainerIDs) > 0 {
+			addOr("maintainer_id IN ?", maintainerIDs)
+		}
+		if len(staffIDs) > 0 {
+			addOr("staff_id IN ?", staffIDs)
+		}
+		if numericID > 0 {
+			addOr("project_id = ?", numericID)
+			addOr("maintainer_id = ?", numericID)
+			addOr("service_id = ?", numericID)
+			addOr("staff_id = ?", numericID)
+		}
+		if !hasClause {
+			// No target matched anything; force an empty result set.
+			base = base.Where("1 = 0")
+		} else {
+			base = base.Where(filter)
+		}
+	}
+
 	var total int64
 	if err := base.Count(&total).Error; err != nil {
 		s.logger.Printf("web-bff: handleAudit count error: %v", err)
