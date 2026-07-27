@@ -20,6 +20,9 @@ type Store interface {
 	ListMaintainers() ([]model.Maintainer, error)
 	ListMaintainersWithoutIdentityObservation(source string) ([]model.Maintainer, error)
 	GetMaintainersByProject(projectID uint) ([]model.Maintainer, error)
+	ListMaintainerProjectStatuses(projectID uint) (map[uint]model.MaintainerStatus, error)
+	GetMaintainerProjectStatuses(maintainerID uint) (map[uint]model.MaintainerStatus, error)
+	ListMaintainersActiveOnAnyProject(maintainerIDs []uint) (map[uint]bool, error)
 	GetProjectRemoteTeamMap(serviceName string) (map[uint]*model.RemoteTeam, error)
 	GetMaintainerMapByEmail() (map[string]model.Maintainer, error)
 	GetRemoteTeamByProject(projectID uint, serviceID uint) (*model.RemoteTeam, error)
@@ -33,10 +36,11 @@ type Store interface {
 	UpdateProjectLegacyMaintainerRef(projectID uint, ref string) error
 	UpdateProjectDotProjectMetadata(projectID uint, patch model.Project) error
 	PersistDotProjectSync(projectID uint, patch model.Project, state *model.DotProjectSyncState) error
-	UpdateMaintainerStatus(maintainerID uint, status model.MaintainerStatus) error
-	UpdateMaintainersStatus(ids []uint, status model.MaintainerStatus) error
+	UpdateMaintainerProjectStatus(maintainerID, projectID uint, status model.MaintainerStatus) error
+	UpdateMaintainersProjectStatus(maintainerIDs []uint, projectID uint, status model.MaintainerStatus) error
+	GetMaintainerProjectStatus(maintainerID, projectID uint) (model.MaintainerStatus, error)
 	UpdateMaintainerGitHubEmail(maintainerID uint, githubEmail string) error
-	UpdateMaintainerDetails(maintainerID uint, name, email, github, githubEmail string, location *string, status model.MaintainerStatus, companyID *uint) (*model.Maintainer, error)
+	UpdateMaintainerDetails(maintainerID uint, name, email, github, githubEmail string, location *string, companyID *uint) (*model.Maintainer, error)
 	ListCompanies() ([]model.Company, error)
 	ListStaffMembers() ([]model.StaffMember, error)
 	ListServiceInvitations(projectID uint, serviceID uint) ([]model.ServiceInvitation, error)

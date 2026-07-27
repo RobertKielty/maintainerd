@@ -21,6 +21,9 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	})
 	require.NoError(t, err)
 
+	require.NoError(t, database.SetupJoinTable(&model.Maintainer{}, "Projects", &model.MaintainerProject{}))
+	require.NoError(t, database.SetupJoinTable(&model.Project{}, "Maintainers", &model.MaintainerProject{}))
+
 	err = database.AutoMigrate(
 		&model.Company{},
 		&model.Foundation{},

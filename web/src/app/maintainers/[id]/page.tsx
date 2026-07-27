@@ -52,7 +52,6 @@ const maintainerDataHasChanged = (
     current.email !== next.email ||
     current.github !== next.github ||
     current.githubEmail !== next.githubEmail ||
-    current.status !== next.status ||
     current.company !== next.company ||
     current.companyId !== next.companyId ||
     current.location !== next.location ||
@@ -254,7 +253,6 @@ export default function MaintainerPage() {
       github: maintainer.github || "",
       githubEmail: maintainer.githubEmail || "",
       location: maintainer.location || "",
-      status: maintainer.status || "Active",
       companyId: maintainer.companyId ?? null,
     });
   }, [isEditing, maintainer]);
@@ -267,7 +265,6 @@ export default function MaintainerPage() {
       maintainer.github !== editDraft.github ||
       (maintainer.githubEmail || "") !== editDraft.githubEmail ||
       (maintainer.location || "") !== editDraft.location ||
-      maintainer.status !== editDraft.status ||
       (maintainer.companyId ?? null) !== editDraft.companyId);
 
   useEffect(() => {
@@ -295,7 +292,6 @@ export default function MaintainerPage() {
           github: editDraft.github,
           githubEmail: editDraft.githubEmail,
           location: editDraft.location || null,
-          status: editDraft.status,
           companyId: editDraft.companyId,
         }),
       });
@@ -454,7 +450,6 @@ export default function MaintainerPage() {
                 disableGitHub: disableNonStaffFields,
                 disableGitHubEmail: disableNonStaffFields,
                 disableLocation: disableNonStaffFields,
-                disableStatus: disableNonStaffFields,
                 disableCompanyAdd: companySaveStatus === "saving",
                 onEdit: () => { setIsEditing(true); setSaveError(null); },
                 onCancel: () => {
@@ -466,7 +461,6 @@ export default function MaintainerPage() {
                     github: maintainer.github || "",
                     githubEmail: maintainer.githubEmail || "",
                     location: maintainer.location || "",
-                    status: maintainer.status || "Active",
                     companyId: maintainer.companyId ?? null,
                   });
                 },

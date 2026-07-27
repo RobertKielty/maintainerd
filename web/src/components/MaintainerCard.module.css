@@ -156,24 +156,6 @@ a.companyPill:focus-visible .icon {
   white-space: nowrap;
 }
 
-.statusSelect {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  background: rgba(15, 23, 42, 0.06);
-  border: 1px solid rgba(15, 23, 42, 0.15);
-  border-radius: 8px;
-  padding: 5px 8px;
-  cursor: pointer;
-  outline: none;
-  color: var(--md-card-text-strong, #0b1220);
-}
-
-.statusSelect:focus {
-  border-color: #d62293;
-}
-
 .editButton {
   border: 0;
   border-radius: 999px;

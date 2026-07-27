@@ -14,6 +14,7 @@ import (
 type ObservationStore interface {
 	GetMaintainerMapByGitHubAccount() (map[string]model.Maintainer, error)
 	ListMaintainersWithoutIdentityObservation(source string) ([]model.Maintainer, error)
+	ListMaintainersActiveOnAnyProject(maintainerIDs []uint) (map[uint]bool, error)
 	UpsertMaintainerIdentityObservation(observation *model.MaintainerIdentityObservation) (*model.MaintainerIdentityObservation, error)
 }
 
@@ -143,8 +144,16 @@ func (e *Enricher) candidates(project model.Project, result *dotproject.Discover
 		if err != nil {
 			return nil, err
 		}
+		maintainerIDs := make([]uint, 0, len(maintainers))
 		for _, maintainer := range maintainers {
-			if maintainer.MaintainerStatus != "" && maintainer.MaintainerStatus != model.ActiveMaintainer {
+			maintainerIDs = append(maintainerIDs, maintainer.ID)
+		}
+		activeOnAnyProject, err := e.Store.ListMaintainersActiveOnAnyProject(maintainerIDs)
+		if err != nil {
+			return nil, err
+		}
+		for _, maintainer := range maintainers {
+			if !activeOnAnyProject[maintainer.ID] {
 				continue
 			}
 			candidates = appendCandidate(candidates, seen, candidate{

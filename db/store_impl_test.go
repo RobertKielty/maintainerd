@@ -19,6 +19,9 @@ func setupTestDB(t *testing.T) *gorm.DB {
 	})
 	require.NoError(t, err)
 
+	require.NoError(t, db.SetupJoinTable(&model.Maintainer{}, "Projects", &model.MaintainerProject{}))
+	require.NoError(t, db.SetupJoinTable(&model.Project{}, "Maintainers", &model.MaintainerProject{}))
+
 	err = db.AutoMigrate(
 		&model.Company{},
 		&model.Project{},
@@ -190,12 +193,76 @@ func TestGetMaintainersByProject(t *testing.T) {
 		assert.NotEmpty(t, m.Name)
 		assert.NotEmpty(t, m.Email)
 		assert.NotEmpty(t, m.GitHubAccount)
-		assert.True(t, m.MaintainerStatus.IsValid())
 		assert.NotNil(t, m.CompanyID)
 
 		// Projects field should NOT be populated (not preloaded)
 		assert.Empty(t, m.Projects)
 	})
+}
+
+func TestUpdateMaintainerProjectStatus_IsolatedPerProject(t *testing.T) {
+	db := setupTestDB(t)
+	_, project1, project2, _, maintainer2, _ := seedTestData(t, db)
+	store := NewSQLStore(db)
+
+	// maintainer2 belongs to both project1 and project2. Setting their status on
+	// project1 alone must not change their status on project2.
+	require.NoError(t, store.UpdateMaintainerProjectStatus(maintainer2.ID, project1.ID, model.EmeritusMaintainer))
+
+	statusOnProject1, err := store.GetMaintainerProjectStatus(maintainer2.ID, project1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.EmeritusMaintainer, statusOnProject1)
+
+	statusOnProject2, err := store.GetMaintainerProjectStatus(maintainer2.ID, project2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ActiveMaintainer, statusOnProject2)
+}
+
+func TestUpdateMaintainersProjectStatus_IsolatedPerProject(t *testing.T) {
+	db := setupTestDB(t)
+	_, project1, project2, maintainer1, maintainer2, _ := seedTestData(t, db)
+	store := NewSQLStore(db)
+
+	require.NoError(t, store.UpdateMaintainersProjectStatus([]uint{maintainer1.ID, maintainer2.ID}, project1.ID, model.RetiredMaintainer))
+
+	statuses, err := store.ListMaintainerProjectStatuses(project1.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.RetiredMaintainer, statuses[maintainer1.ID])
+	assert.Equal(t, model.RetiredMaintainer, statuses[maintainer2.ID])
+
+	statusOnProject2, err := store.GetMaintainerProjectStatus(maintainer2.ID, project2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.ActiveMaintainer, statusOnProject2)
+}
+
+func TestListMaintainersActiveOnAnyProject(t *testing.T) {
+	db := setupTestDB(t)
+	_, project1, _, maintainer1, maintainer2, maintainer3 := seedTestData(t, db)
+	store := NewSQLStore(db)
+
+	// maintainer1 is only on project1; archive them there, leaving no active projects.
+	require.NoError(t, store.UpdateMaintainerProjectStatus(maintainer1.ID, project1.ID, model.ArchivedMaintainer))
+
+	active, err := store.ListMaintainersActiveOnAnyProject([]uint{maintainer1.ID, maintainer2.ID, maintainer3.ID})
+	require.NoError(t, err)
+	assert.False(t, active[maintainer1.ID])
+	assert.True(t, active[maintainer2.ID])
+	// maintainer3 is Active by DB default on project2 even though the deprecated
+	// global field was seeded as Emeritus.
+	assert.True(t, active[maintainer3.ID])
+}
+
+func TestGetMaintainerProjectStatuses(t *testing.T) {
+	db := setupTestDB(t)
+	_, project1, project2, _, maintainer2, _ := seedTestData(t, db)
+	store := NewSQLStore(db)
+
+	require.NoError(t, store.UpdateMaintainerProjectStatus(maintainer2.ID, project1.ID, model.EmeritusMaintainer))
+
+	statuses, err := store.GetMaintainerProjectStatuses(maintainer2.ID)
+	require.NoError(t, err)
+	assert.Equal(t, model.EmeritusMaintainer, statuses[project1.ID])
+	assert.Equal(t, model.ActiveMaintainer, statuses[project2.ID])
 }
 
 func TestDotProjectSyncState(t *testing.T) {

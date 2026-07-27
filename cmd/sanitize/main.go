@@ -1,0 +1,266 @@
+package main
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
+	"net/url"
+	"os"
+	"regexp"
+	"strings"
+	"time"
+
+	"maintainerd/db"
+	"maintainerd/model"
+
+	"gorm.io/gorm"
+)
+
+const defaultDBPath = "/data/maintainers.db"
+
+func main() {
+	ctx := context.Background()
+
+	dbDriver := envOr("MD_DB_DRIVER", "sqlite")
+	dbDSN := envOr("MD_DB_DSN", "")
+	dbPath := envOr("MD_DB_PATH", defaultDBPath)
+	if dbDriver == "postgres" && dbDSN == "" {
+		log.Fatal("MD_DB_DSN is required when MD_DB_DRIVER=postgres")
+	}
+	dsn := dbPath
+	if dbDriver == "postgres" {
+		dsn = dbDSN
+	}
+
+	dbConn, err := db.OpenGorm(dbDriver, dsn, &gorm.Config{})
+	if err != nil {
+		log.Fatalf("failed to open DB: %v", err)
+	}
+	store := db.NewSQLStore(dbConn)
+
+	if err := sanitize(ctx, store); err != nil {
+		log.Fatalf("sanitize failed: %v", err)
+	}
+
+	log.Println("sanitize completed successfully")
+}
+
+func sanitize(ctx context.Context, store *db.SQLStore) error {
+	// Ensure cache table exists.
+	if err := store.DB().AutoMigrate(&model.MaintainerRefCache{}); err != nil {
+		return fmt.Errorf("auto-migrate cache: %w", err)
+	}
+
+	projects, err := store.ListProjectsWithMaintainers()
+	if err != nil {
+		return fmt.Errorf("list projects: %w", err)
+	}
+
+	client := &http.Client{Timeout: 20 * time.Second}
+	for _, p := range projects {
+		ref := strings.TrimSpace(p.LegacyMaintainerRef)
+		if ref == "" {
+			continue
+		}
+
+		cache, cacheErr := store.GetMaintainerRefCache(p.ID)
+		if cacheErr != nil {
+			log.Printf("sanitize: could not load cache for project %d (%s): %v", p.ID, p.Name, cacheErr)
+		}
+		body, meta, notModified, err := fetchMaintainerRef(ctx, client, ref, cache)
+		if err != nil {
+			log.Printf("sanitize: skip project %d (%s), fetch error: %v", p.ID, p.Name, err)
+			continue
+		}
+		if body == "" {
+			log.Printf("sanitize: skip project %d (%s), empty body", p.ID, p.Name)
+			continue
+		}
+
+		projectStatuses, err := store.ListMaintainerProjectStatuses(p.ID)
+		if err != nil {
+			log.Printf("sanitize: could not load per-project statuses for project %d (%s): %v", p.ID, p.Name, err)
+			continue
+		}
+
+		for _, m := range p.Maintainers {
+			handle := strings.TrimSpace(strings.ToLower(m.GitHubAccount))
+			name := strings.TrimSpace(m.Name)
+			if name == "" && (handle == "" || handle == "github_missing") {
+				continue
+			}
+
+			present := false
+			if handle != "" && handle != "github_missing" && handlePresent(body, handle) {
+				present = true
+			} else if namePresent(body, name) {
+				present = true
+			}
+
+			currentStatus := projectStatuses[m.ID]
+			if present {
+				if currentStatus != model.ActiveMaintainer {
+					if err := store.UpdateMaintainerProjectStatus(m.ID, p.ID, model.ActiveMaintainer); err != nil {
+						log.Printf("sanitize: failed to mark active maintainer %d (%s) for project %d (%s): %v", m.ID, name, p.ID, p.Name, err)
+					} else {
+						log.Printf("sanitize: marked maintainer %d (%s) active for project %d (%s)", m.ID, name, p.ID, p.Name)
+					}
+				}
+				continue
+			}
+
+			if currentStatus != model.ArchivedMaintainer {
+				if err := store.UpdateMaintainerProjectStatus(m.ID, p.ID, model.ArchivedMaintainer); err != nil {
+					log.Printf("sanitize: failed to archive maintainer %d (%s) for project %d (%s): %v", m.ID, handle, p.ID, p.Name, err)
+				} else {
+					log.Printf("sanitize: archived maintainer %d (%s) for project %d (%s)", m.ID, handle, p.ID, p.Name)
+				}
+			}
+		}
+
+		// Update cache metadata.
+		now := time.Now()
+		if cache == nil {
+			cache = &model.MaintainerRefCache{ProjectID: p.ID}
+		}
+		if !notModified {
+			cache.ETag = meta.ETag
+			cache.LastModified = meta.LastModified
+			cache.BodyHash = hashBody(body)
+			cache.Body = body
+		}
+		cache.LastChecked = &now
+		if err := store.UpsertMaintainerRefCache(cache); err != nil {
+			log.Printf("sanitize: failed to upsert cache for project %d: %v", p.ID, err)
+		}
+	}
+	return nil
+}
+
+type fetchMeta struct {
+	ETag         string
+	LastModified *time.Time
+}
+
+func fetchMaintainerRef(ctx context.Context, client *http.Client, urlStr string, cache *model.MaintainerRefCache) (string, fetchMeta, bool, error) {
+	raw, err := normalizeMaintainerRefURL(urlStr)
+	if err != nil {
+		return "", fetchMeta{}, false, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
+	if err != nil {
+		return "", fetchMeta{}, false, err
+	}
+	// Only send conditional headers when we have a cached body to fall back on;
+	// otherwise a 304 would leave us with no content to re-validate maintainer status against.
+	if cache != nil && cache.Body != "" {
+		if cache.ETag != "" {
+			req.Header.Set("If-None-Match", cache.ETag)
+		}
+		if cache.LastModified != nil {
+			req.Header.Set("If-Modified-Since", cache.LastModified.UTC().Format(http.TimeFormat))
+		}
+	}
+	// #nosec G704 -- URL is validated and allowlisted in normalizeMaintainerRefURL.
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fetchMeta{}, false, err
+	}
+	defer resp.Body.Close()
+	meta := fetchMeta{}
+	if etag := resp.Header.Get("ETag"); etag != "" {
+		meta.ETag = etag
+	}
+	if lm := resp.Header.Get("Last-Modified"); lm != "" {
+		if t, err := time.Parse(http.TimeFormat, lm); err == nil {
+			meta.LastModified = &t
+		}
+	}
+
+	if resp.StatusCode == http.StatusNotModified {
+		return cache.Body, fetchMeta{ETag: cache.ETag, LastModified: cache.LastModified}, true, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", meta, false, fmt.Errorf("status %d", resp.StatusCode)
+	}
+	b, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", meta, false, err
+	}
+	return string(b), meta, false, nil
+}
+
+func normalizeMaintainerRefURL(u string) (string, error) {
+	raw := toRawGitHubURL(u)
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	if !strings.EqualFold(parsed.Scheme, "https") {
+		return "", fmt.Errorf("unsupported scheme")
+	}
+	if !strings.EqualFold(parsed.Host, "raw.githubusercontent.com") {
+		return "", fmt.Errorf("unsupported host %q", parsed.Host)
+	}
+	return parsed.String(), nil
+}
+
+func toRawGitHubURL(u string) string {
+	if strings.Contains(u, "github.com") && strings.Contains(u, "/blob/") {
+		parts := strings.Split(u, "github.com/")
+		if len(parts) == 2 {
+			rest := parts[1]
+			rest = strings.Replace(rest, "/blob/", "/", 1)
+			return "https://raw.githubusercontent.com/" + rest
+		}
+	}
+	return u
+}
+
+// Matches GitHub handles with or without a leading @ (and github.com/ links).
+var handleRE = regexp.MustCompile(`(?i)(?:github\.com/|@)?([a-z0-9](?:[a-z0-9-]{0,38}))`)
+
+func handlePresent(body, handle string) bool {
+	lower := strings.ToLower(body)
+	handle = strings.ToLower(handle)
+	matches := handleRE.FindAllStringSubmatch(lower, -1)
+	for _, m := range matches {
+		if len(m) > 1 && strings.EqualFold(m[1], handle) {
+			return true
+		}
+	}
+	return false
+}
+
+var spaceRE = regexp.MustCompile(`\s+`)
+
+func namePresent(body, name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	escaped := regexp.QuoteMeta(name)
+	// allow flexible whitespace between name parts
+	escaped = spaceRE.ReplaceAllString(escaped, `\s+`)
+	re, err := regexp.Compile(`(?i)(^|[^a-z0-9_])` + escaped + `([^a-z0-9_]|$)`)
+	if err != nil {
+		return false
+	}
+	return re.FindStringIndex(body) != nil
+}
+
+func envOr(key, fallback string) string {
+	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func hashBody(body string) string {
+	sum := sha256.Sum256([]byte(body))
+	return hex.EncodeToString(sum[:])
+}

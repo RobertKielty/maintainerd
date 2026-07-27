@@ -83,15 +83,17 @@ func (m Maturity) IsValid() bool {
 //
 //		has a Company Affiliation
 //	  	Fot kubernetes specifically, a maintainer or may not have voting rights on a Project,
-//	    has a status of Active, Emeritus or Retired
+//	    has a status of Active, Emeritus or Retired, tracked per-project on MaintainerProject.Status
 type Maintainer struct {
 	gorm.Model
-	Name             string
-	Email            string           `gorm:"size:254;default:EMAIL_MISSING"` // Primary/Work Email
-	GitHubAccount    string           `gorm:"size:100;default:GITHUB_MISSING"`
-	GitHubEmail      string           `gorm:"size:100;default:GITHUB_MISSING"` // Email used for Git Commits on GitHub
-	LFXUserID        string           `gorm:"size:128;index"`
-	MaintainerStatus MaintainerStatus `gorm:"type:text"`
+	Name          string
+	Email         string `gorm:"size:254;default:EMAIL_MISSING"` // Primary/Work Email
+	GitHubAccount string `gorm:"size:100;default:GITHUB_MISSING"`
+	GitHubEmail   string `gorm:"size:100;default:GITHUB_MISSING"` // Email used for Git Commits on GitHub
+	LFXUserID     string `gorm:"size:128;index"`
+	// Deprecated: status is per-project now (see MaintainerProject.Status). This field is
+	// retained only as a migration safety net and is no longer read or written.
+	MaintainerStatus MaintainerStatus `gorm:"type:text;default:Active"`
 	ImportWarnings   string
 	Location         *string   `gorm:"size:255"`
 	Country          *string   `gorm:"size:2"`
@@ -108,6 +110,7 @@ type MaintainerRefCache struct {
 	ETag         string `gorm:"size:255"`
 	LastModified *time.Time
 	BodyHash     string `gorm:"size:128"` // sha256 hex
+	Body         string `gorm:"type:text"`
 	LastChecked  *time.Time
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
@@ -151,10 +154,9 @@ type DotProjectSyncState struct {
 type Collaborator struct {
 	gorm.Model
 	Name          string
-	Email         string    `gorm:"size:254;default:EMAIL_MISSING"`
-	GitHubEmail   *string   `gorm:"size:254;default:GITHUB_EMAIL_MISSING"`
-	GitHubAccount *string   `gorm:"size:100;default:GITHUB_MISSING"`
-	Projects      []Project `gorm:"many2many:maintainer_projects;joinForeignKey:MaintainerID;joinReferences:ProjectID"`
+	Email         string  `gorm:"size:254;default:EMAIL_MISSING"`
+	GitHubEmail   *string `gorm:"size:254;default:GITHUB_EMAIL_MISSING"`
+	GitHubAccount *string `gorm:"size:100;default:GITHUB_MISSING"`
 	LastLogin     time.Time
 	RegisteredAt  time.Time
 }
@@ -186,11 +188,12 @@ type Project struct {
 }
 
 type MaintainerProject struct {
-	MaintainerID uint       `gorm:"primaryKey;index"` // FK + index
-	ProjectID    uint       `gorm:"primaryKey;index"` // FK + index
-	JoinedAt     time.Time  `gorm:"autoCreateTime"`
-	Maintainer   Maintainer `gorm:"foreignKey:MaintainerID;constraint:OnDelete:CASCADE"`
-	Project      Project    `gorm:"foreignKey:ProjectID;constraint:OnDelete:CASCADE"`
+	MaintainerID uint             `gorm:"primaryKey;index"` // FK + index
+	ProjectID    uint             `gorm:"primaryKey;index"` // FK + index
+	Status       MaintainerStatus `gorm:"type:text;default:Active"`
+	JoinedAt     time.Time        `gorm:"autoCreateTime"`
+	Maintainer   Maintainer       `gorm:"foreignKey:MaintainerID;constraint:OnDelete:CASCADE"`
+	Project      Project          `gorm:"foreignKey:ProjectID;constraint:OnDelete:CASCADE"`
 }
 
 type MaintainerIdentityObservation struct {

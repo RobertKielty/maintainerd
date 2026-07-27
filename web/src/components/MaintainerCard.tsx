@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { Card } from "clo-ui/components/Card";
 import styles from "./MaintainerCard.module.css";
 
@@ -11,7 +12,6 @@ export type MaintainerEditDraft = {
   github: string;
   githubEmail: string;
   location: string;
-  status: string;
   companyId: number | null;
 };
 
@@ -30,7 +30,6 @@ type EditConfig = {
   disableGitHub?: boolean;
   disableGitHubEmail?: boolean;
   disableLocation?: boolean;
-  disableStatus?: boolean;
   disableCompanyAdd?: boolean;
   onEdit: () => void;
   onCancel: () => void;
@@ -216,10 +215,12 @@ export default function MaintainerCard({
         {/* ── Hero ── */}
         <div className={styles.hero}>
           {showAvatarPhoto ? (
-            <img
+            <Image
               className={styles.avatarImage}
               src={`https://github.com/${githubHandle}.png?size=112`}
               alt={`${displayName} on GitHub`}
+              width={56}
+              height={56}
               onError={() => setErroredAvatarHandle(githubHandle)}
             />
           ) : (
@@ -274,24 +275,9 @@ export default function MaintainerCard({
             {updatedNotice ? (
               <span className={styles.savedBadge}>{updatedNotice}</span>
             ) : null}
-            {isEditing && draft ? (
-              <select
-                className={styles.statusSelect}
-                value={draft.status}
-                aria-label="Status"
-                disabled={editConfig?.disableStatus}
-                onChange={(e) => editConfig?.onChange({ ...draft, status: e.target.value })}
-              >
-                <option value="Active">Active</option>
-                <option value="Emeritus">Emeritus</option>
-                <option value="Retired">Retired</option>
-                <option value="Archived">Archived</option>
-              </select>
-            ) : (
-              status && status !== "Active" ? (
-                <span className={styles.statusBadge}>{status}</span>
-              ) : null
-            )}
+            {status && status !== "Active" ? (
+              <span className={styles.statusBadge}>{status}</span>
+            ) : null}
             {canEdit && !isEditing ? (
               <button className={styles.editButton} type="button" onClick={editConfig?.onEdit}>
                 Edit
@@ -360,11 +346,13 @@ export default function MaintainerCard({
                   rel="noreferrer"
                   aria-label={`GitHub: ${githubHandle}`}
                 >
-                  <img
+                  <Image
                     className={styles.githubAvatar}
                     src={`https://github.com/${githubHandle}.png?size=40`}
                     alt=""
                     aria-hidden="true"
+                    width={18}
+                    height={18}
                     onError={(e) => { e.currentTarget.style.display = "none"; }}
                   />
                   {githubHandle}
