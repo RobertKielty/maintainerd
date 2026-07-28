@@ -201,6 +201,13 @@ func main() {
 	); err != nil {
 		log.Fatalf("seed: association failed: %v", err)
 	}
+	// Antonio Example is Active on Project Atlas but Emeritus on Project Comet,
+	// giving the maintainer detail page a mixed-status example to render.
+	if err := dbConn.Model(&model.MaintainerProject{}).
+		Where("maintainer_id = ? AND project_id = ?", maintainers[0].ID, projects[2].ID).
+		Update("status", model.EmeritusMaintainer).Error; err != nil {
+		log.Fatalf("seed: maintainer project status update failed: %v", err)
+	}
 
 	fossa := model.Service{Name: "FOSSA", Description: "License compliance"}
 	snyk := model.Service{Name: "Snyk", Description: "License compliance"}

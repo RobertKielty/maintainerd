@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +22,11 @@ import (
 )
 
 const defaultDBPath = "/data/maintainers.db"
+
+// defaultIntervalSeconds mirrors the CronJob schedule in
+// deploy/manifests/cronjob-sanitize.yaml ("*/5 * * * *"). Override with
+// MD_SANITIZE_INTERVAL_SECONDS if that schedule ever changes.
+const defaultIntervalSeconds = 300
 
 func main() {
 	ctx := context.Background()
@@ -51,7 +57,7 @@ func main() {
 
 func sanitize(ctx context.Context, store *db.SQLStore) error {
 	// Ensure cache table exists.
-	if err := store.DB().AutoMigrate(&model.MaintainerRefCache{}); err != nil {
+	if err := store.DB().AutoMigrate(&model.MaintainerRefCache{}, &model.SanitizeRunStatus{}); err != nil {
 		return fmt.Errorf("auto-migrate cache: %w", err)
 	}
 
@@ -137,6 +143,17 @@ func sanitize(ctx context.Context, store *db.SQLStore) error {
 		if err := store.UpsertMaintainerRefCache(cache); err != nil {
 			log.Printf("sanitize: failed to upsert cache for project %d: %v", p.ID, err)
 		}
+	}
+
+	intervalSeconds := defaultIntervalSeconds
+	if v := envOr("MD_SANITIZE_INTERVAL_SECONDS", ""); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			intervalSeconds = n
+		}
+	}
+	runStatus := &model.SanitizeRunStatus{LastRunAt: time.Now(), IntervalSeconds: intervalSeconds}
+	if err := store.UpsertSanitizeRunStatus(runStatus); err != nil {
+		log.Printf("sanitize: failed to record run status: %v", err)
 	}
 	return nil
 }

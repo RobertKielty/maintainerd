@@ -53,6 +53,8 @@ type Store interface {
 	UpsertRemoteUserTeam(link *model.RemoteTeamUser) (*model.RemoteTeamUser, error)
 	GetMaintainerRefCache(projectID uint) (*model.MaintainerRefCache, error)
 	UpsertMaintainerRefCache(cache *model.MaintainerRefCache) error
+	GetSanitizeRunStatus() (*model.SanitizeRunStatus, error)
+	UpsertSanitizeRunStatus(status *model.SanitizeRunStatus) error
 	GetDotProjectSyncState(projectID uint) (*model.DotProjectSyncState, error)
 	UpsertDotProjectSyncState(state *model.DotProjectSyncState) error
 	UpsertMaintainerIdentityObservation(observation *model.MaintainerIdentityObservation) (*model.MaintainerIdentityObservation, error)

@@ -525,6 +525,30 @@ func (s *SQLStore) UpsertMaintainerRefCache(cache *model.MaintainerRefCache) err
 	return s.db.Save(cache).Error
 }
 
+// GetSanitizeRunStatus returns the singleton sanitize run-status row, or nil
+// if the sanitize job has never recorded a completed run.
+func (s *SQLStore) GetSanitizeRunStatus() (*model.SanitizeRunStatus, error) {
+	var status model.SanitizeRunStatus
+	err := s.db.Where("id = ?", 1).First(&status).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+// UpsertSanitizeRunStatus records the sanitize job's most recent completed
+// run. It always writes to the singleton row (ID=1).
+func (s *SQLStore) UpsertSanitizeRunStatus(status *model.SanitizeRunStatus) error {
+	if status == nil {
+		return nil
+	}
+	status.ID = 1
+	return s.db.Save(status).Error
+}
+
 // GetDotProjectSyncState returns the cached sync metadata for a project's
 // dot-project repository, or nil if none exists.
 func (s *SQLStore) GetDotProjectSyncState(projectID uint) (*model.DotProjectSyncState, error) {

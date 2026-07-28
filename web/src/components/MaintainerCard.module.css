@@ -341,10 +341,55 @@ a.companyPill:focus-visible .icon {
   color: var(--md-card-muted, rgba(15, 23, 42, 0.5));
 }
 
+.projectGroup {
+  margin-bottom: 14px;
+}
+
+.projectGroup:last-child {
+  margin-bottom: 0;
+}
+
+.projectGroupHeading {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.55));
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.chipGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chipRefLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.07);
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+  flex-shrink: 0;
+}
+
+.chipRefLink:hover {
+  background: rgba(214, 34, 147, 0.16);
+  color: #d62293;
+}
+
+.chipRefIcon {
+  width: 12px;
+  height: 12px;
 }
 
 .chip {
@@ -373,6 +418,20 @@ a.companyPill:focus-visible .icon {
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.syncNote {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.5));
+}
+
+.chipStatus {
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+  font-weight: 500;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.4px;
 }
 
 /* ── Edit actions ─────────────────────────────────────── */

@@ -7,6 +7,7 @@ import MaintainerCard, {
   CompanyOption,
   LfxProfileSummary,
   MaintainerEditDraft,
+  SanitizeStatus,
 } from "@/components/MaintainerCard";
 import MaintainerServicesPanel, {
   MaintainerServiceView,
@@ -30,7 +31,7 @@ type MaintainerDetail = {
   location?: string;
   country?: string;
   timezone?: string;
-  projects: { id: number; name: string }[];
+  projects: { id: number; name: string; status: string; refUrl?: string }[];
   services?: MaintainerServiceView[];
   observations?: IdentityObservation[];
   createdAt: string;
@@ -71,7 +72,9 @@ const maintainerDataHasChanged = (
   for (let index = 0; index < current.projects.length; index += 1) {
     if (
       current.projects[index].id !== next.projects[index].id ||
-      current.projects[index].name !== next.projects[index].name
+      current.projects[index].name !== next.projects[index].name ||
+      current.projects[index].status !== next.projects[index].status ||
+      current.projects[index].refUrl !== next.projects[index].refUrl
     ) {
       return true;
     }
@@ -97,6 +100,7 @@ export default function MaintainerPage() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [companySaveStatus, setCompanySaveStatus] = useState<"idle" | "saving">("idle");
   const [companySaveError, setCompanySaveError] = useState<string | null>(null);
+  const [sanitizeStatus, setSanitizeStatus] = useState<SanitizeStatus | null>(null);
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const maintainerId = params?.id;
@@ -183,6 +187,32 @@ export default function MaintainerPage() {
       }
     };
   }, [apiBaseUrl, authBaseUrl, error, isEditing, maintainer, maintainerId, pollIntervalMs, router]);
+
+  useEffect(() => {
+    let alive = true;
+    const loadSanitizeStatus = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/sanitize-status`, {
+          credentials: "include",
+        });
+        if (!response.ok) {
+          return;
+        }
+        const data = (await response.json()) as SanitizeStatus;
+        if (alive) {
+          setSanitizeStatus(data);
+        }
+      } catch {
+        // Ignore; the freshness note simply stays hidden.
+      }
+    };
+    void loadSanitizeStatus();
+    const intervalId = window.setInterval(loadSanitizeStatus, 60000);
+    return () => {
+      alive = false;
+      window.clearInterval(intervalId);
+    };
+  }, [apiBaseUrl]);
 
   useEffect(() => {
     let alive = true;
@@ -439,6 +469,7 @@ export default function MaintainerPage() {
               updatedBy={maintainer.updatedBy}
               updatedNotice={saveNotice}
               lfxProfile={lfxProfile}
+              sanitizeStatus={sanitizeStatus}
               isEditing={isEditing}
               editConfig={canEditRecord && editDraft ? {
                 draft: editDraft,

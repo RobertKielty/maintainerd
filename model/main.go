@@ -116,6 +116,17 @@ type MaintainerRefCache struct {
 	UpdatedAt    time.Time
 }
 
+// SanitizeRunStatus is a singleton row (ID=1) recording when the sanitize
+// reconciliation job (which periodically re-checks each project's maintainer
+// reference file and flips per-project maintainer status) last completed, so
+// the UI can tell users how fresh that status is and when it will next be
+// re-checked.
+type SanitizeRunStatus struct {
+	ID              uint `gorm:"primaryKey"`
+	LastRunAt       time.Time
+	IntervalSeconds int
+}
+
 // DotProjectSyncState stores sync metadata for the files discovered in a
 // project's .project repository.
 type DotProjectSyncState struct {

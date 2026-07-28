@@ -308,6 +308,7 @@ func main() {
 	mux.Handle("/auth/test-login", s.withCORS(http.HandlerFunc(s.handleTestLogin)))
 	mux.Handle("/auth/logout", s.withCORS(http.HandlerFunc(s.handleLogout)))
 	mux.Handle("/api/me", s.withCORS(s.requireSession(http.HandlerFunc(s.handleMe))))
+	mux.Handle("/api/sanitize-status", s.withCORS(s.requireSession(http.HandlerFunc(s.handleSanitizeStatus))))
 	mux.Handle("/api/projects", s.withCORS(s.requireSession(http.HandlerFunc(s.handleProjects))))
 	mux.Handle("/api/projects/recent", s.withCORS(s.requireSession(http.HandlerFunc(s.handleRecentProjects))))
 	mux.Handle("/api/projects/", s.withCORS(s.requireSession(http.HandlerFunc(s.handleProject))))
@@ -560,6 +561,37 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(headerContentType, contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		s.logger.Printf("web-bff: handleMe encode error: %v", err)
+	}
+}
+
+type sanitizeStatusResponse struct {
+	LastRunAt       *time.Time `json:"lastRunAt,omitempty"`
+	NextRunAt       *time.Time `json:"nextRunAt,omitempty"`
+	IntervalSeconds int        `json:"intervalSeconds,omitempty"`
+}
+
+// handleSanitizeStatus reports when the sanitize job (which periodically
+// re-checks each project's maintainer file and updates per-project
+// maintainer status) last ran and when it is next expected to run, so the UI
+// can make clear how fresh that status is.
+func (s *server) handleSanitizeStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.store.GetSanitizeRunStatus()
+	if err != nil {
+		s.logger.Printf("web-bff: handleSanitizeStatus: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	response := sanitizeStatusResponse{}
+	if status != nil {
+		lastRunAt := status.LastRunAt
+		nextRunAt := status.LastRunAt.Add(time.Duration(status.IntervalSeconds) * time.Second)
+		response.LastRunAt = &lastRunAt
+		response.NextRunAt = &nextRunAt
+		response.IntervalSeconds = status.IntervalSeconds
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.logger.Printf("web-bff: handleSanitizeStatus encode error: %v", err)
 	}
 }
 
@@ -2196,6 +2228,7 @@ type maintainerProjectResponse struct {
 	ID     uint   `json:"id"`
 	Name   string `json:"name"`
 	Status string `json:"status"`
+	RefURL string `json:"refUrl,omitempty"`
 }
 
 type maintainerIdentityObservationResponse struct {
@@ -2568,10 +2601,20 @@ func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, incl
 		if status == model.ActiveMaintainer {
 			activeOnAnyProject = true
 		}
+		refURL := ""
+		if ref := strings.TrimSpace(project.LegacyMaintainerRef); ref != "" {
+			refURL = githubBlobURL(ref)
+			if cache, err := s.store.GetMaintainerRefCache(project.ID); err == nil && cache != nil && cache.Body != "" {
+				if line := findMaintainerRefLine(cache.Body, maintainer.GitHubAccount, maintainer.Name); line > 0 {
+					refURL = fmt.Sprintf("%s#L%d", refURL, line)
+				}
+			}
+		}
 		projects = append(projects, maintainerProjectResponse{
 			ID:     project.ID,
 			Name:   project.Name,
 			Status: string(status),
+			RefURL: refURL,
 		})
 	}
 
@@ -7737,6 +7780,54 @@ func sanitizeLogString(s string) string {
 		"\t", " ",
 	)
 	return replaced.Replace(s)
+}
+
+// githubBlobURL converts a raw.githubusercontent.com maintainer ref URL back
+// into a browsable github.com/.../blob/... URL so it can carry a #Lnn line
+// anchor. URLs that are already blob URLs, or that don't match the raw
+// pattern, are returned unchanged.
+func githubBlobURL(ref string) string {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, "github.com") && strings.Contains(trimmed, "/blob/") {
+		return trimmed
+	}
+	if rest, ok := strings.CutPrefix(trimmed, "https://raw.githubusercontent.com/"); ok {
+		parts := strings.SplitN(rest, "/", 3)
+		if len(parts) == 3 {
+			return fmt.Sprintf("https://github.com/%s/%s/blob/%s", parts[0], parts[1], parts[2])
+		}
+	}
+	return trimmed
+}
+
+// findMaintainerRefLine returns the best-effort 1-based line number where a
+// maintainer's GitHub handle (or, failing that, their name) appears in a
+// maintainer ref file body. Returns 0 if no match is found.
+func findMaintainerRefLine(body, handle, name string) int {
+	if body == "" {
+		return 0
+	}
+	handle = strings.ToLower(strings.TrimSpace(handle))
+	lines := strings.Split(body, "\n")
+	if handle != "" && handle != "github_missing" {
+		for i, line := range lines {
+			if strings.Contains(strings.ToLower(line), handle) {
+				return i + 1
+			}
+		}
+	}
+	name = strings.TrimSpace(name)
+	if name != "" {
+		for i, line := range lines {
+			if strings.Contains(line, name) {
+				return i + 1
+			}
+		}
+	}
+	return 0
 }
 
 func buildMaintainerRefLines(refBody string) map[string]string {
