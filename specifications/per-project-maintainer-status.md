@@ -1,6 +1,6 @@
 # Spec: Per-Project Maintainer Status
 
-Status: draft for review. No application code written yet.
+Status: implementation in progress on this branch/PR.
 Branch: `fix/per-project-maintainer-status` (created from `main`).
 
 ## Problem

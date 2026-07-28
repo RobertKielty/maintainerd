@@ -382,9 +382,15 @@ a.companyPill:focus-visible .icon {
   flex-shrink: 0;
 }
 
-.chipRefLink:hover {
+.chipRefLink:hover,
+.chipRefLink:focus-visible {
   background: rgba(214, 34, 147, 0.16);
   color: #d62293;
+}
+
+.chipRefLink:focus-visible {
+  outline: 2px solid #d62293;
+  outline-offset: 2px;
 }
 
 .chipRefIcon {
@@ -424,14 +430,6 @@ a.companyPill:focus-visible .icon {
   margin: 8px 0 0;
   font-size: 12px;
   color: var(--md-card-muted, rgba(15, 23, 42, 0.5));
-}
-
-.chipStatus {
-  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
-  font-weight: 500;
-  text-transform: uppercase;
-  font-size: 11px;
-  letter-spacing: 0.4px;
 }
 
 /* ── Edit actions ─────────────────────────────────────── */

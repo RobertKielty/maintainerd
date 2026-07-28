@@ -1791,7 +1791,7 @@ func activeProjectMaintainerGitHubHandles(maintainers []model.Maintainer, projec
 	handles := make([]string, 0, len(maintainers))
 	seen := map[string]struct{}{}
 	for _, maintainer := range maintainers {
-		if projectStatuses[maintainer.ID] != model.ActiveMaintainer {
+		if projectStatuses[maintainer.ID].OrDefault(model.ActiveMaintainer) != model.ActiveMaintainer {
 			continue
 		}
 		normalized := dotproject.NormalizeGitHubHandle(maintainer.GitHubAccount)
@@ -2597,7 +2597,7 @@ func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, incl
 	activeOnAnyProject := false
 	projects := make([]maintainerProjectResponse, 0, len(maintainer.Projects))
 	for _, project := range maintainer.Projects {
-		status := projectStatuses[project.ID]
+		status := projectStatuses[project.ID].OrDefault(model.ActiveMaintainer)
 		if status == model.ActiveMaintainer {
 			activeOnAnyProject = true
 		}
@@ -2618,9 +2618,22 @@ func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, incl
 		})
 	}
 
+	// Not active anywhere: prefer a more specific status over the Archived
+	// fallback when any project has it, so an Emeritus/Retired maintainer
+	// doesn't display an incorrect "Archived" badge.
 	overallStatus := string(model.ArchivedMaintainer)
 	if activeOnAnyProject {
 		overallStatus = string(model.ActiveMaintainer)
+	} else {
+	preferredStatus:
+		for _, preferred := range []model.MaintainerStatus{model.EmeritusMaintainer, model.RetiredMaintainer} {
+			for _, status := range projectStatuses {
+				if status == preferred {
+					overallStatus = string(preferred)
+					break preferredStatus
+				}
+			}
+		}
 	}
 
 	response := maintainerDetailResponse{

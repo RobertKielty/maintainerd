@@ -6,6 +6,8 @@ import Image from "next/image";
 import { Card } from "clo-ui/components/Card";
 import styles from "./MaintainerCard.module.css";
 
+const STATUS_GROUP_ORDER = ["Emeritus", "Retired", "Archived"];
+
 export type MaintainerEditDraft = {
   name: string;
   email: string;
@@ -246,22 +248,25 @@ export default function MaintainerCard({
     return { ...item, key: item.id ?? `${item.name}-${i}` };
   });
   const activeProjects = normalizedProjects.filter((p) => !p.status || p.status === "Active");
-  const emeritusProjects = normalizedProjects.filter((p) => p.status && p.status !== "Active");
+  const inactiveProjects = normalizedProjects.filter((p) => p.status && p.status !== "Active");
+  // Group non-active projects by their actual status, rather than lumping every
+  // non-Active status under a single "Emeritus Maintainer" heading — a maintainer
+  // can be Retired or Archived on a project without being Emeritus there.
+  const inactiveStatuses = Array.from(new Set(inactiveProjects.map((p) => p.status as string))).sort(
+    (a, b) => STATUS_GROUP_ORDER.indexOf(a) - STATUS_GROUP_ORDER.indexOf(b),
+  );
+  const inactiveGroups = inactiveStatuses.map((status) => ({
+    status,
+    heading: status === "Emeritus" ? "Emeritus Maintainer" : `${status} Maintainer`,
+    items: inactiveProjects.filter((p) => p.status === status),
+  }));
   const renderProjectChip = (item: (typeof normalizedProjects)[number]) => {
-    const showStatusSuffix = item.status && item.status !== "Active" && item.status !== "Emeritus";
-    const statusSuffix = showStatusSuffix ? (
-      <span className={styles.chipStatus}> · {item.status}</span>
-    ) : null;
     const pill = item.id ? (
       <Link className={styles.chip} href={`/projects/${item.id}`}>
         {item.name}
-        {statusSuffix}
       </Link>
     ) : (
-      <span className={styles.chipPlain}>
-        {item.name}
-        {statusSuffix}
-      </span>
+      <span className={styles.chipPlain}>{item.name}</span>
     );
     return (
       <span key={item.key} className={styles.chipGroup}>
@@ -600,12 +605,12 @@ export default function MaintainerCard({
                     <div className={styles.chips}>{activeProjects.map(renderProjectChip)}</div>
                   </div>
                 ) : null}
-                {emeritusProjects.length > 0 ? (
-                  <div className={styles.projectGroup}>
-                    <h2 className={styles.projectGroupHeading}>Emeritus Maintainer</h2>
-                    <div className={styles.chips}>{emeritusProjects.map(renderProjectChip)}</div>
+                {inactiveGroups.map((group) => (
+                  <div key={group.status} className={styles.projectGroup}>
+                    <h2 className={styles.projectGroupHeading}>{group.heading}</h2>
+                    <div className={styles.chips}>{group.items.map(renderProjectChip)}</div>
                   </div>
-                ) : null}
+                ))}
               </>
             )}
             {sanitizeStatus?.lastRunAt ? (

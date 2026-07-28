@@ -27,6 +27,16 @@ func (s MaintainerStatus) IsValid() bool {
 	return false
 }
 
+// OrDefault returns s if it is a known status, otherwise fallback. Use this when
+// reading a per-project status that may be empty (join row never wrote a status)
+// or otherwise invalid, so callers don't silently treat a maintainer as inactive.
+func (s MaintainerStatus) OrDefault(fallback MaintainerStatus) MaintainerStatus {
+	if s.IsValid() {
+		return s
+	}
+	return fallback
+}
+
 func (s *MaintainerStatus) Scan(value interface{ any }) error {
 	v, ok := value.(string)
 	if !ok {
@@ -82,8 +92,8 @@ func (m Maturity) IsValid() bool {
 // Optionally, a Maintainer
 //
 //		has a Company Affiliation
-//	  	Fot kubernetes specifically, a maintainer or may not have voting rights on a Project,
-//	    has a status of Active, Emeritus or Retired, tracked per-project on MaintainerProject.Status
+//	  	For kubernetes specifically, a maintainer may or may not have voting rights on a Project,
+//	    has a status of Active, Emeritus, Retired or Archived, tracked per-project on MaintainerProject.Status
 type Maintainer struct {
 	gorm.Model
 	Name          string

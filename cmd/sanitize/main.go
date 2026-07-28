@@ -21,8 +21,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const defaultDBPath = "/data/maintainers.db"
-
 // defaultIntervalSeconds mirrors the CronJob schedule in
 // deploy/manifests/cronjob-sanitize.yaml ("*/5 * * * *"). Override with
 // MD_SANITIZE_INTERVAL_SECONDS if that schedule ever changes.
@@ -31,18 +29,12 @@ const defaultIntervalSeconds = 300
 func main() {
 	ctx := context.Background()
 
-	dbDriver := envOr("MD_DB_DRIVER", "sqlite")
 	dbDSN := envOr("MD_DB_DSN", "")
-	dbPath := envOr("MD_DB_PATH", defaultDBPath)
-	if dbDriver == "postgres" && dbDSN == "" {
-		log.Fatal("MD_DB_DSN is required when MD_DB_DRIVER=postgres")
-	}
-	dsn := dbPath
-	if dbDriver == "postgres" {
-		dsn = dbDSN
+	if dbDSN == "" {
+		log.Fatal("MD_DB_DSN is required")
 	}
 
-	dbConn, err := db.OpenGorm(dbDriver, dsn, &gorm.Config{})
+	dbConn, err := db.OpenGorm("postgres", dbDSN, &gorm.Config{})
 	if err != nil {
 		log.Fatalf("failed to open DB: %v", err)
 	}

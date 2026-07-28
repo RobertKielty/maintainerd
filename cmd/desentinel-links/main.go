@@ -44,8 +44,6 @@ import (
 	"gorm.io/gorm"
 )
 
-const defaultDBPath = "/data/maintainers.db"
-
 type auditMetadata struct {
 	Mode              string `json:"mode"`
 	Email             string `json:"email"`
@@ -77,18 +75,12 @@ func main() {
 	liveCheck := flag.Bool("live-check", true, "fetch each project's current maintainers file to corroborate links lacking a recorded foundation-CSV name")
 	flag.Parse()
 
-	dbDriver := envOr("MD_DB_DRIVER", "sqlite")
 	dbDSN := envOr("MD_DB_DSN", "")
-	dbPath := envOr("MD_DB_PATH", defaultDBPath)
-	if dbDriver == "postgres" && dbDSN == "" {
-		log.Fatal("MD_DB_DSN is required when MD_DB_DRIVER=postgres")
-	}
-	dsn := dbPath
-	if dbDriver == "postgres" {
-		dsn = dbDSN
+	if dbDSN == "" {
+		log.Fatal("MD_DB_DSN is required")
 	}
 
-	conn, err := db.OpenGorm(dbDriver, dsn, &gorm.Config{})
+	conn, err := db.OpenGorm("postgres", dbDSN, &gorm.Config{})
 	if err != nil {
 		log.Fatalf("failed to open DB: %v", err)
 	}
