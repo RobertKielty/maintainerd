@@ -402,22 +402,21 @@ func TestProjectDetailGeneratesMaintainersYamlWhenNoDotProjectFile(t *testing.T)
 	require.NoError(t, dbConn.Create(&project).Error)
 
 	alice := model.Maintainer{
-		Name:             "Alice Example",
-		Email:            "alice@example.org",
-		GitHubAccount:    "alice-example",
-		MaintainerStatus: model.ActiveMaintainer,
+		Name:          "Alice Example",
+		Email:         "alice@example.org",
+		GitHubAccount: "alice-example",
 	}
 	require.NoError(t, dbConn.Create(&alice).Error)
 
 	archived := model.Maintainer{
-		Name:             "Departed Maintainer",
-		Email:            "departed@example.org",
-		GitHubAccount:    "departed-example",
-		MaintainerStatus: model.ArchivedMaintainer,
+		Name:          "Departed Maintainer",
+		Email:         "departed@example.org",
+		GitHubAccount: "departed-example",
 	}
 	require.NoError(t, dbConn.Create(&archived).Error)
 
 	require.NoError(t, dbConn.Model(&project).Association("Maintainers").Append(&alice, &archived))
+	require.NoError(t, store.UpdateMaintainerProjectStatus(archived.ID, project.ID, model.ArchivedMaintainer))
 
 	s := &server{
 		store:      store,
@@ -1635,12 +1634,19 @@ func TestLFXEnrichmentRunStartsAsyncAndRecordsProgress(t *testing.T) {
 	}
 	require.NoError(t, dbConn.Create(&staff).Error)
 	alice := model.Maintainer{
-		Name:             "Alice Example",
-		Email:            "alice@example.org",
-		GitHubAccount:    "alice-example",
-		MaintainerStatus: model.ActiveMaintainer,
+		Name:          "Alice Example",
+		Email:         "alice@example.org",
+		GitHubAccount: "alice-example",
 	}
 	require.NoError(t, dbConn.Create(&alice).Error)
+
+	project := model.Project{
+		Name:      "Project Enrichment",
+		Maturity:  model.Sandbox,
+		GitHubOrg: "project-enrichment",
+	}
+	require.NoError(t, dbConn.Create(&project).Error)
+	require.NoError(t, dbConn.Model(&project).Association("Maintainers").Append(&alice))
 
 	s := &server{
 		store:      store,

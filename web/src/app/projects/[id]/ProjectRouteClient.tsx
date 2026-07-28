@@ -575,7 +575,7 @@ export default function ProjectRouteClient({ children }: ProjectRouteClientProps
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     credentials: "include",
-                    body: JSON.stringify({ ids, status: statusValue }),
+                    body: JSON.stringify({ ids, status: statusValue, projectId: Number(projectId) }),
                   });
                   await handleRefresh();
                 }}

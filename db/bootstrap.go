@@ -220,11 +220,10 @@ func loadMaintainersAndProjects(db *gorm.DB, spreadsheetID, credentialsPath stri
 			}
 
 			maintainer := model.Maintainer{
-				Name:             name,
-				GitHubAccount:    github,
-				GitHubEmail:      githubEmail,
-				Email:            email,
-				MaintainerStatus: model.ActiveMaintainer,
+				Name:          name,
+				GitHubAccount: github,
+				GitHubEmail:   githubEmail,
+				Email:         email,
 			}
 			if company.ID != 0 {
 				maintainer.CompanyID = &company.ID
@@ -705,7 +704,6 @@ func MapFossaUserToMaintainerOrCollaborator(db *gorm.DB, user fossa.User) (model
 				Email:         user.Email,
 				GitHubAccount: user.GitHub.Name,
 				LastLogin:     user.LastVisit,
-				Projects:      nil,
 				RegisteredAt:  user.Joined,
 			}
 			if err := db.FirstOrCreate(&c).Error; err == nil {

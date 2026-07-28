@@ -308,6 +308,7 @@ func main() {
 	mux.Handle("/auth/test-login", s.withCORS(http.HandlerFunc(s.handleTestLogin)))
 	mux.Handle("/auth/logout", s.withCORS(http.HandlerFunc(s.handleLogout)))
 	mux.Handle("/api/me", s.withCORS(s.requireSession(http.HandlerFunc(s.handleMe))))
+	mux.Handle("/api/sanitize-status", s.withCORS(s.requireSession(http.HandlerFunc(s.handleSanitizeStatus))))
 	mux.Handle("/api/projects", s.withCORS(s.requireSession(http.HandlerFunc(s.handleProjects))))
 	mux.Handle("/api/projects/recent", s.withCORS(s.requireSession(http.HandlerFunc(s.handleRecentProjects))))
 	mux.Handle("/api/projects/", s.withCORS(s.requireSession(http.HandlerFunc(s.handleProject))))
@@ -560,6 +561,37 @@ func (s *server) handleMe(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set(headerContentType, contentTypeJSON)
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		s.logger.Printf("web-bff: handleMe encode error: %v", err)
+	}
+}
+
+type sanitizeStatusResponse struct {
+	LastRunAt       *time.Time `json:"lastRunAt,omitempty"`
+	NextRunAt       *time.Time `json:"nextRunAt,omitempty"`
+	IntervalSeconds int        `json:"intervalSeconds,omitempty"`
+}
+
+// handleSanitizeStatus reports when the sanitize job (which periodically
+// re-checks each project's maintainer file and updates per-project
+// maintainer status) last ran and when it is next expected to run, so the UI
+// can make clear how fresh that status is.
+func (s *server) handleSanitizeStatus(w http.ResponseWriter, r *http.Request) {
+	status, err := s.store.GetSanitizeRunStatus()
+	if err != nil {
+		s.logger.Printf("web-bff: handleSanitizeStatus: %v", err)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
+	response := sanitizeStatusResponse{}
+	if status != nil {
+		lastRunAt := status.LastRunAt
+		nextRunAt := status.LastRunAt.Add(time.Duration(status.IntervalSeconds) * time.Second)
+		response.LastRunAt = &lastRunAt
+		response.NextRunAt = &nextRunAt
+		response.IntervalSeconds = status.IntervalSeconds
+	}
+	w.Header().Set(headerContentType, contentTypeJSON)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.logger.Printf("web-bff: handleSanitizeStatus encode error: %v", err)
 	}
 }
 
@@ -1243,7 +1275,11 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 		refOnlyGitHub = []string{}
 	}
 
-	maintainers := summarizeMaintainerDetails(project.Maintainers, refMatches)
+	projectStatuses, err := s.store.ListMaintainerProjectStatuses(project.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: load maintainer statuses for project=%d failed: %v", project.ID, err)
+	}
+	maintainers := summarizeMaintainerDetails(project.Maintainers, refMatches, projectStatuses)
 	services := make([]serviceSummary, 0, len(project.Services))
 	for _, service := range project.Services {
 		services = append(services, serviceSummary{
@@ -1398,7 +1434,11 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			fossaInviteIneligible = classifyIneligibleMaintainers(project.Maintainers)
+			projectStatuses, statusErr := s.store.ListMaintainerProjectStatuses(project.ID)
+			if statusErr != nil {
+				s.logger.Printf("web-bff: load maintainer statuses for project=%d failed: %v", project.ID, statusErr)
+			}
+			fossaInviteIneligible = classifyIneligibleMaintainers(project.Maintainers, projectStatuses)
 			if role == roleStaff {
 				pendingInviteEmails := make(map[string]struct{})
 				if invites, err := s.store.ListServiceInvitations(project.ID, serviceID); err == nil {
@@ -1413,7 +1453,7 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 				}
 				s.logger.Printf("web-bff: build invite candidates project=%d remoteTeamID=%d fossaTeamEmails=%v pendingInviteEmails=%d",
 					project.ID, serviceTeam.RemoteTeamID, fossaTeamEmails, len(pendingInviteEmails))
-				fossaInviteCandidates = buildFossaInviteCandidates(project.Maintainers, fossaTeamEmails, pendingInviteEmails)
+				fossaInviteCandidates = buildFossaInviteCandidates(project.Maintainers, projectStatuses, fossaTeamEmails, pendingInviteEmails)
 			}
 		}
 	}
@@ -1502,7 +1542,11 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if response.DotProjectMaintainerCache == nil && response.DotProjectAdoptionStatus == "not_found" {
-		response.DotProjectGeneratedMaintainersYaml = dotproject.GenerateMaintainersRosterYAML(activeProjectMaintainerGitHubHandles(project.Maintainers))
+		projectStatuses, err := s.store.ListMaintainerProjectStatuses(project.ID)
+		if err != nil {
+			s.logger.Printf("web-bff: load maintainer statuses for project=%d failed: %v", project.ID, err)
+		}
+		response.DotProjectGeneratedMaintainersYaml = dotproject.GenerateMaintainersRosterYAML(activeProjectMaintainerGitHubHandles(project.Maintainers, projectStatuses))
 	}
 	if project.OnboardingIssue != nil {
 		onboardingIssue := strings.TrimSpace(*project.OnboardingIssue)
@@ -1743,11 +1787,11 @@ func staffIdentityForSession(store *db.SQLStore, session *session) (*uint, strin
 	return staffID, staffName
 }
 
-func activeProjectMaintainerGitHubHandles(maintainers []model.Maintainer) []string {
+func activeProjectMaintainerGitHubHandles(maintainers []model.Maintainer, projectStatuses map[uint]model.MaintainerStatus) []string {
 	handles := make([]string, 0, len(maintainers))
 	seen := map[string]struct{}{}
 	for _, maintainer := range maintainers {
-		if maintainer.MaintainerStatus != model.ActiveMaintainer {
+		if projectStatuses[maintainer.ID].OrDefault(model.ActiveMaintainer) != model.ActiveMaintainer {
 			continue
 		}
 		normalized := dotproject.NormalizeGitHubHandle(maintainer.GitHubAccount)
@@ -1842,7 +1886,11 @@ func (s *server) handleDotProjectPullRequest(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	patch, err := dotproject.BuildMaintainerRosterPatch(*syncState.MaintainersFileBody, activeProjectMaintainerGitHubHandles(project.Maintainers))
+	projectStatuses, err := s.store.ListMaintainerProjectStatuses(project.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: load maintainer statuses for project=%d failed: %v", project.ID, err)
+	}
+	patch, err := dotproject.BuildMaintainerRosterPatch(*syncState.MaintainersFileBody, activeProjectMaintainerGitHubHandles(project.Maintainers, projectStatuses))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
@@ -2177,8 +2225,10 @@ type maintainerDetailResponse struct {
 }
 
 type maintainerProjectResponse struct {
-	ID   uint   `json:"id"`
-	Name string `json:"name"`
+	ID     uint   `json:"id"`
+	Name   string `json:"name"`
+	Status string `json:"status"`
+	RefURL string `json:"refUrl,omitempty"`
 }
 
 type maintainerIdentityObservationResponse struct {
@@ -2367,19 +2417,13 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "failed to update maintainer", http.StatusInternalServerError)
 			return
 		}
-		status := model.MaintainerStatus(strings.TrimSpace(req.Status))
 		if maintainerEditSelf {
-			status = before.MaintainerStatus
 			req.Name = before.Name
 			req.GitHub = before.GitHubAccount
 			req.GitHubEmail = before.GitHubEmail
 			req.Location = before.Location
 		}
-		if !status.IsValid() {
-			http.Error(w, "invalid status", http.StatusBadRequest)
-			return
-		}
-		updated, err := s.store.UpdateMaintainerDetails(id, req.Name, req.Email, req.GitHub, req.GitHubEmail, req.Location, status, req.CompanyID)
+		updated, err := s.store.UpdateMaintainerDetails(id, req.Name, req.Email, req.GitHub, req.GitHubEmail, req.Location, req.CompanyID)
 		if err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				http.Error(w, "maintainer not found", http.StatusNotFound)
@@ -2426,12 +2470,6 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 		afterGitHub := normalizeValue(updated.GitHubAccount, "GITHUB_MISSING")
 		if beforeGitHub != afterGitHub {
 			changes["github"] = map[string]string{"from": beforeGitHub, "to": afterGitHub}
-		}
-		if before.MaintainerStatus != updated.MaintainerStatus {
-			changes["status"] = map[string]string{
-				"from": string(before.MaintainerStatus),
-				"to":   string(updated.MaintainerStatus),
-			}
 		}
 		beforeCompany := ""
 		if before.CompanyID != nil {
@@ -2551,12 +2589,51 @@ func (s *server) loadMaintainerWithRelations(id uint) (*model.Maintainer, error)
 }
 
 func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, includeServices bool) maintainerDetailResponse {
+	projectStatuses, err := s.store.GetMaintainerProjectStatuses(maintainer.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: load project statuses for maintainer=%d failed: %v", maintainer.ID, err)
+	}
+
+	activeOnAnyProject := false
 	projects := make([]maintainerProjectResponse, 0, len(maintainer.Projects))
 	for _, project := range maintainer.Projects {
+		status := projectStatuses[project.ID].OrDefault(model.ActiveMaintainer)
+		if status == model.ActiveMaintainer {
+			activeOnAnyProject = true
+		}
+		refURL := ""
+		if ref := strings.TrimSpace(project.LegacyMaintainerRef); ref != "" {
+			refURL = githubBlobURL(ref)
+			if cache, err := s.store.GetMaintainerRefCache(project.ID); err == nil && cache != nil && cache.Body != "" {
+				if line := findMaintainerRefLine(cache.Body, maintainer.GitHubAccount, maintainer.Name); line > 0 {
+					refURL = fmt.Sprintf("%s#L%d", refURL, line)
+				}
+			}
+		}
 		projects = append(projects, maintainerProjectResponse{
-			ID:   project.ID,
-			Name: project.Name,
+			ID:     project.ID,
+			Name:   project.Name,
+			Status: string(status),
+			RefURL: refURL,
 		})
+	}
+
+	// Not active anywhere: prefer a more specific status over the Archived
+	// fallback when any project has it, so an Emeritus/Retired maintainer
+	// doesn't display an incorrect "Archived" badge.
+	overallStatus := string(model.ArchivedMaintainer)
+	if activeOnAnyProject {
+		overallStatus = string(model.ActiveMaintainer)
+	} else {
+	preferredStatus:
+		for _, preferred := range []model.MaintainerStatus{model.EmeritusMaintainer, model.RetiredMaintainer} {
+			for _, status := range projectStatuses {
+				if status == preferred {
+					overallStatus = string(preferred)
+					break preferredStatus
+				}
+			}
+		}
 	}
 
 	response := maintainerDetailResponse{
@@ -2565,7 +2642,7 @@ func (s *server) buildMaintainerDetailResponse(maintainer model.Maintainer, incl
 		Email:       normalizeValue(maintainer.Email, "EMAIL_MISSING"),
 		GitHub:      normalizeValue(maintainer.GitHubAccount, "GITHUB_MISSING"),
 		GitHubEmail: normalizeValue(maintainer.GitHubEmail, "GITHUB_MISSING"),
-		Status:      string(maintainer.MaintainerStatus),
+		Status:      overallStatus,
 		Projects:    projects,
 		CreatedAt:   maintainer.CreatedAt,
 		UpdatedAt:   maintainer.UpdatedAt,
@@ -3629,13 +3706,13 @@ type maintainerUpdateRequest struct {
 	GitHub      string  `json:"github"`
 	GitHubEmail string  `json:"githubEmail"`
 	Location    *string `json:"location"`
-	Status      string  `json:"status"`
 	CompanyID   *uint   `json:"companyId"`
 }
 
 type maintainerStatusUpdateRequest struct {
-	IDs    []uint `json:"ids"`
-	Status string `json:"status"`
+	IDs       []uint `json:"ids"`
+	ProjectID uint   `json:"projectId"`
+	Status    string `json:"status"`
 }
 
 func (s *server) handleMaintainerStatusUpdate(w http.ResponseWriter, r *http.Request) {
@@ -3662,14 +3739,18 @@ func (s *server) handleMaintainerStatusUpdate(w http.ResponseWriter, r *http.Req
 		http.Error(w, "no maintainer ids provided", http.StatusBadRequest)
 		return
 	}
+	if req.ProjectID == 0 {
+		http.Error(w, "projectId is required", http.StatusBadRequest)
+		return
+	}
 	status := model.MaintainerStatus(strings.TrimSpace(req.Status))
 	if !status.IsValid() {
 		http.Error(w, "invalid status", http.StatusBadRequest)
 		return
 	}
 
-	if err := s.store.UpdateMaintainersStatus(req.IDs, status); err != nil {
-		s.logger.Printf("web-bff: maintainer status update failed ids=%v status=%s err=%v", req.IDs, status, err)
+	if err := s.store.UpdateMaintainersProjectStatus(req.IDs, req.ProjectID, status); err != nil {
+		s.logger.Printf("web-bff: maintainer status update failed ids=%v project=%d status=%s err=%v", req.IDs, req.ProjectID, status, err)
 		http.Error(w, "failed to update maintainers", http.StatusInternalServerError)
 		return
 	}
@@ -5732,6 +5813,10 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 		}
 		maintainers = filtered
 	}
+	projectStatuses, err := s.store.ListMaintainerProjectStatuses(project.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: load maintainer statuses for project=%d failed: %v", project.ID, err)
+	}
 	serviceID, err := s.getFossaServiceID()
 	if err != nil {
 		http.Error(w, "failed to resolve FOSSA service", http.StatusInternalServerError)
@@ -5750,7 +5835,7 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 			Errors:  map[string]string{},
 		}
 		for _, maintainer := range maintainers {
-			if maintainer.MaintainerStatus != "" && maintainer.MaintainerStatus != model.ActiveMaintainer {
+			if projectStatuses[maintainer.ID] != model.ActiveMaintainer {
 				resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
 				continue
 			}
@@ -5800,7 +5885,7 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 		Errors:  map[string]string{},
 	}
 	for _, maintainer := range maintainers {
-		if maintainer.MaintainerStatus != "" && maintainer.MaintainerStatus != model.ActiveMaintainer {
+		if projectStatuses[maintainer.ID] != model.ActiveMaintainer {
 			resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
 			continue
 		}
@@ -6025,9 +6110,13 @@ func (s *server) handleFossaInviteRefresh(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	projectStatuses, err := s.store.ListMaintainerProjectStatuses(project.ID)
+	if err != nil {
+		s.logger.Printf("web-bff: load maintainer statuses for project=%d failed: %v", project.ID, err)
+	}
 	activeMaintainers := make(map[string]model.Maintainer)
 	for _, maintainer := range project.Maintainers {
-		if maintainer.MaintainerStatus != "" && maintainer.MaintainerStatus != model.ActiveMaintainer {
+		if projectStatuses[maintainer.ID] != model.ActiveMaintainer {
 			continue
 		}
 		email := strings.TrimSpace(maintainer.Email)
@@ -6403,11 +6492,11 @@ func (s *server) ensureFossaTeam(project model.Project, client *fossa.Client) (*
 	return createdTeam, false, err
 }
 
-func classifyIneligibleMaintainers(maintainers []model.Maintainer) []fossaInviteIneligibleSummary {
+func classifyIneligibleMaintainers(maintainers []model.Maintainer, projectStatuses map[uint]model.MaintainerStatus) []fossaInviteIneligibleSummary {
 	results := make([]fossaInviteIneligibleSummary, 0)
 	for _, m := range maintainers {
 		var reasons []string
-		if m.MaintainerStatus != "" && m.MaintainerStatus != model.ActiveMaintainer {
+		if projectStatuses[m.ID] != model.ActiveMaintainer {
 			reasons = append(reasons, "Not active")
 		}
 		email := strings.TrimSpace(m.Email)
@@ -6436,7 +6525,7 @@ func classifyIneligibleMaintainers(maintainers []model.Maintainer) []fossaInvite
 	return results
 }
 
-func buildFossaInviteCandidates(maintainers []model.Maintainer, teamEmails []string, pendingInviteEmails map[string]struct{}) []fossaInviteCandidateSummary {
+func buildFossaInviteCandidates(maintainers []model.Maintainer, projectStatuses map[uint]model.MaintainerStatus, teamEmails []string, pendingInviteEmails map[string]struct{}) []fossaInviteCandidateSummary {
 	teamEmailSet := make(map[string]struct{}, len(teamEmails))
 	for _, email := range teamEmails {
 		normalized := strings.TrimSpace(email)
@@ -6452,7 +6541,7 @@ func buildFossaInviteCandidates(maintainers []model.Maintainer, teamEmails []str
 	}
 	results := make([]fossaInviteCandidateSummary, 0)
 	for _, m := range maintainers {
-		if m.MaintainerStatus != "" && m.MaintainerStatus != model.ActiveMaintainer {
+		if projectStatuses[m.ID] != model.ActiveMaintainer {
 			continue
 		}
 		email := strings.TrimSpace(m.Email)
@@ -7543,7 +7632,7 @@ func summarizeMaintainers(maintainers []model.Maintainer) []maintainerSummary {
 	return result
 }
 
-func summarizeMaintainerDetails(maintainers []model.Maintainer, refMatches map[uint]bool) []projectMaintainerDetail {
+func summarizeMaintainerDetails(maintainers []model.Maintainer, refMatches map[uint]bool, projectStatuses map[uint]model.MaintainerStatus) []projectMaintainerDetail {
 	seen := make(map[string]struct{})
 	result := make([]projectMaintainerDetail, 0, len(maintainers))
 	for _, maintainer := range maintainers {
@@ -7565,7 +7654,7 @@ func summarizeMaintainerDetails(maintainers []model.Maintainer, refMatches map[u
 			Name:            name,
 			GitHub:          github,
 			InMaintainerRef: refMatches[maintainer.ID],
-			Status:          string(maintainer.MaintainerStatus),
+			Status:          string(projectStatuses[maintainer.ID]),
 			Company:         strings.TrimSpace(maintainer.Company.Name),
 		})
 	}
@@ -7704,6 +7793,54 @@ func sanitizeLogString(s string) string {
 		"\t", " ",
 	)
 	return replaced.Replace(s)
+}
+
+// githubBlobURL converts a raw.githubusercontent.com maintainer ref URL back
+// into a browsable github.com/.../blob/... URL so it can carry a #Lnn line
+// anchor. URLs that are already blob URLs, or that don't match the raw
+// pattern, are returned unchanged.
+func githubBlobURL(ref string) string {
+	trimmed := strings.TrimSpace(ref)
+	if trimmed == "" {
+		return ""
+	}
+	if strings.Contains(trimmed, "github.com") && strings.Contains(trimmed, "/blob/") {
+		return trimmed
+	}
+	if rest, ok := strings.CutPrefix(trimmed, "https://raw.githubusercontent.com/"); ok {
+		parts := strings.SplitN(rest, "/", 3)
+		if len(parts) == 3 {
+			return fmt.Sprintf("https://github.com/%s/%s/blob/%s", parts[0], parts[1], parts[2])
+		}
+	}
+	return trimmed
+}
+
+// findMaintainerRefLine returns the best-effort 1-based line number where a
+// maintainer's GitHub handle (or, failing that, their name) appears in a
+// maintainer ref file body. Returns 0 if no match is found.
+func findMaintainerRefLine(body, handle, name string) int {
+	if body == "" {
+		return 0
+	}
+	handle = strings.ToLower(strings.TrimSpace(handle))
+	lines := strings.Split(body, "\n")
+	if handle != "" && handle != "github_missing" {
+		for i, line := range lines {
+			if strings.Contains(strings.ToLower(line), handle) {
+				return i + 1
+			}
+		}
+	}
+	name = strings.TrimSpace(name)
+	if name != "" {
+		for i, line := range lines {
+			if strings.Contains(line, name) {
+				return i + 1
+			}
+		}
+	}
+	return 0
 }
 
 func buildMaintainerRefLines(refBody string) map[string]string {

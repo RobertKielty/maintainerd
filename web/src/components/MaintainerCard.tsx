@@ -2,8 +2,11 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
+import Image from "next/image";
 import { Card } from "clo-ui/components/Card";
 import styles from "./MaintainerCard.module.css";
+
+const STATUS_GROUP_ORDER = ["Emeritus", "Retired", "Archived"];
 
 export type MaintainerEditDraft = {
   name: string;
@@ -11,7 +14,6 @@ export type MaintainerEditDraft = {
   github: string;
   githubEmail: string;
   location: string;
-  status: string;
   companyId: number | null;
 };
 
@@ -30,7 +32,6 @@ type EditConfig = {
   disableGitHub?: boolean;
   disableGitHubEmail?: boolean;
   disableLocation?: boolean;
-  disableStatus?: boolean;
   disableCompanyAdd?: boolean;
   onEdit: () => void;
   onCancel: () => void;
@@ -44,6 +45,11 @@ export type LfxProfileSummary = {
   matchStatus?: string;
 };
 
+export type SanitizeStatus = {
+  lastRunAt?: string | null;
+  nextRunAt?: string | null;
+};
+
 type MaintainerCardProps = {
   name: string;
   email: string;
@@ -55,7 +61,7 @@ type MaintainerCardProps = {
   location?: string;
   country?: string;
   timezone?: string;
-  projects: Array<{ id: number; name: string } | string>;
+  projects: Array<{ id: number; name: string; status?: string; refUrl?: string } | string>;
   createdAt?: string;
   updatedAt?: string;
   updatedBy?: string;
@@ -63,6 +69,7 @@ type MaintainerCardProps = {
   isEditing?: boolean;
   editConfig?: EditConfig;
   lfxProfile?: LfxProfileSummary | null;
+  sanitizeStatus?: SanitizeStatus | null;
 };
 
 function initials(name: string) {
@@ -94,6 +101,55 @@ function timeAgo(value?: string | null) {
   const months = Math.floor(days / 30);
   if (months < 12) return `${months}mo ago`;
   return `${Math.floor(months / 12)}y ago`;
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return null;
+  return new Date(value).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function isSameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function agoWords(value: string) {
+  const ms = Date.now() - new Date(value).getTime();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return "just now";
+  if (mins === 1) return "1 minute ago";
+  if (mins < 60) return `${mins} minutes ago`;
+  const hrs = Math.floor(mins / 60);
+  return hrs === 1 ? "1 hour ago" : `${hrs} hours ago`;
+}
+
+function inWords(value: string) {
+  const ms = new Date(value).getTime() - Date.now();
+  if (ms <= 0) return "any moment";
+  const mins = Math.ceil(ms / 60000);
+  if (mins < 1) return "less than a minute";
+  if (mins === 1) return "1 minute";
+  if (mins < 60) return `${mins} minutes`;
+  const hrs = Math.round(mins / 60);
+  return hrs === 1 ? "1 hour" : `${hrs} hours`;
+}
+
+function formatCheckedAt(value?: string | null) {
+  if (!value) return null;
+  return isSameDay(new Date(value), new Date()) ? agoWords(value) : formatDateTime(value);
+}
+
+function formatNextCheck(value?: string | null) {
+  if (!value) return null;
+  return isSameDay(new Date(value), new Date())
+    ? `in ${inWords(value)}`
+    : formatDateTime(value);
 }
 
 function EmailIcon() {
@@ -136,6 +192,14 @@ function LfxIcon() {
   );
 }
 
+function PersonIcon() {
+  return (
+    <svg className={styles.chipRefIcon} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.42 0-8 2.24-8 5v1a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-1c0-2.76-3.58-5-8-5Z" fill="currentColor"/>
+    </svg>
+  );
+}
+
 function CopyIcon() {
   return (
     <svg className={styles.copyIcon} viewBox="0 0 24 24" aria-hidden="true">
@@ -163,6 +227,7 @@ export default function MaintainerCard({
   isEditing = false,
   editConfig,
   lfxProfile,
+  sanitizeStatus,
 }: MaintainerCardProps) {
   const displayName = name || "Unknown maintainer";
   const hasEmail = email && email !== "—" && email !== "EMAIL_MISSING";
@@ -175,15 +240,76 @@ export default function MaintainerCard({
   const color = avatarColor(displayName);
   const ago = timeAgo(updatedAt);
 
+  const normalizedProjects = projects.map((project, i) => {
+    const item =
+      typeof project === "string"
+        ? { id: null as number | null, name: project, status: undefined as string | undefined, refUrl: undefined as string | undefined }
+        : project;
+    return { ...item, key: item.id ?? `${item.name}-${i}` };
+  });
+  const activeProjects = normalizedProjects.filter((p) => !p.status || p.status === "Active");
+  const inactiveProjects = normalizedProjects.filter((p) => p.status && p.status !== "Active");
+  // Group non-active projects by their actual status, rather than lumping every
+  // non-Active status under a single "Emeritus Maintainer" heading — a maintainer
+  // can be Retired or Archived on a project without being Emeritus there.
+  const inactiveStatuses = Array.from(new Set(inactiveProjects.map((p) => p.status as string))).sort(
+    (a, b) => STATUS_GROUP_ORDER.indexOf(a) - STATUS_GROUP_ORDER.indexOf(b),
+  );
+  const inactiveGroups = inactiveStatuses.map((status) => ({
+    status,
+    heading: status === "Emeritus" ? "Emeritus Maintainer" : `${status} Maintainer`,
+    items: inactiveProjects.filter((p) => p.status === status),
+  }));
+  const renderProjectChip = (item: (typeof normalizedProjects)[number]) => {
+    const pill = item.id ? (
+      <Link className={styles.chip} href={`/projects/${item.id}`}>
+        {item.name}
+      </Link>
+    ) : (
+      <span className={styles.chipPlain}>{item.name}</span>
+    );
+    return (
+      <span key={item.key} className={styles.chipGroup}>
+        {pill}
+        {item.refUrl ? (
+          <a
+            className={styles.chipRefLink}
+            href={item.refUrl}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`View ${item.name}'s entry in the maintainers file`}
+            title="View this maintainer's entry in the project's maintainers file"
+          >
+            <PersonIcon />
+          </a>
+        ) : null}
+      </span>
+    );
+  };
+
   const [copyNotice, setCopyNotice] = useState(false);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleCopyEmail = async () => {
     if (!hasEmail) return;
     try {
-      await navigator.clipboard.writeText(`${displayName} <${email}>`);
+      await navigator.clipboard.writeText(email);
       setCopyNotice(true);
       if (copyTimer.current) clearTimeout(copyTimer.current);
       copyTimer.current = setTimeout(() => setCopyNotice(false), 1500);
+    } catch {
+      // clipboard unavailable
+    }
+  };
+
+  const [githubEmailCopyNotice, setGithubEmailCopyNotice] = useState(false);
+  const githubEmailCopyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleCopyGithubEmail = async () => {
+    if (!hasGithubEmail) return;
+    try {
+      await navigator.clipboard.writeText(githubEmail);
+      setGithubEmailCopyNotice(true);
+      if (githubEmailCopyTimer.current) clearTimeout(githubEmailCopyTimer.current);
+      githubEmailCopyTimer.current = setTimeout(() => setGithubEmailCopyNotice(false), 1500);
     } catch {
       // clipboard unavailable
     }
@@ -216,10 +342,12 @@ export default function MaintainerCard({
         {/* ── Hero ── */}
         <div className={styles.hero}>
           {showAvatarPhoto ? (
-            <img
+            <Image
               className={styles.avatarImage}
               src={`https://github.com/${githubHandle}.png?size=112`}
               alt={`${displayName} on GitHub`}
+              width={56}
+              height={56}
               onError={() => setErroredAvatarHandle(githubHandle)}
             />
           ) : (
@@ -274,24 +402,9 @@ export default function MaintainerCard({
             {updatedNotice ? (
               <span className={styles.savedBadge}>{updatedNotice}</span>
             ) : null}
-            {isEditing && draft ? (
-              <select
-                className={styles.statusSelect}
-                value={draft.status}
-                aria-label="Status"
-                disabled={editConfig?.disableStatus}
-                onChange={(e) => editConfig?.onChange({ ...draft, status: e.target.value })}
-              >
-                <option value="Active">Active</option>
-                <option value="Emeritus">Emeritus</option>
-                <option value="Retired">Retired</option>
-                <option value="Archived">Archived</option>
-              </select>
-            ) : (
-              status && status !== "Active" ? (
-                <span className={styles.statusBadge}>{status}</span>
-              ) : null
-            )}
+            {status && status !== "Active" ? (
+              <span className={styles.statusBadge}>{status}</span>
+            ) : null}
             {canEdit && !isEditing ? (
               <button className={styles.editButton} type="button" onClick={editConfig?.onEdit}>
                 Edit
@@ -360,11 +473,13 @@ export default function MaintainerCard({
                   rel="noreferrer"
                   aria-label={`GitHub: ${githubHandle}`}
                 >
-                  <img
+                  <Image
                     className={styles.githubAvatar}
                     src={`https://github.com/${githubHandle}.png?size=40`}
                     alt=""
                     aria-hidden="true"
+                    width={18}
+                    height={18}
                     onError={(e) => { e.currentTarget.style.display = "none"; }}
                   />
                   {githubHandle}
@@ -390,7 +505,17 @@ export default function MaintainerCard({
                 <EmailIcon />
                 <span className={styles.contactSecondary} aria-label="GitHub Email">
                   {githubEmail}
-                  <span className={styles.contactTag}>git</span>
+                  <span className={styles.contactTag}>GitHub Email</span>
+                  <button
+                    className={styles.copyButton}
+                    type="button"
+                    onClick={handleCopyGithubEmail}
+                    aria-label="Copy GitHub email address"
+                    title="Copy"
+                  >
+                    <CopyIcon />
+                  </button>
+                  {githubEmailCopyNotice ? <span className={styles.copyToast}>Copied</span> : null}
                 </span>
               </div>
             ) : null}
@@ -473,20 +598,29 @@ export default function MaintainerCard({
             {projects.length === 0 ? (
               <p className={styles.noProjects}>No projects</p>
             ) : (
-              <div className={styles.chips}>
-                {projects.map((project, i) => {
-                  const item = typeof project === "string" ? { id: null, name: project } : project;
-                  if (item.id) {
-                    return (
-                      <Link key={item.id} className={styles.chip} href={`/projects/${item.id}`}>
-                        {item.name}
-                      </Link>
-                    );
-                  }
-                  return <span key={`${item.name}-${i}`} className={styles.chipPlain}>{item.name}</span>;
-                })}
-              </div>
+              <>
+                {activeProjects.length > 0 ? (
+                  <div className={styles.projectGroup}>
+                    <h2 className={styles.projectGroupHeading}>Actively Maintaining</h2>
+                    <div className={styles.chips}>{activeProjects.map(renderProjectChip)}</div>
+                  </div>
+                ) : null}
+                {inactiveGroups.map((group) => (
+                  <div key={group.status} className={styles.projectGroup}>
+                    <h2 className={styles.projectGroupHeading}>{group.heading}</h2>
+                    <div className={styles.chips}>{group.items.map(renderProjectChip)}</div>
+                  </div>
+                ))}
+              </>
             )}
+            {sanitizeStatus?.lastRunAt ? (
+              <p className={styles.syncNote}>
+                Maintainer activity status last checked {formatCheckedAt(sanitizeStatus.lastRunAt)}.
+                {sanitizeStatus.nextRunAt ? (
+                  <> Next check will happen {formatNextCheck(sanitizeStatus.nextRunAt)}.</>
+                ) : null}
+              </p>
+            ) : null}
           </div>
         </div>
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strings"
@@ -44,6 +45,8 @@ func main() {
 }
 
 func migrate(_ context.Context, store *db.SQLStore) error {
+	hadMaintainerProjectStatus := store.DB().Migrator().HasColumn(&model.MaintainerProject{}, "Status")
+
 	if err := store.DB().AutoMigrate(
 		&model.AuditLog{},
 		&model.Collaborator{},
@@ -64,6 +67,27 @@ func migrate(_ context.Context, store *db.SQLStore) error {
 		&model.DotProjectSyncState{},
 	); err != nil {
 		return err
+	}
+
+	// One-time backfill: maintainer_projects.status was just added. Seed each join row
+	// from the maintainer's (until now global, and possibly already-wrong-for-some-projects)
+	// status, so the cutover to per-project status doesn't silently reset everyone to the
+	// column default. See specifications/per-project-maintainer-status.md.
+	if !hadMaintainerProjectStatus {
+		if err := store.DB().Exec(`
+			UPDATE maintainer_projects
+			SET status = (
+				SELECT maintainer_status FROM maintainers
+				WHERE maintainers.id = maintainer_projects.maintainer_id
+			)
+			WHERE EXISTS (
+				SELECT 1 FROM maintainers
+				WHERE maintainers.id = maintainer_projects.maintainer_id
+				  AND maintainers.maintainer_status <> ''
+			)
+		`).Error; err != nil {
+			return fmt.Errorf("backfill maintainer_projects.status: %w", err)
+		}
 	}
 
 	if store.DB().Name() != "postgres" {

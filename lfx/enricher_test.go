@@ -28,6 +28,14 @@ func (f fakeObservationStore) ListMaintainersWithoutIdentityObservation(string) 
 	return nil, nil
 }
 
+func (f fakeObservationStore) ListMaintainersActiveOnAnyProject(maintainerIDs []uint) (map[uint]bool, error) {
+	active := make(map[uint]bool, len(maintainerIDs))
+	for _, id := range maintainerIDs {
+		active[id] = true
+	}
+	return active, nil
+}
+
 func (f fakeObservationStore) UpsertMaintainerIdentityObservation(*model.MaintainerIdentityObservation) (*model.MaintainerIdentityObservation, error) {
 	return nil, nil
 }

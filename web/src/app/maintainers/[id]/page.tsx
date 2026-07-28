@@ -7,6 +7,7 @@ import MaintainerCard, {
   CompanyOption,
   LfxProfileSummary,
   MaintainerEditDraft,
+  SanitizeStatus,
 } from "@/components/MaintainerCard";
 import MaintainerServicesPanel, {
   MaintainerServiceView,
@@ -30,7 +31,7 @@ type MaintainerDetail = {
   location?: string;
   country?: string;
   timezone?: string;
-  projects: { id: number; name: string }[];
+  projects: { id: number; name: string; status: string; refUrl?: string }[];
   services?: MaintainerServiceView[];
   observations?: IdentityObservation[];
   createdAt: string;
@@ -52,7 +53,6 @@ const maintainerDataHasChanged = (
     current.email !== next.email ||
     current.github !== next.github ||
     current.githubEmail !== next.githubEmail ||
-    current.status !== next.status ||
     current.company !== next.company ||
     current.companyId !== next.companyId ||
     current.location !== next.location ||
@@ -72,7 +72,9 @@ const maintainerDataHasChanged = (
   for (let index = 0; index < current.projects.length; index += 1) {
     if (
       current.projects[index].id !== next.projects[index].id ||
-      current.projects[index].name !== next.projects[index].name
+      current.projects[index].name !== next.projects[index].name ||
+      current.projects[index].status !== next.projects[index].status ||
+      current.projects[index].refUrl !== next.projects[index].refUrl
     ) {
       return true;
     }
@@ -98,6 +100,7 @@ export default function MaintainerPage() {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [companySaveStatus, setCompanySaveStatus] = useState<"idle" | "saving">("idle");
   const [companySaveError, setCompanySaveError] = useState<string | null>(null);
+  const [sanitizeStatus, setSanitizeStatus] = useState<SanitizeStatus | null>(null);
   const router = useRouter();
   const params = useParams<{ id: string }>();
   const maintainerId = params?.id;
@@ -187,6 +190,32 @@ export default function MaintainerPage() {
 
   useEffect(() => {
     let alive = true;
+    const loadSanitizeStatus = async () => {
+      try {
+        const response = await fetch(`${apiBaseUrl}/sanitize-status`, {
+          credentials: "include",
+        });
+        if (!response.ok) {
+          return;
+        }
+        const data = (await response.json()) as SanitizeStatus;
+        if (alive) {
+          setSanitizeStatus(data);
+        }
+      } catch {
+        // Ignore; the freshness note simply stays hidden.
+      }
+    };
+    void loadSanitizeStatus();
+    const intervalId = window.setInterval(loadSanitizeStatus, 60000);
+    return () => {
+      alive = false;
+      window.clearInterval(intervalId);
+    };
+  }, [apiBaseUrl]);
+
+  useEffect(() => {
+    let alive = true;
     const loadRole = async () => {
       try {
         const response = await fetch(`${apiBaseUrl}/me`, { credentials: "include" });
@@ -254,7 +283,6 @@ export default function MaintainerPage() {
       github: maintainer.github || "",
       githubEmail: maintainer.githubEmail || "",
       location: maintainer.location || "",
-      status: maintainer.status || "Active",
       companyId: maintainer.companyId ?? null,
     });
   }, [isEditing, maintainer]);
@@ -267,7 +295,6 @@ export default function MaintainerPage() {
       maintainer.github !== editDraft.github ||
       (maintainer.githubEmail || "") !== editDraft.githubEmail ||
       (maintainer.location || "") !== editDraft.location ||
-      maintainer.status !== editDraft.status ||
       (maintainer.companyId ?? null) !== editDraft.companyId);
 
   useEffect(() => {
@@ -295,7 +322,6 @@ export default function MaintainerPage() {
           github: editDraft.github,
           githubEmail: editDraft.githubEmail,
           location: editDraft.location || null,
-          status: editDraft.status,
           companyId: editDraft.companyId,
         }),
       });
@@ -443,6 +469,7 @@ export default function MaintainerPage() {
               updatedBy={maintainer.updatedBy}
               updatedNotice={saveNotice}
               lfxProfile={lfxProfile}
+              sanitizeStatus={sanitizeStatus}
               isEditing={isEditing}
               editConfig={canEditRecord && editDraft ? {
                 draft: editDraft,
@@ -454,7 +481,6 @@ export default function MaintainerPage() {
                 disableGitHub: disableNonStaffFields,
                 disableGitHubEmail: disableNonStaffFields,
                 disableLocation: disableNonStaffFields,
-                disableStatus: disableNonStaffFields,
                 disableCompanyAdd: companySaveStatus === "saving",
                 onEdit: () => { setIsEditing(true); setSaveError(null); },
                 onCancel: () => {
@@ -466,7 +492,6 @@ export default function MaintainerPage() {
                     github: maintainer.github || "",
                     githubEmail: maintainer.githubEmail || "",
                     location: maintainer.location || "",
-                    status: maintainer.status || "Active",
                     companyId: maintainer.companyId ?? null,
                   });
                 },

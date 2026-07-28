@@ -214,7 +214,7 @@ func (s *SQLStore) UpsertMaintainerWithIdentity(projectID uint, name, email, git
 	}
 
 	var maintainer model.Maintainer
-	if githubHandle != "" {
+	if githubHandle != "" && !strings.EqualFold(githubHandle, "GITHUB_MISSING") {
 		result := tx.Where("LOWER(git_hub_account) = ?", strings.ToLower(githubHandle)).
 			Limit(1).
 			Find(&maintainer)
@@ -223,7 +223,7 @@ func (s *SQLStore) UpsertMaintainerWithIdentity(projectID uint, name, email, git
 			return nil, false, false, result.Error
 		}
 	}
-	if maintainer.ID == 0 && email != "" {
+	if maintainer.ID == 0 && email != "" && !strings.EqualFold(email, "EMAIL_MISSING") {
 		result := tx.Where("LOWER(email) = ?", strings.ToLower(email)).
 			Limit(1).
 			Find(&maintainer)
@@ -246,12 +246,11 @@ func (s *SQLStore) UpsertMaintainerWithIdentity(projectID uint, name, email, git
 	created := false
 	if maintainer.ID == 0 {
 		maintainer = model.Maintainer{
-			Name:             name,
-			Email:            normalizeOrSentinel(email, "EMAIL_MISSING"),
-			GitHubAccount:    normalizeOrSentinel(githubHandle, "GITHUB_MISSING"),
-			GitHubEmail:      "GITHUB_EMAIL_MISSING",
-			LFXUserID:        strings.TrimSpace(lfxUserID),
-			MaintainerStatus: model.ActiveMaintainer,
+			Name:          name,
+			Email:         normalizeOrSentinel(email, "EMAIL_MISSING"),
+			GitHubAccount: normalizeOrSentinel(githubHandle, "GITHUB_MISSING"),
+			GitHubEmail:   "GITHUB_EMAIL_MISSING",
+			LFXUserID:     strings.TrimSpace(lfxUserID),
 		}
 		if companyModel != nil {
 			maintainer.CompanyID = &companyModel.ID
@@ -303,11 +302,7 @@ func (s *SQLStore) UpsertMaintainerWithIdentity(projectID uint, name, email, git
 	if finalCompanyID == nil && companyModel != nil {
 		finalCompanyID = &companyModel.ID
 	}
-	status := maintainer.MaintainerStatus
-	if !status.IsValid() {
-		status = model.ActiveMaintainer
-	}
-	updatedMaintainer, err := s.UpdateMaintainerDetails(maintainer.ID, finalName, finalEmail, finalGitHub, maintainer.GitHubEmail, maintainer.Location, status, finalCompanyID)
+	updatedMaintainer, err := s.UpdateMaintainerDetails(maintainer.ID, finalName, finalEmail, finalGitHub, maintainer.GitHubEmail, maintainer.Location, finalCompanyID)
 	if err != nil {
 		return nil, false, false, err
 	}
@@ -366,14 +361,64 @@ func (s *SQLStore) GetMaintainersByProject(projectID uint) ([]model.Maintainer, 
 
 }
 
-// UpdateMaintainerStatus updates the MaintainerStatus for a given maintainer.
-func (s *SQLStore) UpdateMaintainerStatus(maintainerID uint, status model.MaintainerStatus) error {
+// ListMaintainerProjectStatuses returns each maintainer's status on the given project, keyed
+// by maintainer ID.
+func (s *SQLStore) ListMaintainerProjectStatuses(projectID uint) (map[uint]model.MaintainerStatus, error) {
+	var links []model.MaintainerProject
+	if err := s.db.Where("project_id = ?", projectID).Find(&links).Error; err != nil {
+		return nil, err
+	}
+	statuses := make(map[uint]model.MaintainerStatus, len(links))
+	for _, link := range links {
+		statuses[link.MaintainerID] = link.Status
+	}
+	return statuses, nil
+}
+
+// GetMaintainerProjectStatuses returns a maintainer's status on each project they belong to,
+// keyed by project ID.
+func (s *SQLStore) GetMaintainerProjectStatuses(maintainerID uint) (map[uint]model.MaintainerStatus, error) {
+	var links []model.MaintainerProject
+	if err := s.db.Where("maintainer_id = ?", maintainerID).Find(&links).Error; err != nil {
+		return nil, err
+	}
+	statuses := make(map[uint]model.MaintainerStatus, len(links))
+	for _, link := range links {
+		statuses[link.ProjectID] = link.Status
+	}
+	return statuses, nil
+}
+
+// ListMaintainersActiveOnAnyProject reports, for each of the given maintainer IDs, whether
+// they are Active on at least one project. This is the semantics used for project-agnostic
+// views (search, LFX enrichment) where a single global status no longer exists.
+func (s *SQLStore) ListMaintainersActiveOnAnyProject(maintainerIDs []uint) (map[uint]bool, error) {
+	active := make(map[uint]bool, len(maintainerIDs))
+	if len(maintainerIDs) == 0 {
+		return active, nil
+	}
+	var activeIDs []uint
+	if err := s.db.Model(&model.MaintainerProject{}).
+		Distinct("maintainer_id").
+		Where("maintainer_id IN ? AND status = ?", maintainerIDs, model.ActiveMaintainer).
+		Pluck("maintainer_id", &activeIDs).Error; err != nil {
+		return nil, err
+	}
+	for _, id := range activeIDs {
+		active[id] = true
+	}
+	return active, nil
+}
+
+// UpdateMaintainerProjectStatus updates a maintainer's status on a single project, leaving
+// their status on every other project untouched.
+func (s *SQLStore) UpdateMaintainerProjectStatus(maintainerID, projectID uint, status model.MaintainerStatus) error {
 	if !status.IsValid() {
 		return fmt.Errorf("invalid maintainer status %q", status)
 	}
-	result := s.db.Model(&model.Maintainer{}).
-		Where("id = ?", maintainerID).
-		Update("maintainer_status", status)
+	result := s.db.Model(&model.MaintainerProject{}).
+		Where("maintainer_id = ? AND project_id = ?", maintainerID, projectID).
+		Update("status", status)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -383,25 +428,36 @@ func (s *SQLStore) UpdateMaintainerStatus(maintainerID uint, status model.Mainta
 	return nil
 }
 
-// UpdateMaintainersStatus updates multiple maintainers to the given status.
-func (s *SQLStore) UpdateMaintainersStatus(ids []uint, status model.MaintainerStatus) error {
-	if len(ids) == 0 {
+// UpdateMaintainersProjectStatus updates multiple maintainers' status on a single project.
+func (s *SQLStore) UpdateMaintainersProjectStatus(maintainerIDs []uint, projectID uint, status model.MaintainerStatus) error {
+	if len(maintainerIDs) == 0 {
 		return nil
 	}
 	if !status.IsValid() {
 		return fmt.Errorf("invalid maintainer status %q", status)
 	}
-	return s.db.Model(&model.Maintainer{}).
-		Where("id IN ?", ids).
-		Update("maintainer_status", status).Error
+	return s.db.Model(&model.MaintainerProject{}).
+		Where("maintainer_id IN ? AND project_id = ?", maintainerIDs, projectID).
+		Update("status", status).Error
+}
+
+// GetMaintainerProjectStatus returns a maintainer's status on a single project.
+func (s *SQLStore) GetMaintainerProjectStatus(maintainerID, projectID uint) (model.MaintainerStatus, error) {
+	var link model.MaintainerProject
+	err := s.db.
+		Where("maintainer_id = ? AND project_id = ?", maintainerID, projectID).
+		First(&link).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return "", gorm.ErrRecordNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	return link.Status, nil
 }
 
 // UpdateMaintainerDetails updates a maintainer's editable fields and returns the updated record.
-func (s *SQLStore) UpdateMaintainerDetails(maintainerID uint, name, email, github, githubEmail string, location *string, status model.MaintainerStatus, companyID *uint) (*model.Maintainer, error) {
-	if !status.IsValid() {
-		return nil, fmt.Errorf("invalid maintainer status %q", status)
-	}
-
+func (s *SQLStore) UpdateMaintainerDetails(maintainerID uint, name, email, github, githubEmail string, location *string, companyID *uint) (*model.Maintainer, error) {
 	if companyID != nil {
 		var company model.Company
 		if err := s.db.First(&company, *companyID).Error; err != nil {
@@ -416,13 +472,12 @@ func (s *SQLStore) UpdateMaintainerDetails(maintainerID uint, name, email, githu
 	}
 
 	updates := map[string]interface{}{
-		"name":              strings.TrimSpace(name),
-		"email":             normalizeOrSentinel(email, "EMAIL_MISSING"),
-		"git_hub_account":   normalizeOrSentinel(github, "GITHUB_MISSING"),
-		"git_hub_email":     normalizeOrSentinel(githubEmail, "GITHUB_MISSING"),
-		"location":          locationValue,
-		"maintainer_status": status,
-		"company_id":        companyID,
+		"name":            strings.TrimSpace(name),
+		"email":           normalizeOrSentinel(email, "EMAIL_MISSING"),
+		"git_hub_account": normalizeOrSentinel(github, "GITHUB_MISSING"),
+		"git_hub_email":   normalizeOrSentinel(githubEmail, "GITHUB_MISSING"),
+		"location":        locationValue,
+		"company_id":      companyID,
 	}
 
 	if err := s.db.Model(&model.Maintainer{}).
@@ -468,6 +523,30 @@ func (s *SQLStore) UpsertMaintainerRefCache(cache *model.MaintainerRefCache) err
 		return nil
 	}
 	return s.db.Save(cache).Error
+}
+
+// GetSanitizeRunStatus returns the singleton sanitize run-status row, or nil
+// if the sanitize job has never recorded a completed run.
+func (s *SQLStore) GetSanitizeRunStatus() (*model.SanitizeRunStatus, error) {
+	var status model.SanitizeRunStatus
+	err := s.db.Where("id = ?", 1).First(&status).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &status, nil
+}
+
+// UpsertSanitizeRunStatus records the sanitize job's most recent completed
+// run. It always writes to the singleton row (ID=1).
+func (s *SQLStore) UpsertSanitizeRunStatus(status *model.SanitizeRunStatus) error {
+	if status == nil {
+		return nil
+	}
+	status.ID = 1
+	return s.db.Save(status).Error
 }
 
 // GetDotProjectSyncState returns the cached sync metadata for a project's

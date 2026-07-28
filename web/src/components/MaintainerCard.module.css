@@ -156,24 +156,6 @@ a.companyPill:focus-visible .icon {
   white-space: nowrap;
 }
 
-.statusSelect {
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  background: rgba(15, 23, 42, 0.06);
-  border: 1px solid rgba(15, 23, 42, 0.15);
-  border-radius: 8px;
-  padding: 5px 8px;
-  cursor: pointer;
-  outline: none;
-  color: var(--md-card-text-strong, #0b1220);
-}
-
-.statusSelect:focus {
-  border-color: #d62293;
-}
-
 .editButton {
   border: 0;
   border-radius: 999px;
@@ -359,10 +341,61 @@ a.companyPill:focus-visible .icon {
   color: var(--md-card-muted, rgba(15, 23, 42, 0.5));
 }
 
+.projectGroup {
+  margin-bottom: 14px;
+}
+
+.projectGroup:last-child {
+  margin-bottom: 0;
+}
+
+.projectGroupHeading {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.55));
+}
+
 .chips {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.chipGroup {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.chipRefLink {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.07);
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
+  flex-shrink: 0;
+}
+
+.chipRefLink:hover,
+.chipRefLink:focus-visible {
+  background: rgba(214, 34, 147, 0.16);
+  color: #d62293;
+}
+
+.chipRefLink:focus-visible {
+  outline: 2px solid #d62293;
+  outline-offset: 2px;
+}
+
+.chipRefIcon {
+  width: 12px;
+  height: 12px;
 }
 
 .chip {
@@ -391,6 +424,12 @@ a.companyPill:focus-visible .icon {
   font-size: 13px;
   font-weight: 600;
   white-space: nowrap;
+}
+
+.syncNote {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.5));
 }
 
 /* ── Edit actions ─────────────────────────────────────── */
