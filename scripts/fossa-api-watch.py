@@ -61,11 +61,11 @@ def get_operation(spec, path, method):
     return op.get(method.lower())
 
 
-def prepared_operation(spec, path, method):
+def resolved_operation(spec, path, method):
     op = get_operation(spec, path, method)
     if op is None:
         return None
-    return strip_noise(resolve_refs(op, spec))
+    return resolve_refs(op, spec)
 
 
 def index_params(op):
@@ -186,23 +186,28 @@ def find_deprecation_signals(node, label=""):
 
 
 def diff_documented_endpoint(old_spec, new_spec, method, path):
-    old_op = prepared_operation(old_spec, path, method)
-    new_op = prepared_operation(new_spec, path, method)
+    old_resolved = resolved_operation(old_spec, path, method)
+    new_resolved = resolved_operation(new_spec, path, method)
 
-    if old_op is None and new_op is None:
+    if old_resolved is None and new_resolved is None:
         return None
-    if old_op is None and new_op is not None:
+    if old_resolved is None and new_resolved is not None:
         return ["endpoint appeared (was absent in our baseline spec)"]
-    if old_op is not None and new_op is None:
+    if old_resolved is not None and new_resolved is None:
         return ["endpoint removed from the live spec"]
+
+    old_op, new_op = strip_noise(old_resolved), strip_noise(new_resolved)
 
     changes = []
     changes.extend(diff_parameters(old_op, new_op))
     changes.extend(diff_request_body(old_op, new_op))
     changes.extend(diff_responses(old_op, new_op))
 
-    old_signals = find_deprecation_signals(old_op)
-    new_signals = find_deprecation_signals(new_op)
+    # Deprecation signals are scanned on the resolved (non-stripped) operation
+    # because "summary" is in NOISE_KEYS and may be the only place a
+    # deprecation/sunset notice appears.
+    old_signals = find_deprecation_signals(old_resolved)
+    new_signals = find_deprecation_signals(new_resolved)
     for signal in sorted(new_signals - old_signals):
         changes.append(f"new deprecation signal: {signal}")
 
