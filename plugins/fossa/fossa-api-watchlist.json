@@ -1,0 +1,16 @@
+{
+  "$comment": "FOSSA API endpoints maintainer-d actually calls. Derived from grepping plugins/fossa/client.go for c.APIBase usage — re-grep before editing this list, don't guess. `documented` reflects whether the endpoint+verb appears in our committed plugins/fossa/swagger.json baseline at the time this list was written.",
+  "endpoints": [
+    { "method": "GET", "path": "/users", "documented": true },
+    { "method": "GET", "path": "/roles", "documented": true },
+    { "method": "GET", "path": "/teams", "documented": true },
+    { "method": "POST", "path": "/teams", "documented": true },
+    { "method": "GET", "path": "/teams/{id}", "documented": false, "note": "spec only lists put/delete for this path; get exists only under /v2/teams/{id}" },
+    { "method": "GET", "path": "/teams/{id}/projects", "documented": true },
+    { "method": "GET", "path": "/teams/{id}/members", "documented": true },
+    { "method": "PUT", "path": "/teams/{id}/users", "documented": true },
+    { "method": "GET", "path": "/user-invitations", "documented": false, "note": "confirmed real via FOSSA support ticket; not published in their OpenAPI spec" },
+    { "method": "DELETE", "path": "/user-invitations/{email}", "documented": false, "note": "confirmed real via FOSSA support ticket; not published in their OpenAPI spec" },
+    { "method": "POST", "path": "/organizations/{id}/invite", "documented": false, "note": "confirmed real via FOSSA support ticket; not published in their OpenAPI spec" }
+  ]
+}
