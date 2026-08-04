@@ -5,6 +5,9 @@ on:
     - cron: "17 6 * * *" # 06:17 UTC daily — off-peak for both US and EU hours
   workflow_dispatch:
 
+concurrency:
+  group: fossa-api-watch
+
 permissions:
   contents: read
   issues: write

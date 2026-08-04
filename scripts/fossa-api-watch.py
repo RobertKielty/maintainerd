@@ -88,9 +88,7 @@ def diff_parameters(old_op, new_op):
         o, n = old_p[key], new_p[key]
         if bool(o.get("required")) != bool(n.get("required")):
             changes.append(f"parameter '{name}' required changed: {o.get('required')} -> {n.get('required')}")
-        ot, nt = (o.get("schema") or {}).get("type"), (n.get("schema") or {}).get("type")
-        if ot != nt:
-            changes.append(f"parameter '{name}' type changed: {ot} -> {nt}")
+        changes.extend(diff_schema(o.get("schema"), n.get("schema"), f"parameter '{name}'.schema"))
     return changes
 
 
