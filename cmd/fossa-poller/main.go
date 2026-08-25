@@ -24,6 +24,11 @@ import (
 
 const defaultDBPath = "/data/maintainers.db"
 
+// fossaInviteTTL mirrors FOSSA's documented 48-hour invitation lifetime
+// (see plugins/fossa/user-invites.md). Invitations older than this are
+// re-sent rather than left to report a stale "pending" status.
+const fossaInviteTTL = 48 * time.Hour
+
 func main() {
 	logger := log.New(os.Stdout, "fossa-poller: ", log.LstdFlags)
 
@@ -108,7 +113,6 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 	}
 
 	now := time.Now().UTC()
-	const inviteTTL = 72 * time.Hour
 	for _, invite := range dbInvites {
 		email := strings.TrimSpace(invite.ServiceEmail)
 		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
@@ -132,7 +136,7 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 			continue
 		}
 
-		if invite.SentAt != nil && now.Sub(*invite.SentAt) > inviteTTL {
+		if invite.SentAt != nil && now.Sub(*invite.SentAt) > fossaInviteTTL {
 			if err := client.SendUserInvitation(email); err != nil && !errors.Is(err, fossa.ErrInviteAlreadyExists) {
 				msg := err.Error()
 				invite.Status = "expired"
@@ -523,7 +527,7 @@ func formatInviteSummary(store *db.SQLStore, invite model.ServiceInvitation) str
 			hours := int(elapsed.Hours())
 			sentAt = "Sent " + strconv.Itoa(hours) + "h ago"
 		}
-		expiresAt := invite.SentAt.UTC().Add(72 * time.Hour)
+		expiresAt := invite.SentAt.UTC().Add(fossaInviteTTL)
 		remaining := time.Until(expiresAt)
 		if remaining < 0 {
 			remaining = 0
