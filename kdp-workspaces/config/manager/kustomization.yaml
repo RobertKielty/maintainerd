@@ -1,8 +1,0 @@
-resources:
-- manager.yaml
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-images:
-- name: controller
-  newName: wbkubermatic/cncf-kdp-workspaces
-  newTag: 0.0.2

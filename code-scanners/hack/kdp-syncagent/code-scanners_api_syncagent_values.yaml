@@ -1,3 +1,0 @@
-apiExportName: code-scanners.maintainer-d.cncf.io
-agentName: cncf-syncagent-code-scanner-svc
-kcpKubeconfig: syncagent-code-scanner-svc-kubeconfig
