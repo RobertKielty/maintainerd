@@ -7,8 +7,6 @@ BUILD_DATE ?= $(shell date -u '+%a-%b-%d-%Y' | tr '[:lower:]' '[:upper:]')
 TAG ?= $(BRANCH)-$(GIT_SHA)-$(BUILD_DATE)
 IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd:$(TAG)
 IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd:latest
-SYNC_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sync:$(TAG)
-SYNC_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sync:latest
 DOT_PROJECT_SYNC_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-dot-project-sync:$(TAG)
 DOT_PROJECT_SYNC_IMAGE_LATEST ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-dot-project-sync:latest
 SANITIZE_IMAGE ?= $(REGISTRY)/$(GH_ORG_LC)/maintainerd-sanitize:$(TAG)
@@ -46,29 +44,12 @@ CONTAINER_TOOL ?= podman
 # Helpful context string for logs
 CTX_STR := $(if $(KUBECONTEXT),$(KUBECONTEXT),$(shell kubectl config current-context 2>/dev/null || echo current))
 
-# kcp release download settings
-KCP_VERSION ?= 0.28.3
-KCP_TAG ?= v$(KCP_VERSION)
-KCP_OS ?= $(shell uname | tr '[:upper:]' '[:lower:]')
-KCP_ARCH ?= $(shell uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')
-KCP_TAR ?= kcp_$(KCP_VERSION)_$(KCP_OS)_$(KCP_ARCH).tar.gz
-APIGEN_TAR ?= apigen_$(KCP_VERSION)_$(KCP_OS)_$(KCP_ARCH).tar.gz
-KCP_CHECKSUMS ?= kcp_$(KCP_VERSION)_checksums.txt
-KCP_RELEASE_URL ?= https://github.com/kcp-dev/kcp/releases/download/$(KCP_TAG)
-BIN_DIR ?= $(TOPDIR)/bin
-KCP_BIN := $(BIN_DIR)/kcp
-APIGEN_BIN := $(BIN_DIR)/apigen
-CONTROLLER_GEN ?= $(BIN_DIR)/controller-gen
-APIGEN ?= $(APIGEN_BIN)
 GOCACHE_DIR ?= $(TOPDIR)/.gocache
-KCP_CRD_DIR ?= $(TOPDIR)/config/crd/bases
-KCP_SCHEMA_DIR ?= $(TOPDIR)/config/kcp
-KCP_RESOURCES := $(shell ls $(KCP_CRD_DIR)/maintainer-d.cncf.io_*.yaml 2>/dev/null | sed -E 's@.*/maintainer-d\.cncf\.io_([^.]*)\.yaml@\1@')
 GOFMT_PATHS ?= $(shell go list -f '{{.Dir}}' ./...)
 
 # GHCR auth (optional for push). If set, we will docker login before push.
-GHCR_USER  ?= $(DOCKER_REGISTRY_USERNAME)
-GHCR_TOKEN ?= $(GITHUB_GHCR_TOKEN)
+GHCR_USER  ?= $(GH_ORG_LC)
+GHCR_TOKEN ?=
 
 
 
@@ -77,11 +58,6 @@ GHCR_TOKEN ?= $(GITHUB_GHCR_TOKEN)
 mntrd-image-build:
 	@echo "Building container image: $(IMAGE)"
 	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(IMAGE) -f Dockerfile --target maintainerd .
-
-.PHONY: sync-image-build
-sync-image-build:
-	@echo "Building sync image: $(SYNC_IMAGE)"
-	@$(CONTAINER_TOOL) build $(BUILD_PROGRESS_FLAG) $(DOCKER_BUILD_EXTRA) -t $(SYNC_IMAGE) -f Dockerfile --target sync .
 
 .PHONY: dot-project-sync-image-build
 dot-project-sync-image-build:
@@ -184,21 +160,6 @@ mntrd-image-set:
 	@echo "Setting maintainerd image to $(IMAGE) [ns=$(NAMESPACE)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
 		set image deploy/maintainerd '*=$(IMAGE)'
-
-.PHONY: sync-image-push
-sync-image-push: sync-image-build
-	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
-	@if [ -n "$(GHCR_TOKEN)" ]; then \
-		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
-		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
-	else \
-		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
-	fi
-	@echo "Pushing image: $(SYNC_IMAGE)"
-	@$(CONTAINER_TOOL) push $(SYNC_IMAGE)
-	@echo "Tagging and pushing latest: $(SYNC_IMAGE_LATEST)"
-	@$(CONTAINER_TOOL) tag $(SYNC_IMAGE) $(SYNC_IMAGE_LATEST)
-	@$(CONTAINER_TOOL) push $(SYNC_IMAGE_LATEST)
 
 .PHONY: dot-project-sync-image-push
 dot-project-sync-image-push: dot-project-sync-image-build
@@ -320,22 +281,6 @@ web-bff-image-push: web-bff-image-build
 	@$(CONTAINER_TOOL) tag $(WEB_BFF_IMAGE) $(WEB_BFF_IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(WEB_BFF_IMAGE_LATEST)
 
-.PHONY: sync-image-deploy
-sync-image-deploy: sync-image-push
-	@echo "Image pushed. Updating CronJob/maintainer-sync in $(NAMESPACE) [ctx=$(CTX_STR)]"
-	@CTX_FLAG="$(if $(KUBECONTEXT),--context $(KUBECONTEXT))" ; \
-	if ! kubectl $$CTX_FLAG config current-context >/dev/null 2>&1; then \
-		echo "kubectl context $(CTX_STR) unavailable; skipping rollout"; exit 0; \
-	fi ; \
-	if ! kubectl -n $(NAMESPACE) $$CTX_FLAG get cronjob/maintainer-sync >/dev/null 2>&1; then \
-		echo "CronJob/maintainer-sync not found in namespace $(NAMESPACE)."; \
-		echo "Hint: apply deploy/manifests/cronjob.yaml + deploy/manifests/sync-rbac.yaml or run 'make sync-apply' (or 'make manifests-apply')."; \
-		exit 1; \
-	fi ; \
-	kubectl -n $(NAMESPACE) $$CTX_FLAG set image cronjob/maintainer-sync '*=$(SYNC_IMAGE)'; \
-	kubectl -n $(NAMESPACE) $$CTX_FLAG delete job -l job-name=maintainer-sync --ignore-not-found; \
-	echo "Next scheduled run will pull $(SYNC_IMAGE)."
-
 .PHONY: dot-project-sync-image-deploy
 dot-project-sync-image-deploy: dot-project-sync-image-push
 	@echo "Image pushed. Updating CronJob/dot-project-sync in $(NAMESPACE) [ctx=$(CTX_STR)]"
@@ -352,23 +297,10 @@ dot-project-sync-image-deploy: dot-project-sync-image-push
 	kubectl -n $(NAMESPACE) $$CTX_FLAG delete job -l job-name=dot-project-sync --ignore-not-found; \
 	echo "Next scheduled run will pull $(DOT_PROJECT_SYNC_IMAGE)."
 
-.PHONY: sync-apply
-sync-apply:
-	@echo "Applying sync resources in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
-	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/cronjob.yaml -f deploy/manifests/sync-rbac.yaml
-
 .PHONY: dot-project-sync-apply
 dot-project-sync-apply:
 	@echo "Applying dot-project sync CronJob in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/dot-project-sync-cronjob.yaml
-
-.PHONY: sync-run
-sync-run:
-	@bash -c 'set -euo pipefail; \
-	job="maintainer-sync-manual-$$(date +%s)"; \
-	echo "Creating sync job $$job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
-	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) create job --from=cronjob/maintainer-sync $$job; \
-	'
 
 .PHONY: dot-project-sync-run
 dot-project-sync-run:
@@ -509,11 +441,6 @@ SOPS_EXPECTED_AGE ?= $(shell age-keygen -y $(HOME)/.config/sops/age/keys.txt 2>/
 CREDS_FILE ?= ./cmd/bootstrap/credentials.json
 CREDS_KEY  ?= credentials.json
 
-# Docker registry (for ghcr secret)
-DOCKER_REGISTRY_SERVER ?= ghcr.io
-DOCKER_REGISTRY_USERNAME ?= robertkielty
-DOCKER_REGISTRY_PASSWORD ?= $(GITHUB_GHCR_TOKEN)
-
 # ---- Helpers ----
 .PHONY: help
 help:
@@ -558,10 +485,8 @@ help:
 	@echo "make clean-env       -> remove $(ENVOUT)"
 	@echo "make print           -> show which keys would be loaded (without values)"
 	@echo "make mntrd-image-build  -> build maintainerd image $(IMAGE) locally"
-	@echo "make mntrd-image-push   -> build and push $(IMAGE) (uses GHCR_TOKEN/GITHUB_GHCR_TOKEN + GHCR_USER/DOCKER_REGISTRY_USERNAME for ghcr login)"
+	@echo "make mntrd-image-push   -> build and push $(IMAGE) (uses GHCR_TOKEN + GHCR_USER for ghcr login)"
 	@echo "make mntrd-image-deploy -> build, push, and restart Deployment in $(NAMESPACE)"
-	@echo "make sync-apply      -> apply CronJob + RBAC for the sync job"
-	@echo "make sync-run        -> trigger a manual sync job and tail logs"
 	@echo "make dot-project-sync-apply -> apply the hourly dot-project sync CronJob"
 	@echo "make dot-project-sync-run -> trigger a manual dot-project sync job"
 	@echo "make fossa-poller-deploy -> apply Deployment for the long-running FOSSA poller"
@@ -580,7 +505,6 @@ help:
 	@echo "make maintainerd-drain   -> scale Deployment/maintainerd to 0 and wait for pods to exit"
 	@echo "make maintainerd-port-forward -> forward :2525 -> svc/maintainerd:2525"
 	@echo "make cluster-down    -> delete manifests applied via deploy/manifests"
-	@echo "make kcp-install     -> download kcp $(KCP_VERSION) binaries into $(BIN_DIR)"
 	@echo ""
 	@echo "== Web =="
 	@echo "make web-install     -> install web dependencies"
@@ -1173,15 +1097,6 @@ fossa-poller-image-set:
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
 		rollout status deployment/maintainerd-fossa-poller --timeout=180s
 
-.PHONY: sync-image-set
-sync-image-set:
-	@if [ -z "$(TAG)" ]; then \
-		echo "Usage: make sync-image-set TAG=<tag>"; exit 1; \
-	fi
-	@echo "Setting maintainerd-sync image to $(SYNC_IMAGE) [ns=$(NAMESPACE)]"
-	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
-		set image cronjob/maintainer-sync '*=$(SYNC_IMAGE)'
-
 .PHONY: dot-project-sync-image-set
 dot-project-sync-image-set:
 	@if [ -z "$(TAG)" ]; then \
@@ -1210,7 +1125,7 @@ onboarding-backfill-image-set:
 		set image cronjob/maintainerd-onboarding-backfill '*=$(ONBOARDING_BACKFILL_IMAGE)'
 
 .PHONY: image-set
-image-set: mntrd-image-set web-image-set web-bff-image-set fossa-poller-image-set sync-image-set dot-project-sync-image-set sanitize-image-set onboarding-backfill-image-set
+image-set: mntrd-image-set web-image-set web-bff-image-set fossa-poller-image-set dot-project-sync-image-set sanitize-image-set onboarding-backfill-image-set
 	@true
 
 # Convenience combo target
@@ -1228,7 +1143,6 @@ print: env
 images-show:
 	@echo "Image repositories:"
 	@echo "  maintainerd        $(IMAGE)"
-	@echo "  maintainerd-sync   $(SYNC_IMAGE)"
 	@echo "  maintainerd-dot-project-sync $(DOT_PROJECT_SYNC_IMAGE)"
 	@echo "  maintainerd-sanitize $(SANITIZE_IMAGE)"
 	@echo "  maintainerd-migrate  $(MIGRATE_IMAGE)"
@@ -1238,7 +1152,7 @@ images-show:
 	@echo "  maintainerd-web-bff  $(WEB_BFF_IMAGE)"
 
 .PHONY: images-build
-images-build: mntrd-image-build sync-image-build dot-project-sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build fossa-poller-image-build github-profile-sync-image-build web-image-build web-bff-image-build
+images-build: mntrd-image-build dot-project-sync-image-build sanitize-image-build migrate-image-build onboarding-backfill-image-build fossa-poller-image-build github-profile-sync-image-build web-image-build web-bff-image-build
 	@echo "All images built."
 
 .PHONY: mntrd-image-push-only
@@ -1255,21 +1169,6 @@ mntrd-image-push-only:
 	@echo "Tagging and pushing latest: $(IMAGE_LATEST)"
 	@$(CONTAINER_TOOL) tag $(IMAGE) $(IMAGE_LATEST)
 	@$(CONTAINER_TOOL) push $(IMAGE_LATEST)
-
-.PHONY: sync-image-push-only
-sync-image-push-only:
-	@echo "Ensuring $(CONTAINER_TOOL) is logged in to $(REGISTRY) (uses GHCR_TOKEN if set)"
-	@if [ -n "$(GHCR_TOKEN)" ]; then \
-		echo "Logging into $(REGISTRY) as $(GHCR_USER) using token from GHCR_TOKEN"; \
-		echo "$(GHCR_TOKEN)" | $(CONTAINER_TOOL) login $(REGISTRY) -u "$(GHCR_USER)" --password-stdin; \
-	else \
-		echo "GHCR_TOKEN not set; attempting push with existing auth"; \
-	fi
-	@echo "Pushing image: $(SYNC_IMAGE)"
-	@$(CONTAINER_TOOL) push $(SYNC_IMAGE)
-	@echo "Tagging and pushing latest: $(SYNC_IMAGE_LATEST)"
-	@$(CONTAINER_TOOL) tag $(SYNC_IMAGE) $(SYNC_IMAGE_LATEST)
-	@$(CONTAINER_TOOL) push $(SYNC_IMAGE_LATEST)
 
 .PHONY: dot-project-sync-image-push-only
 dot-project-sync-image-push-only:
@@ -1392,7 +1291,7 @@ web-bff-image-push-only:
 	@$(CONTAINER_TOOL) push $(WEB_BFF_IMAGE_LATEST)
 
 .PHONY: images-push
-images-push: mntrd-image-push-only sync-image-push-only dot-project-sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only fossa-poller-image-push-only github-profile-sync-image-push-only web-image-push-only web-bff-image-push-only
+images-push: mntrd-image-push-only dot-project-sync-image-push-only sanitize-image-push-only migrate-image-push-only onboarding-backfill-image-push-only fossa-poller-image-push-only github-profile-sync-image-push-only web-image-push-only web-bff-image-push-only
 	@echo "All images pushed (no build)."
 
 .PHONY: clean-env
@@ -1414,13 +1313,13 @@ ensure-ns:
 
 .PHONY: apply-ghcr-secret
 apply-ghcr-secret:
-	@:${DOCKER_REGISTRY_USERNAME:?Set DOCKER_REGISTRY_USERNAME (e.g. your GitHub username)}
-	@:${DOCKER_REGISTRY_PASSWORD:?Set DOCKER_REGISTRY_PASSWORD (a PAT with package:read)}
+	@:${GHCR_USER:?Set GHCR_USER (e.g. your GitHub username)}
+	@:${GHCR_TOKEN:?Set GHCR_TOKEN (a PAT with package:read)}
 	@echo "Applying docker-registry secret 'ghcr-secret' in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"
 	@kubectl -n $(NAMESPACE) create secret docker-registry ghcr-secret \
-		--docker-server=$(DOCKER_REGISTRY_SERVER) \
-		--docker-username=$(DOCKER_REGISTRY_USERNAME) \
-		--docker-password=$(DOCKER_REGISTRY_PASSWORD) \
+		--docker-server=$(REGISTRY) \
+		--docker-username=$(GHCR_USER) \
+		--docker-password=$(GHCR_TOKEN) \
 		$(if $(KUBECONTEXT),--context $(KUBECONTEXT)) \
 		--dry-run=client -o yaml | kubectl -n $(NAMESPACE) apply -f -
 
@@ -1467,47 +1366,6 @@ maintainerd-drain:
 maintainerd-port-forward:
 	@echo "Port-forwarding localhost:2525 -> service/maintainerd:2525 [ctx=$(CTX_STR)]"
 	@kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) port-forward svc/maintainerd 2525:2525
-
-.PHONY: kcp-install
-kcp-install:
-	@mkdir -p $(BIN_DIR)
-	@echo "Fetching kcp $(KCP_VERSION) for $(KCP_OS)/$(KCP_ARCH)"
-	@TMP_DIR=$$(mktemp -d); \
-	set -euo pipefail; \
-	echo "+ curl -sSL $(KCP_RELEASE_URL)/$(KCP_CHECKSUMS)"; \
-	curl -sSL -o $$TMP_DIR/$(KCP_CHECKSUMS) $(KCP_RELEASE_URL)/$(KCP_CHECKSUMS); \
-	for tarball in $(KCP_TAR) $(APIGEN_TAR); do \
-		echo "+ curl -sSL $(KCP_RELEASE_URL)/$$tarball -o $$TMP_DIR/$$tarball"; \
-		curl -sSL -o $$TMP_DIR/$$tarball $(KCP_RELEASE_URL)/$$tarball; \
-		grep " $$tarball$$" $$TMP_DIR/$(KCP_CHECKSUMS) > $$TMP_DIR/$$tarball.sha256; \
-		SUM=$$(cut -d' ' -f1 $$TMP_DIR/$$tarball.sha256); \
-		( cd $$TMP_DIR && sha256sum --check $$tarball.sha256 ); \
-		echo "Verified $$tarball (sha256=$$SUM)"; \
-	done; \
-	tar -xzf $$TMP_DIR/$(KCP_TAR) -C $(BIN_DIR) --strip-components=1 bin/kcp; \
-	tar -xzf $$TMP_DIR/$(APIGEN_TAR) -C $(BIN_DIR) --strip-components=1 bin/apigen; \
-	chmod +x $(KCP_BIN) $(APIGEN_BIN); \
-	rm -rf $$TMP_DIR; \
-	echo "Installed kcp and apigen into $(BIN_DIR)"
-
-.PHONY: kcp-generate
-kcp-generate:
-	@[ -x "$(CONTROLLER_GEN)" ] || { echo "Missing controller-gen binary at $(CONTROLLER_GEN). Install it or set CONTROLLER_GEN to the binary path."; exit 1; }
-	@[ -x "$(APIGEN)" ] || { echo "Missing apigen binary at $(APIGEN). Run 'make kcp-install' or download it manually."; exit 1; }
-	@mkdir -p $(GOCACHE_DIR) $(KCP_CRD_DIR) $(KCP_SCHEMA_DIR)
-	@echo "Generating CustomResourceDefinitions in $(KCP_CRD_DIR)"
-	@GOCACHE=$(GOCACHE_DIR) $(CONTROLLER_GEN) crd paths=./apis/... output:crd:dir=$(KCP_CRD_DIR)
-	@rm -f $(KCP_CRD_DIR)/_.yaml
-	@TMP_DIR=$$(mktemp -d); \
-		set -euo pipefail; \
-		echo "Rendering APIResourceSchemas with apigen"; \
-		$(APIGEN) --input-dir $(KCP_CRD_DIR) --output-dir $$TMP_DIR; \
-		for resource in $(KCP_RESOURCES); do \
-			cp $$TMP_DIR/apiresourceschema-$$resource.maintainer-d.cncf.io.yaml $(KCP_SCHEMA_DIR)/schema-$$resource.yaml; \
-		done; \
-		cp $$TMP_DIR/apiexport-maintainer-d.cncf.io.yaml $(KCP_SCHEMA_DIR)/api-export.yaml; \
-		rm -rf $$TMP_DIR; \
-		echo "Updated APIExport and APIResourceSchemas in $(KCP_SCHEMA_DIR)"
 
 # ---- Testing and CI ----
 .PHONY: test

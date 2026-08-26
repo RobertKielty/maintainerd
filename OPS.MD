@@ -117,26 +117,6 @@ make sanitize-image-push
 kubectl -n maintainerd apply -f deploy/manifests/cronjob-sanitize.yaml
 ```
 
-## Deploy sync
-
-Goal: Run/enable the sync job that reconciles DB data into CRDs.
-
-1) Build and push the image:
-```
-make sync-image-build
-make sync-image-push
-```
-
-2) Apply or update the CronJob + RBAC:
-```
-make sync-apply
-```
-
-3) (Optional) Trigger a manual run:
-```
-make sync-run
-```
-
 ## Deploy the web app for staff
 
 Goal: Deploy web + BFF to production.

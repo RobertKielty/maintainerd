@@ -1,9 +1,0 @@
-apiVersion: apis.kcp.io/v1alpha1
-kind: APIBinding
-metadata:
-  name: maintainer-d
-spec:
-  reference:
-    export:
-      path: cncf
-      name: maintainer-d.cncf.io
