@@ -89,7 +89,6 @@ anything) replaces it as a maintainer-level summary value — see "Open question
 | `UpdateMaintainersStatus(ids []uint, status)` | Replace with `UpdateMaintainersProjectStatus(maintainerIDs []uint, projectID uint, status)` — bulk update scoped to one project, matching how `ProjectRouteClient.tsx` actually calls it today (from within a project page). |
 | `UpdateMaintainerDetails(maintainerID, ..., status, companyID)` | Drop the `status` parameter — this handler edits maintainer-level fields (name/email/github/company), which are genuinely global; status no longer belongs here. |
 | `GetMaintainersByProject(projectID)` | Preload/join `MaintainerProject.Status` so callers can filter/display per-project status without a second query. |
-| `GetMaintainerMapByEmail()` (used by `cmd/sync`) | See CRD section below — this method assumes one status per maintainer, which no longer holds. |
 | New: `GetMaintainerProjectStatus(maintainerID, projectID) (MaintainerStatus, error)` | For call sites that need a single project's status for one maintainer (e.g. per-project FOSSA invite gating). |
 
 ## Call sites requiring updates
@@ -113,25 +112,12 @@ Grouped by what they need to become project-scoped:
 - `db/store_impl.go:254` — sets `MaintainerStatus: model.ActiveMaintainer` on brand-new `Maintainer` creation. Becomes: create the `MaintainerProject` link (if a project is known at creation time) with `Status: Active`; drop the field from the `Maintainer{}` literal.
 - `db/bootstrap.go:249`, `cmd/web-bff-seed/main.go` (8 sites) — same pattern; update to set status on the join row created alongside each maintainer/project link.
 
-## Kubernetes CRD sync (`cmd/sync/main.go`, `apis/maintainers/v1alpha1/types.go`)
+## Kubernetes CRD sync (removed)
 
-This is the least straightforward part. `apis.Maintainer` is a **per-maintainer** CRD object
-(one per email, `cmd/sync/main.go:206` keyed by `store.GetMaintainerMapByEmail()`), with a
-single `Status MaintainerLifecycle` field (`types.go:57`) — the same global assumption,
-reproduced in the CRD schema. Making status per-project in Postgres doesn't fix this layer by
-itself. Options, not yet decided:
-
-1. Add a `Status` field per-entry to whatever CRD represents project-maintainer membership
-   (needs confirming whether one exists today — `cmd/sync` wasn't in the grounding pass for
-   this spec) and drop `Status` from `apis.Maintainer`.
-2. Keep `apis.Maintainer.Status` but redefine it as a derived summary (e.g. "Active if active
-   on any project") — cheaper, but reintroduces exactly the kind of misleading global signal
-   this fix is meant to remove, just downstream.
-3. Leave `apis.Maintainer.Status` deprecated/unused until CRD consumers are surveyed.
-
-Recommend deferring this to a follow-up PR after the Postgres-side fix lands, once it's clear
-who/what actually reads `apis.Maintainer.Status` today (out of scope for this repo's own
-grounding — the CRDs are consumed by `apis/`/`config/` tooling this repo doesn't fully own).
+The Kubernetes CRD sync layer (`cmd/sync`, `apis/maintainers/v1alpha1`) that previously appeared
+here was removed in PR #143 (`d61c4d3`). Its `apis.Maintainer.Status` field reproduced the same
+global-status assumption this spec exists to remove; the question of how to reconcile it is
+resolved by deletion, not deferred.
 
 ## Frontend changes (`web/src`)
 
@@ -167,8 +153,6 @@ grounding — the CRDs are consumed by `apis/`/`config/` tooling this repo doesn
   the summary; or drop status from these views entirely and let callers pass a project ID
   when it matters. Needs a product decision before touching `handleSearchMaintainers` and
   `lfx/enricher.go`.
-- **CRD schema.** See above — needs a survey of `apis.Maintainer.Status` consumers before
-  deciding between the three options.
 - **`maintainers.maintainer_status` column removal timing.** Proposed as a follow-up
   migration after the cutover is confirmed stable; needs a concrete "stable for N days/weeks"
   criterion or an explicit owner sign-off rather than an open-ended "later."

@@ -604,20 +604,6 @@ func (s *SQLStore) MergeCompanies(fromID, toID uint) error {
 	})
 }
 
-// GetMaintainerMapByEmail returns a map of Maintainers keyed by email address
-func (s *SQLStore) GetMaintainerMapByEmail() (map[string]model.Maintainer, error) {
-	var maintainers []model.Maintainer
-	err := s.db.Preload("Company").Find(&maintainers).Error
-	if err != nil {
-		return nil, err
-	}
-	m := make(map[string]model.Maintainer)
-	for _, maintainer := range maintainers {
-		m[maintainer.Email] = maintainer
-	}
-	return m, nil
-}
-
 // GetMaintainerMapByGitHubAccount returns a map of Maintainers keyed by GitHub Account
 func (s *SQLStore) GetMaintainerMapByGitHubAccount() (map[string]model.Maintainer, error) {
 	var maintainers []model.Maintainer
