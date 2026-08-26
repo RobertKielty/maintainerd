@@ -575,6 +575,13 @@ export default function ProjectReconciliationCard({
     skipped: number;
     errors: number;
   } | null>(null);
+  const [fossaRefreshSummary, setFossaRefreshSummary] = useState<{
+    fetched: number;
+    added: number;
+    updated: number;
+    removed: number;
+    unmatched: string[];
+  } | null>(null);
   const [fossaTeamSort, setFossaTeamSort] = useState<SortState<"name" | "email" | "role">>({
     key: "name",
     direction: "asc",
@@ -849,8 +856,22 @@ export default function ProjectReconciliationCard({
       if (!response.ok) {
         throw new Error("failed to refresh invites");
       }
+      const body = (await response.json()) as {
+        fetched?: number;
+        added?: number;
+        updated?: number;
+        removed?: number;
+        unmatched?: string[];
+      };
+      setFossaRefreshSummary({
+        fetched: body.fetched ?? 0,
+        added: body.added ?? 0,
+        updated: body.updated ?? 0,
+        removed: body.removed ?? 0,
+        unmatched: body.unmatched ?? [],
+      });
       await loadFossaInvites();
-      onRefresh?.();
+      await onRefresh?.();
     } catch {
       setFossaInviteError("Unable to refresh FOSSA invites.");
     } finally {
@@ -1582,6 +1603,18 @@ export default function ProjectReconciliationCard({
                       </button>
                     ) : null}
                   </div>
+                  {fossaRefreshSummary ? (
+                    <div className={styles.inviteSummary}>
+                      Fetched {fossaRefreshSummary.fetched} from FOSSA — added {fossaRefreshSummary.added}, updated{" "}
+                      {fossaRefreshSummary.updated}, removed {fossaRefreshSummary.removed}
+                      {fossaRefreshSummary.unmatched.length > 0 ? (
+                        <>
+                          , unmatched {fossaRefreshSummary.unmatched.length}:{" "}
+                          {fossaRefreshSummary.unmatched.join(", ")}
+                        </>
+                      ) : null}
+                    </div>
+                  ) : null}
                   <div className={styles.tableWrap}>
                     <table className={styles.dataTable}>
                       <thead>

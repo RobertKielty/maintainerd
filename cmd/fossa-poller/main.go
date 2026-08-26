@@ -24,6 +24,11 @@ import (
 
 const defaultDBPath = "/data/maintainers.db"
 
+// fossaInviteTTL mirrors FOSSA's documented 48-hour invitation lifetime
+// (see plugins/fossa/user-invites.md). Invitations older than this are
+// re-sent rather than left to report a stale "pending" status.
+const fossaInviteTTL = 48 * time.Hour
+
 func main() {
 	logger := log.New(os.Stdout, "fossa-poller: ", log.LstdFlags)
 
@@ -88,6 +93,7 @@ type fossaAPI interface {
 	FetchTeamMembersRaw(teamID uint) (fossa.TeamMembers, []byte, error)
 	FindUserIDByEmail(email string) (uint, error)
 	ResolveTeamAdminRoleID() (int, error)
+	FetchUserInvitationEmails() (map[string]struct{}, error)
 }
 
 func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStore, client fossaAPI) error {
@@ -96,6 +102,11 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 	if err != nil {
 		return err
 	}
+
+	if err := discoverFossaInvites(logger, store, client, serviceID); err != nil {
+		logger.Printf("discover invites failed: %v", err)
+	}
+
 	pollerStaffID := ensurePollerStaff(store, logger)
 	auditLogger := zap.NewNop().Sugar()
 	dbInvites, err := store.ListServiceInvitationsByStatus(serviceID, []string{"pending", "expired", "accepted"})
@@ -108,7 +119,6 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 	}
 
 	now := time.Now().UTC()
-	const inviteTTL = 72 * time.Hour
 	for _, invite := range dbInvites {
 		email := strings.TrimSpace(invite.ServiceEmail)
 		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
@@ -132,7 +142,7 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 			continue
 		}
 
-		if invite.SentAt != nil && now.Sub(*invite.SentAt) > inviteTTL {
+		if invite.SentAt != nil && now.Sub(*invite.SentAt) > fossaInviteTTL {
 			if err := client.SendUserInvitation(email); err != nil && !errors.Is(err, fossa.ErrInviteAlreadyExists) {
 				msg := err.Error()
 				invite.Status = "expired"
@@ -317,6 +327,124 @@ func pollFossaInvites(ctx context.Context, logger *log.Logger, store *db.SQLStor
 		logInviteAudit(store, auditLogger, "FOSSA_TEAM_MEMBER_ADDED", pollerStaffID, serviceID, invite, addResp, teamMembersBody)
 	}
 	return nil
+}
+
+// discoverFossaInvites reconciles invitations that were sent directly through FOSSA
+// (e.g. by a CNCF admin using FOSSA's own UI) rather than through maintainer-d's
+// "send invite" action. Without this, such invites are invisible to maintainer-d:
+// no ServiceInvitation row is ever created for them, so the poller has nothing to
+// check and the web UI keeps listing the maintainer as eligible for invitation.
+func discoverFossaInvites(logger *log.Logger, store *db.SQLStore, client fossaAPI, serviceID uint) error {
+	pendingEmails, err := client.FetchUserInvitationEmails()
+	if err != nil {
+		return fmt.Errorf("fetch FOSSA user invitations: %w", err)
+	}
+	if len(pendingEmails) == 0 {
+		return nil
+	}
+
+	projects, err := store.GetProjectsUsingService(serviceID)
+	if err != nil {
+		return fmt.Errorf("load FOSSA projects: %w", err)
+	}
+
+	now := time.Now().UTC()
+	for _, project := range projects {
+		serviceTeam, err := store.GetRemoteTeamByProject(project.ID, serviceID)
+		if err != nil {
+			logger.Printf("discover invites: load FOSSA team for project=%d failed: %v", project.ID, err)
+			continue
+		}
+		if serviceTeam == nil {
+			continue
+		}
+
+		statuses, err := store.ListMaintainerProjectStatuses(project.ID)
+		if err != nil {
+			logger.Printf("discover invites: load maintainer statuses for project=%d failed: %v", project.ID, err)
+			continue
+		}
+
+		existingInvites, err := store.ListServiceInvitations(project.ID, serviceID)
+		if err != nil {
+			logger.Printf("discover invites: load existing invites for project=%d failed: %v", project.ID, err)
+			continue
+		}
+		inviteByMaintainer := make(map[uint]model.ServiceInvitation, len(existingInvites))
+		for _, invite := range existingInvites {
+			if invite.MaintainerID == nil {
+				continue
+			}
+			if _, ok := inviteByMaintainer[*invite.MaintainerID]; !ok {
+				inviteByMaintainer[*invite.MaintainerID] = invite
+			}
+		}
+
+		for _, maintainer := range project.Maintainers {
+			if statuses[maintainer.ID] != model.ActiveMaintainer {
+				continue
+			}
+			pendingEmail := firstPendingEmail(maintainerCandidateEmails(maintainer), pendingEmails)
+			if pendingEmail == "" {
+				continue
+			}
+
+			invite, hasInvite := inviteByMaintainer[maintainer.ID]
+			if hasInvite && strings.EqualFold(invite.Status, "pending") && strings.EqualFold(invite.ServiceEmail, pendingEmail) {
+				continue
+			}
+			if !hasInvite {
+				invite = model.ServiceInvitation{
+					ProjectID:    project.ID,
+					MaintainerID: &maintainer.ID,
+					ServiceID:    serviceID,
+				}
+			}
+			invite.ServiceEmail = pendingEmail
+			invite.RemoteTeamID = serviceTeam.RemoteTeamID
+			invite.Status = "pending"
+			invite.LastError = nil
+			invite.LastCheckedAt = &now
+			if _, err := store.UpsertServiceInvitation(&invite); err != nil {
+				logger.Printf("discover invites: upsert failed maintainer=%d project=%d err=%v", maintainer.ID, project.ID, err)
+				continue
+			}
+			logger.Printf("discover invites: found untracked FOSSA invite email=%s maintainer=%d project=%d", pendingEmail, maintainer.ID, project.ID)
+		}
+	}
+	return nil
+}
+
+// maintainerCandidateEmails mirrors the maintainer email fields the web-bff FOSSA
+// matching logic considers, so a discovered invite matches the same identity a
+// staff-triggered "refresh" would.
+func maintainerCandidateEmails(maintainer model.Maintainer) []string {
+	values := []string{
+		normalizeEmail(maintainer.Email),
+		normalizeEmail(maintainer.GitHubEmail),
+	}
+	seen := make(map[string]struct{}, len(values))
+	candidates := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == "" || value == "email_missing" || value == "github_email_missing" || value == "github_missing" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		candidates = append(candidates, value)
+	}
+	return candidates
+}
+
+func firstPendingEmail(candidateEmails []string, pendingEmails map[string]struct{}) string {
+	for _, email := range candidateEmails {
+		if _, ok := pendingEmails[email]; ok {
+			return email
+		}
+	}
+	return ""
 }
 
 func emailInList(target string, emails []string) bool {
@@ -523,7 +651,7 @@ func formatInviteSummary(store *db.SQLStore, invite model.ServiceInvitation) str
 			hours := int(elapsed.Hours())
 			sentAt = "Sent " + strconv.Itoa(hours) + "h ago"
 		}
-		expiresAt := invite.SentAt.UTC().Add(72 * time.Hour)
+		expiresAt := invite.SentAt.UTC().Add(fossaInviteTTL)
 		remaining := time.Until(expiresAt)
 		if remaining < 0 {
 			remaining = 0

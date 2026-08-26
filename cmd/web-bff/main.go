@@ -1365,9 +1365,8 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 					s.logger.Printf("web-bff: FOSSA team email domains project=%d remoteTeamID=%d %s", project.ID, serviceTeam.RemoteTeamID, strings.Join(parts, ", "))
 					emailToMaintainer := make(map[string]model.Maintainer, len(project.Maintainers))
 					for _, maintainer := range project.Maintainers {
-						normalized := strings.ToLower(strings.TrimSpace(maintainer.Email))
-						if normalized != "" && !strings.EqualFold(normalized, "EMAIL_MISSING") {
-							emailToMaintainer[normalized] = maintainer
+						for _, candidateEmail := range maintainerServiceCandidateEmails(maintainer) {
+							emailToMaintainer[candidateEmail] = maintainer
 						}
 					}
 					fossaTeamMembers = make([]fossaTeamMemberSummary, 0, len(fossaTeamEmails))
@@ -1440,8 +1439,11 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 			}
 			fossaInviteIneligible = classifyIneligibleMaintainers(project.Maintainers, projectStatuses)
 			if role == roleStaff {
-				pendingInviteEmails := make(map[string]struct{})
-				if invites, err := s.store.ListServiceInvitations(project.ID, serviceID); err == nil {
+				invites, invitesErr := s.store.ListServiceInvitations(project.ID, serviceID)
+				if invitesErr != nil {
+					s.logger.Printf("web-bff: load service invitations for project=%d failed: %v", project.ID, invitesErr)
+				} else {
+					pendingInviteEmails := make(map[string]struct{})
 					for _, invite := range invites {
 						if strings.EqualFold(invite.Status, "pending") {
 							normalized := strings.ToLower(strings.TrimSpace(invite.ServiceEmail))
@@ -1450,10 +1452,10 @@ func (s *server) handleProject(w http.ResponseWriter, r *http.Request) {
 							}
 						}
 					}
+					s.logger.Printf("web-bff: build invite candidates project=%d remoteTeamID=%d fossaTeamEmails=%v pendingInviteEmails=%d",
+						project.ID, serviceTeam.RemoteTeamID, fossaTeamEmails, len(pendingInviteEmails))
+					fossaInviteCandidates = buildFossaInviteCandidates(project.Maintainers, projectStatuses, fossaTeamEmails, pendingInviteEmails)
 				}
-				s.logger.Printf("web-bff: build invite candidates project=%d remoteTeamID=%d fossaTeamEmails=%v pendingInviteEmails=%d",
-					project.ID, serviceTeam.RemoteTeamID, fossaTeamEmails, len(pendingInviteEmails))
-				fossaInviteCandidates = buildFossaInviteCandidates(project.Maintainers, projectStatuses, fossaTeamEmails, pendingInviteEmails)
 			}
 		}
 	}
@@ -5839,7 +5841,7 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 				resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
 				continue
 			}
-			email := strings.TrimSpace(maintainer.Email)
+			email := strings.ToLower(strings.TrimSpace(maintainer.Email))
 			if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
 				resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
 				continue
@@ -5855,7 +5857,8 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 				LastCheckedAt: &now,
 			}
 			if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
-				resp.Errors[email] = "failed to store invite status"
+				s.logger.Printf("web-bff: send FOSSA invite (test-mode) store failed project=%d maintainer=%d email=%s err=%v", project.ID, maintainer.ID, email, upsertErr)
+				resp.Errors[email] = fmt.Sprintf("failed to store invite status: %v", upsertErr)
 				continue
 			}
 			resp.Invited = append(resp.Invited, email)
@@ -5889,7 +5892,7 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 			resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
 			continue
 		}
-		email := strings.TrimSpace(maintainer.Email)
+		email := strings.ToLower(strings.TrimSpace(maintainer.Email))
 		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
 			resp.Skipped = append(resp.Skipped, maintainer.GitHubAccount)
 			continue
@@ -5908,8 +5911,14 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 				LastCheckedAt: &now,
 			}
 			if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
-				resp.Errors[email] = "failed to store invite status"
+				s.logger.Printf("web-bff: send FOSSA invite store failed project=%d maintainer=%d email=%s err=%v", project.ID, maintainer.ID, email, upsertErr)
+				resp.Errors[email] = fmt.Sprintf("failed to store invite status: %v", upsertErr)
 				continue
+			}
+			if errors.Is(err, fossa.ErrInviteAlreadyExists) {
+				s.logger.Printf("web-bff: send FOSSA invite already-exists project=%d maintainer=%d email=%s", project.ID, maintainer.ID, email)
+			} else {
+				s.logger.Printf("web-bff: send FOSSA invite ok project=%d maintainer=%d email=%s", project.ID, maintainer.ID, email)
 			}
 			resp.Invited = append(resp.Invited, email)
 			continue
@@ -5919,6 +5928,7 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 			teamAdminRoleID, resolveErr := client.ResolveTeamAdminRoleID()
 			if resolveErr != nil {
 				msg := resolveErr.Error()
+				s.logger.Printf("web-bff: send FOSSA invite already-member resolve-role failed project=%d maintainer=%d email=%s err=%v", project.ID, maintainer.ID, email, resolveErr)
 				inviteStatus := &model.ServiceInvitation{
 					ProjectID:     project.ID,
 					MaintainerID:  &maintainer.ID,
@@ -5930,13 +5940,15 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 					LastCheckedAt: &now,
 				}
 				if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
-					resp.Errors[email] = "failed to store invite status"
+					s.logger.Printf("web-bff: send FOSSA invite store failed project=%d maintainer=%d email=%s err=%v", project.ID, maintainer.ID, email, upsertErr)
+					resp.Errors[email] = fmt.Sprintf("failed to store invite status: %v", upsertErr)
 				} else {
 					resp.Errors[email] = msg
 				}
 				continue
 			}
 			if addErr := client.AddUserToTeamByEmail(serviceTeam.RemoteTeamID, email, teamAdminRoleID); addErr == nil {
+				s.logger.Printf("web-bff: send FOSSA invite already-member added-to-team project=%d maintainer=%d email=%s", project.ID, maintainer.ID, email)
 				inviteStatus := &model.ServiceInvitation{
 					ProjectID:     project.ID,
 					MaintainerID:  &maintainer.ID,
@@ -5947,11 +5959,13 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 					LastCheckedAt: &now,
 				}
 				if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
-					resp.Errors[email] = "failed to store invite status"
+					s.logger.Printf("web-bff: send FOSSA invite store failed project=%d maintainer=%d email=%s err=%v", project.ID, maintainer.ID, email, upsertErr)
+					resp.Errors[email] = fmt.Sprintf("failed to store invite status: %v", upsertErr)
 				}
 				continue
 			} else {
 				msg := addErr.Error()
+				s.logger.Printf("web-bff: send FOSSA invite already-member add-to-team failed project=%d maintainer=%d email=%s err=%v", project.ID, maintainer.ID, email, addErr)
 				inviteStatus := &model.ServiceInvitation{
 					ProjectID:     project.ID,
 					MaintainerID:  &maintainer.ID,
@@ -5963,7 +5977,8 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 					LastCheckedAt: &now,
 				}
 				if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
-					resp.Errors[email] = "failed to store invite status"
+					s.logger.Printf("web-bff: send FOSSA invite store failed project=%d maintainer=%d email=%s err=%v", project.ID, maintainer.ID, email, upsertErr)
+					resp.Errors[email] = fmt.Sprintf("failed to store invite status: %v", upsertErr)
 				} else {
 					resp.Errors[email] = msg
 				}
@@ -5972,6 +5987,7 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 		}
 
 		msg := err.Error()
+		s.logger.Printf("web-bff: send FOSSA invite failed project=%d maintainer=%d email=%s err=%v", project.ID, maintainer.ID, email, err)
 		inviteStatus := &model.ServiceInvitation{
 			ProjectID:     project.ID,
 			MaintainerID:  &maintainer.ID,
@@ -5983,7 +5999,8 @@ func (s *server) handleFossaInvite(w http.ResponseWriter, r *http.Request) {
 			LastCheckedAt: &now,
 		}
 		if _, upsertErr := s.store.UpsertServiceInvitation(inviteStatus); upsertErr != nil {
-			resp.Errors[email] = "failed to store invite status"
+			s.logger.Printf("web-bff: send FOSSA invite store failed project=%d maintainer=%d email=%s err=%v", project.ID, maintainer.ID, email, upsertErr)
+			resp.Errors[email] = fmt.Sprintf("failed to store invite status: %v", upsertErr)
 		} else {
 			resp.Errors[email] = msg
 		}
@@ -6119,11 +6136,9 @@ func (s *server) handleFossaInviteRefresh(w http.ResponseWriter, r *http.Request
 		if projectStatuses[maintainer.ID] != model.ActiveMaintainer {
 			continue
 		}
-		email := strings.TrimSpace(maintainer.Email)
-		if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
-			continue
+		for _, email := range maintainerServiceCandidateEmails(maintainer) {
+			activeMaintainers[email] = maintainer
 		}
-		activeMaintainers[strings.ToLower(email)] = maintainer
 	}
 
 	invites, err := s.store.ListServiceInvitations(project.ID, serviceID)
@@ -6144,10 +6159,13 @@ func (s *server) handleFossaInviteRefresh(w http.ResponseWriter, r *http.Request
 	added := 0
 	updated := 0
 	removed := 0
+	unmatched := make([]string, 0)
 
 	for email := range pendingEmails {
 		maintainer, ok := activeMaintainers[email]
 		if !ok {
+			s.logger.Printf("web-bff: refresh FOSSA invites unmatched project=%d email=%s reason=no_active_maintainer_on_project", project.ID, email)
+			unmatched = append(unmatched, email)
 			continue
 		}
 		if invite, ok := existing[email]; ok {
@@ -6156,6 +6174,8 @@ func (s *server) handleFossaInviteRefresh(w http.ResponseWriter, r *http.Request
 			invite.LastCheckedAt = &now
 			if _, upsertErr := s.store.UpsertServiceInvitation(&invite); upsertErr == nil {
 				updated++
+			} else {
+				s.logger.Printf("web-bff: refresh FOSSA invites upsert (update) failed project=%d email=%s err=%v", project.ID, email, upsertErr)
 			}
 			continue
 		}
@@ -6163,13 +6183,15 @@ func (s *server) handleFossaInviteRefresh(w http.ResponseWriter, r *http.Request
 			ProjectID:     project.ID,
 			MaintainerID:  &maintainer.ID,
 			ServiceID:     serviceID,
-			ServiceEmail:  maintainer.Email,
+			ServiceEmail:  email,
 			RemoteTeamID:  serviceTeam.RemoteTeamID,
 			Status:        "pending",
 			LastCheckedAt: &now,
 		}
 		if _, upsertErr := s.store.UpsertServiceInvitation(invite); upsertErr == nil {
 			added++
+		} else {
+			s.logger.Printf("web-bff: refresh FOSSA invites upsert (add) failed project=%d email=%s err=%v", project.ID, email, upsertErr)
 		}
 	}
 
@@ -6192,11 +6214,16 @@ func (s *server) handleFossaInviteRefresh(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	s.logger.Printf("web-bff: refresh FOSSA invites summary project=%d fetched=%d added=%d updated=%d removed=%d unmatched=%d",
+		project.ID, len(pendingEmails), added, updated, removed, len(unmatched))
+
 	w.Header().Set(headerContentType, contentTypeJSON)
-	if err := json.NewEncoder(w).Encode(map[string]int{
-		"added":   added,
-		"updated": updated,
-		"removed": removed,
+	if err := json.NewEncoder(w).Encode(map[string]any{
+		"fetched":   len(pendingEmails),
+		"added":     added,
+		"updated":   updated,
+		"removed":   removed,
+		"unmatched": unmatched,
 	}); err != nil {
 		s.logger.Printf("web-bff: handleFossaInviteRefresh encode error: %v", err)
 	}
@@ -6353,7 +6380,7 @@ func (s *server) handleFossaInviteAction(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "missing email", http.StatusBadRequest)
 		return
 	}
-	email := strings.TrimSpace(invite.ServiceEmail)
+	email := strings.ToLower(strings.TrimSpace(invite.ServiceEmail))
 	if email == "" || strings.EqualFold(email, "EMAIL_MISSING") {
 		http.Error(w, "missing email", http.StatusBadRequest)
 		return
@@ -6552,11 +6579,18 @@ func buildFossaInviteCandidates(maintainers []model.Maintainer, projectStatuses 
 		if github == "" || strings.EqualFold(github, "GITHUB_MISSING") {
 			continue
 		}
-		normalized := strings.ToLower(email)
-		if _, ok := teamEmailSet[normalized]; ok {
-			continue
+		alreadyOnboarded := false
+		for _, candidateEmail := range maintainerServiceCandidateEmails(m) {
+			if _, ok := teamEmailSet[candidateEmail]; ok {
+				alreadyOnboarded = true
+				break
+			}
+			if _, ok := pendingInviteEmails[candidateEmail]; ok {
+				alreadyOnboarded = true
+				break
+			}
 		}
-		if _, ok := pendingInviteEmails[normalized]; ok {
+		if alreadyOnboarded {
 			continue
 		}
 		name := strings.TrimSpace(m.Name)

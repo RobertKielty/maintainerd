@@ -34,6 +34,7 @@ func setupTestDB(t *testing.T) *gorm.DB {
 		&model.RemoteTeam{},
 		&model.RemoteUser{},
 		&model.RemoteTeamUser{},
+		&model.ServiceInvitation{},
 	)
 	require.NoError(t, err)
 
@@ -376,7 +377,89 @@ func TestUpdateProjectDotProjectMetadata(t *testing.T) {
 }
 
 func TestGetProjectsUsingService(t *testing.T) {
-	t.Skip("testDB not defined - needs implementation")
+	db := setupTestDB(t)
+	store := NewSQLStore(db)
+
+	service := model.Service{Name: "FOSSA"}
+	require.NoError(t, db.Create(&service).Error)
+	otherService := model.Service{Name: "Snyk"}
+	require.NoError(t, db.Create(&otherService).Error)
+
+	onboarded := model.Project{Name: "tekton", Maturity: model.Incubating}
+	require.NoError(t, db.Create(&onboarded).Error)
+	notOnboarded := model.Project{Name: "flux", Maturity: model.Incubating}
+	require.NoError(t, db.Create(&notOnboarded).Error)
+
+	require.NoError(t, db.Create(&model.RemoteTeam{
+		ProjectID:    onboarded.ID,
+		ServiceID:    service.ID,
+		RemoteTeamID: 123,
+	}).Error)
+	require.NoError(t, db.Create(&model.RemoteTeam{
+		ProjectID:    notOnboarded.ID,
+		ServiceID:    otherService.ID,
+		RemoteTeamID: 456,
+	}).Error)
+
+	maintainer := model.Maintainer{Name: "Riley Maintainer", Email: "riley@example.com", MaintainerStatus: model.ActiveMaintainer}
+	require.NoError(t, db.Create(&maintainer).Error)
+	require.NoError(t, db.Create(&model.MaintainerProject{
+		MaintainerID: maintainer.ID,
+		ProjectID:    onboarded.ID,
+		Status:       model.ActiveMaintainer,
+	}).Error)
+
+	projects, err := store.GetProjectsUsingService(service.ID)
+	require.NoError(t, err)
+	require.Len(t, projects, 1)
+	assert.Equal(t, onboarded.ID, projects[0].ID)
+	require.Len(t, projects[0].Maintainers, 1)
+	assert.Equal(t, maintainer.ID, projects[0].Maintainers[0].ID)
+}
+
+func TestUpsertServiceInvitation_RestoresSoftDeletedRow(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewSQLStore(db)
+
+	service := model.Service{Name: "FOSSA"}
+	require.NoError(t, db.Create(&service).Error)
+	project := model.Project{Name: "tekton", Maturity: model.Incubating}
+	require.NoError(t, db.Create(&project).Error)
+	maintainer := model.Maintainer{Name: "Riley Maintainer", Email: "riley@example.com"}
+	require.NoError(t, db.Create(&maintainer).Error)
+
+	invite := &model.ServiceInvitation{
+		ProjectID:    project.ID,
+		ServiceID:    service.ID,
+		MaintainerID: &maintainer.ID,
+		ServiceEmail: "riley@example.com",
+		RemoteTeamID: 186460,
+		Status:       "pending",
+	}
+	created, err := store.UpsertServiceInvitation(invite)
+	require.NoError(t, err)
+	require.NoError(t, db.Delete(created).Error)
+
+	var deletedCount int64
+	require.NoError(t, db.Unscoped().Model(&model.ServiceInvitation{}).
+		Where("id = ? AND deleted_at IS NOT NULL", created.ID).Count(&deletedCount).Error)
+	require.Equal(t, int64(1), deletedCount, "row must be soft-deleted before the re-upsert")
+
+	rediscovered := &model.ServiceInvitation{
+		ProjectID:    project.ID,
+		ServiceID:    service.ID,
+		MaintainerID: &maintainer.ID,
+		ServiceEmail: "riley@example.com",
+		RemoteTeamID: 186460,
+		Status:       "pending",
+	}
+	_, err = store.UpsertServiceInvitation(rediscovered)
+	require.NoError(t, err)
+
+	invites, err := store.ListServiceInvitations(project.ID, service.ID)
+	require.NoError(t, err)
+	require.Len(t, invites, 1, "re-upserting over a soft-deleted invite must make it visible again")
+	assert.Equal(t, "pending", invites[0].Status)
 }
 
 func TestUpsertMaintainer_FillsMissingFields(t *testing.T) {

@@ -19,14 +19,15 @@ import (
 )
 
 type fakeFossaClient struct {
-	hasPending bool
-	userID     uint
-	roleID     int
-	teamEmails []string
-	addResp    *fossa.TeamAddResponse
-	addErr     error
-	rawMembers fossa.TeamMembers
-	rawBody    []byte
+	hasPending       bool
+	userID           uint
+	roleID           int
+	teamEmails       []string
+	addResp          *fossa.TeamAddResponse
+	addErr           error
+	rawMembers       fossa.TeamMembers
+	rawBody          []byte
+	invitationEmails map[string]struct{}
 }
 
 func (f *fakeFossaClient) HasPendingInvitation(string) (bool, error) { return f.hasPending, nil }
@@ -49,6 +50,9 @@ func (f *fakeFossaClient) FetchTeamMembersRaw(uint) (fossa.TeamMembers, []byte, 
 	return fossa.TeamMembers{Results: []fossa.TeamMember{{Email: "dana@example.com"}}, TotalCount: 1}, body, nil
 }
 func (f *fakeFossaClient) FindUserIDByEmail(string) (uint, error) { return f.userID, nil }
+func (f *fakeFossaClient) FetchUserInvitationEmails() (map[string]struct{}, error) {
+	return f.invitationEmails, nil
+}
 func (f *fakeFossaClient) ResolveTeamAdminRoleID() (int, error) {
 	if f.roleID == 0 {
 		return 4, nil
@@ -61,10 +65,14 @@ func setupPollerTestDB(t *testing.T) *gorm.DB {
 		Logger: logger.Default.LogMode(logger.Silent),
 	})
 	require.NoError(t, err)
+	require.NoError(t, dbConn.SetupJoinTable(&model.Maintainer{}, "Projects", &model.MaintainerProject{}))
+	require.NoError(t, dbConn.SetupJoinTable(&model.Project{}, "Maintainers", &model.MaintainerProject{}))
 	require.NoError(t, dbConn.AutoMigrate(
+		&model.Company{},
 		&model.Service{},
 		&model.Project{},
 		&model.Maintainer{},
+		&model.MaintainerProject{},
 		&model.Foundation{},
 		&model.StaffMember{},
 		&model.AuditLog{},
@@ -75,6 +83,14 @@ func setupPollerTestDB(t *testing.T) *gorm.DB {
 		&model.DotProjectSyncState{},
 	))
 	return dbConn
+}
+
+func linkMaintainerToProject(t *testing.T, dbConn *gorm.DB, maintainerID, projectID uint, status model.MaintainerStatus) {
+	require.NoError(t, dbConn.Create(&model.MaintainerProject{
+		MaintainerID: maintainerID,
+		ProjectID:    projectID,
+		Status:       status,
+	}).Error)
 }
 
 func TestPollerRecordsRemoteTeamMembership(t *testing.T) {
@@ -441,4 +457,102 @@ func TestPollerTeamAssignmentImmediateAddError(t *testing.T) {
 
 	var audit model.AuditLog
 	require.NoError(t, dbConn.Where("action = ?", "FOSSA_TEAM_MEMBER_ADD_FAILED").First(&audit).Error)
+}
+
+// TestPollerDiscoversInviteSentDirectlyThroughFOSSA covers an invite sent through FOSSA's
+// own UI (not maintainer-d's "invite" action), which has no ServiceInvitation row, so the
+// poller must create one from FOSSA's org-wide pending-invitations list.
+func TestPollerDiscoversInviteSentDirectlyThroughFOSSA(t *testing.T) {
+	dbConn := setupPollerTestDB(t)
+	store := db.NewSQLStore(dbConn)
+
+	service := model.Service{Name: "FOSSA"}
+	require.NoError(t, dbConn.Create(&service).Error)
+	project := model.Project{Name: "tekton", Maturity: model.Incubating}
+	require.NoError(t, dbConn.Create(&project).Error)
+	maintainer := model.Maintainer{
+		Name:             "Riley Maintainer",
+		Email:            "riley@example.com",
+		GitHubAccount:    "rileydev",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&maintainer).Error)
+	linkMaintainerToProject(t, dbConn, maintainer.ID, project.ID, model.ActiveMaintainer)
+
+	serviceTeam := model.RemoteTeam{
+		ProjectID:    project.ID,
+		ServiceID:    service.ID,
+		RemoteTeamID: 987654,
+	}
+	require.NoError(t, dbConn.Create(&serviceTeam).Error)
+
+	client := &fakeFossaClient{
+		hasPending:       true,
+		invitationEmails: map[string]struct{}{"riley@example.com": {}},
+	}
+	logger := log.New(io.Discard, "", 0)
+
+	err := pollFossaInvites(context.Background(), logger, store, client)
+	require.NoError(t, err)
+
+	var invite model.ServiceInvitation
+	require.NoError(t, dbConn.Where(
+		"project_id = ? AND service_id = ? AND service_email = ?",
+		project.ID, service.ID, maintainer.Email,
+	).First(&invite).Error)
+	require.Equal(t, "pending", invite.Status)
+	require.Equal(t, serviceTeam.RemoteTeamID, invite.RemoteTeamID)
+	require.NotNil(t, invite.MaintainerID)
+	require.Equal(t, maintainer.ID, *invite.MaintainerID)
+}
+
+// TestPollerDiscoveryIgnoresAlreadyTrackedInvite ensures discovery doesn't clobber an
+// invite maintainer-d already knows about, or resurrect one FOSSA no longer lists.
+func TestPollerDiscoveryIgnoresAlreadyTrackedInvite(t *testing.T) {
+	dbConn := setupPollerTestDB(t)
+	store := db.NewSQLStore(dbConn)
+
+	service := model.Service{Name: "FOSSA"}
+	require.NoError(t, dbConn.Create(&service).Error)
+	project := model.Project{Name: "tekton", Maturity: model.Incubating}
+	require.NoError(t, dbConn.Create(&project).Error)
+	maintainer := model.Maintainer{
+		Name:             "Dana Dev",
+		Email:            "dana@example.com",
+		GitHubAccount:    "danadev",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&maintainer).Error)
+	linkMaintainerToProject(t, dbConn, maintainer.ID, project.ID, model.ActiveMaintainer)
+
+	serviceTeam := model.RemoteTeam{
+		ProjectID:    project.ID,
+		ServiceID:    service.ID,
+		RemoteTeamID: 111222,
+	}
+	require.NoError(t, dbConn.Create(&serviceTeam).Error)
+
+	done := "done"
+	invite := model.ServiceInvitation{
+		ServiceID:            service.ID,
+		ProjectID:            project.ID,
+		MaintainerID:         &maintainer.ID,
+		RemoteTeamID:         serviceTeam.RemoteTeamID,
+		ServiceEmail:         maintainer.Email,
+		Status:               "accepted",
+		TeamAssignmentStatus: &done,
+	}
+	require.NoError(t, dbConn.Create(&invite).Error)
+
+	client := &fakeFossaClient{invitationEmails: map[string]struct{}{}}
+	logger := log.New(io.Discard, "", 0)
+
+	err := pollFossaInvites(context.Background(), logger, store, client)
+	require.NoError(t, err)
+
+	var updated model.ServiceInvitation
+	require.NoError(t, dbConn.First(&updated, invite.ID).Error)
+	require.Equal(t, "accepted", updated.Status)
+	require.NotNil(t, updated.TeamAssignmentStatus)
+	require.Equal(t, "done", *updated.TeamAssignmentStatus)
 }
