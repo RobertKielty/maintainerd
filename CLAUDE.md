@@ -10,7 +10,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **web-bff** (`cmd/web-bff/`) — Go REST API backend serving the Next.js web app
 - **web** (`web/`) — Next.js 16 / React 19 frontend with App Router
 - **PostgreSQL** database accessed via GORM (SQLite used locally/in tests)
-- **CRDs** (`apis/`, `config/`) — Kubernetes Custom Resource Definitions for projects, maintainers, companies
 
 ## Running the Web App Locally
 
@@ -72,9 +71,7 @@ Web UI → web-bff (Go REST API, :8000) → PostgreSQL
 - `refparse/` — Parses maintainer references from project YAML files
 - `cmd/web-bff/` — REST API handlers, GitHub OAuth, session management
 - `cmd/web-bff-seed/` — Seeds test database
-- `cmd/sync/` — Syncs DB data to CRDs
 - `cmd/migrate/` — Database migrations
-- `apis/maintainers/v1alpha1/` — CRD type definitions (do not hand-edit generated files)
 
 ### Web app (`web/src/app/`)
 Next.js App Router. Routes include `/projects/[id]`, `/maintainers/[id]`, `/companies/[id]`, `/search`. The `AppShell` component (`web/src/components/AppShell.tsx`) wraps all pages.
