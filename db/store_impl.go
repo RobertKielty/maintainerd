@@ -50,7 +50,7 @@ func (s *SQLStore) getServiceByName(name string) (*model.Service, error) {
 func (s *SQLStore) GetProjectsUsingService(serviceID uint) ([]model.Project, error) {
 	var projects []model.Project
 	err := s.db.
-		Joins("JOIN service_teams st ON st.project_id = projects.id").
+		Joins("JOIN remote_teams st ON st.project_id = projects.id").
 		Where("st.service_id = ?", serviceID).
 		Preload("Maintainers.Company").
 		Find(&projects).Error
@@ -764,7 +764,7 @@ func (s *SQLStore) UpsertServiceInvitation(invite *model.ServiceInvitation) (*mo
 	if invite == nil {
 		return nil, fmt.Errorf("invite is nil")
 	}
-	err := s.db.Clauses(clause.OnConflict{
+	err := s.db.Unscoped().Clauses(clause.OnConflict{
 		Columns: []clause.Column{
 			{Name: "project_id"},
 			{Name: "service_id"},
@@ -781,6 +781,7 @@ func (s *SQLStore) UpsertServiceInvitation(invite *model.ServiceInvitation) (*mo
 			"sent_at",
 			"last_checked_at",
 			"updated_at",
+			"deleted_at",
 		}),
 	}).Create(invite).Error
 	if err != nil {
