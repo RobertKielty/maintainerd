@@ -6199,7 +6199,7 @@ func (s *server) handleFossaInviteRefresh(w http.ResponseWriter, r *http.Request
 		if invite.RemoteTeamID != serviceTeam.RemoteTeamID {
 			continue
 		}
-		if invite.Status == "accepted" && invite.TeamAssignmentStatus != nil && *invite.TeamAssignmentStatus != "done" {
+		if invite.Status == "accepted" || (invite.TeamAssignmentStatus != nil && *invite.TeamAssignmentStatus == "done") {
 			continue
 		}
 		email := strings.ToLower(strings.TrimSpace(invite.ServiceEmail))

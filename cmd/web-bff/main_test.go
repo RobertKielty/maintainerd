@@ -1033,6 +1033,197 @@ func TestMaintainerFossaReconcileAction(t *testing.T) {
 	}
 }
 
+func TestFossaInviteRefreshDoesNotRemoveAcceptedInvitations(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now()
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	maintainer := model.Maintainer{
+		Name:             "Vincent Example",
+		Email:            "vincent@example.org",
+		GitHubAccount:    "vincent-example",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&maintainer).Error)
+
+	project := model.Project{Name: "Project Tekton", Maturity: model.Graduated}
+	require.NoError(t, dbConn.Create(&project).Error)
+	require.NoError(t, dbConn.Model(&project).Association("Maintainers").Append(&maintainer))
+
+	fossaService := model.Service{Name: "FOSSA", Description: "License scanning"}
+	require.NoError(t, dbConn.Create(&fossaService).Error)
+	require.NoError(t, dbConn.Model(&project).Association("Services").Append(&fossaService))
+
+	teamName := "Project Tekton Team"
+	team := model.RemoteTeam{
+		ProjectID:      project.ID,
+		ServiceID:      fossaService.ID,
+		RemoteTeamID:   701,
+		RemoteTeamName: &teamName,
+		ProjectName:    &project.Name,
+	}
+	require.NoError(t, dbConn.Create(&team).Error)
+
+	done := "done"
+	invite := model.ServiceInvitation{
+		ProjectID:            project.ID,
+		MaintainerID:         &maintainer.ID,
+		ServiceID:            fossaService.ID,
+		ServiceEmail:         "vincent@example.org",
+		RemoteTeamID:         team.RemoteTeamID,
+		Status:               "accepted",
+		TeamAssignmentStatus: &done,
+		LastCheckedAt:        &now,
+	}
+	require.NoError(t, dbConn.Create(&invite).Error)
+
+	fossaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user-invitations":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fossaAPI.Close()
+	t.Setenv("FOSSA_API_BASE", fossaAPI.URL)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		fossaToken: "test-token",
+	}
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/services/fossa/invites/refresh?projectId=%d", project.ID), nil)
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+	rec := httptest.NewRecorder()
+	handler := s.requireSession(http.HandlerFunc(s.handleFossaInviteRefresh))
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var refreshed model.ServiceInvitation
+	require.NoError(t, dbConn.Where("id = ?", invite.ID).First(&refreshed).Error)
+	assert.Equal(t, "accepted", refreshed.Status)
+}
+
+// TestFossaInviteRefreshDoesNotRemoveDoneTeamAssignments covers a row that reflects a
+// confirmed FOSSA team assignment (TeamAssignmentStatus="done") but whose Status was later
+// clobbered to "error" by an unrelated transient API failure on a subsequent poll — this
+// happens because the poller's generic error branches (cmd/fossa-poller/main.go) only ever
+// touch Status/LastError, never TeamAssignmentStatus. Status=="accepted" alone is not a
+// reliable membership signal once that has happened.
+func TestFossaInviteRefreshDoesNotRemoveDoneTeamAssignments(t *testing.T) {
+	dbConn := setupPostgresTestDB(t)
+	store := db.NewSQLStore(dbConn)
+	now := time.Now()
+
+	staff := model.StaffMember{
+		Name:          "Staff Tester",
+		GitHubAccount: "staff-tester",
+		Email:         "staff@example.org",
+	}
+	require.NoError(t, dbConn.Create(&staff).Error)
+
+	maintainer := model.Maintainer{
+		Name:             "Tiger Example",
+		Email:            "tiger@example.org",
+		GitHubAccount:    "tiger-example",
+		MaintainerStatus: model.ActiveMaintainer,
+	}
+	require.NoError(t, dbConn.Create(&maintainer).Error)
+
+	project := model.Project{Name: "Project Velero", Maturity: model.Graduated}
+	require.NoError(t, dbConn.Create(&project).Error)
+	require.NoError(t, dbConn.Model(&project).Association("Maintainers").Append(&maintainer))
+
+	fossaService := model.Service{Name: "FOSSA", Description: "License scanning"}
+	require.NoError(t, dbConn.Create(&fossaService).Error)
+	require.NoError(t, dbConn.Model(&project).Association("Services").Append(&fossaService))
+
+	teamName := "Project Velero Team"
+	team := model.RemoteTeam{
+		ProjectID:      project.ID,
+		ServiceID:      fossaService.ID,
+		RemoteTeamID:   702,
+		RemoteTeamName: &teamName,
+		ProjectName:    &project.Name,
+	}
+	require.NoError(t, dbConn.Create(&team).Error)
+
+	done := "done"
+	fetchErr := "FetchUserInvitations failed: 502 Bad Gateway"
+	invite := model.ServiceInvitation{
+		ProjectID:            project.ID,
+		MaintainerID:         &maintainer.ID,
+		ServiceID:            fossaService.ID,
+		ServiceEmail:         "tiger@example.org",
+		RemoteTeamID:         team.RemoteTeamID,
+		Status:               "error",
+		TeamAssignmentStatus: &done,
+		LastError:            &fetchErr,
+		LastCheckedAt:        &now,
+	}
+	require.NoError(t, dbConn.Create(&invite).Error)
+
+	fossaAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/user-invitations":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`[]`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer fossaAPI.Close()
+	t.Setenv("FOSSA_API_BASE", fossaAPI.URL)
+
+	s := &server{
+		store:      store,
+		sessions:   newSessionStore(log.New(io.Discard, "", 0)),
+		cookieName: defaultSessionCookieName,
+		logger:     log.New(io.Discard, "", 0),
+		fossaToken: "test-token",
+	}
+	staffSessionID := "staff-session"
+	s.sessions.Set(session{
+		ID:        staffSessionID,
+		Login:     staff.GitHubAccount,
+		Role:      roleStaff,
+		CreatedAt: now,
+		ExpiresAt: now.Add(time.Hour),
+	})
+
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/services/fossa/invites/refresh?projectId=%d", project.ID), nil)
+	req.AddCookie(&http.Cookie{Name: s.cookieName, Value: staffSessionID})
+	rec := httptest.NewRecorder()
+	handler := s.requireSession(http.HandlerFunc(s.handleFossaInviteRefresh))
+	handler.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var refreshed model.ServiceInvitation
+	require.NoError(t, dbConn.Where("id = ?", invite.ID).First(&refreshed).Error)
+	require.NotNil(t, refreshed.TeamAssignmentStatus)
+	assert.Equal(t, "done", *refreshed.TeamAssignmentStatus)
+}
+
 func TestMaintainerFossaInviteAction(t *testing.T) {
 	dbConn := setupPostgresTestDB(t)
 	store := db.NewSQLStore(dbConn)
