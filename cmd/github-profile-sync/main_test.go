@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"math"
 	"testing"
 	"time"
 
@@ -165,6 +166,31 @@ func TestShouldFailRun(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := shouldFailRun(tc.summary, tc.cfg); got != tc.want {
 				t.Errorf("shouldFailRun(%+v, %+v) = %v, want %v", tc.summary, tc.cfg, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateSyncConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		cfg     syncConfig
+		wantErr bool
+	}{
+		{name: "defaults are valid", cfg: syncConfig{Pause: 750 * time.Millisecond, MaxErrorRate: 0.5}, wantErr: false},
+		{name: "zero max-error-rate is valid", cfg: syncConfig{MaxErrorRate: 0}, wantErr: false},
+		{name: "max-error-rate of 1 is valid", cfg: syncConfig{MaxErrorRate: 1}, wantErr: false},
+		{name: "negative pause disables throttling", cfg: syncConfig{Pause: -1 * time.Millisecond, MaxErrorRate: 0.5}, wantErr: true},
+		{name: "negative max-error-rate never fails a run", cfg: syncConfig{MaxErrorRate: -0.1}, wantErr: true},
+		{name: "max-error-rate above 1 never fails a run", cfg: syncConfig{MaxErrorRate: 1.1}, wantErr: true},
+		{name: "NaN max-error-rate never fails a run", cfg: syncConfig{MaxErrorRate: math.NaN()}, wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateSyncConfig(tc.cfg)
+			if (err != nil) != tc.wantErr {
+				t.Errorf("validateSyncConfig(%+v) error = %v, wantErr %v", tc.cfg, err, tc.wantErr)
 			}
 		})
 	}

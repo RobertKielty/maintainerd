@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"sort"
 	"strings"
@@ -197,7 +198,26 @@ func parseFlags() syncConfig {
 	flag.DurationVar(&cfg.Pause, "pause", 750*time.Millisecond, "minimum pause between GitHub API requests")
 	flag.Float64Var(&cfg.MaxErrorRate, "max-error-rate", 0.5, "fail the run if the fraction of non-404 GitHub errors exceeds this")
 	flag.Parse()
+
+	if err := validateSyncConfig(cfg); err != nil {
+		log.Fatalf("invalid flags: %v", err)
+	}
+
 	return cfg
+}
+
+// validateSyncConfig rejects nonsensical -pause/-max-error-rate combinations before the run
+// starts: a negative pause silently disables throttling (time.Sleep returns immediately), and a
+// max-error-rate outside [0, 1] (or NaN) can make errorRate's threshold check never trip,
+// letting a run that should fail exit 0 instead.
+func validateSyncConfig(cfg syncConfig) error {
+	if cfg.Pause < 0 {
+		return fmt.Errorf("-pause must not be negative, got %s", cfg.Pause)
+	}
+	if math.IsNaN(cfg.MaxErrorRate) || cfg.MaxErrorRate < 0 || cfg.MaxErrorRate > 1 {
+		return fmt.Errorf("-max-error-rate must be between 0 and 1, got %v", cfg.MaxErrorRate)
+	}
+	return nil
 }
 
 func buildStartAuditEvent(cfg syncConfig) model.AuditLog {
