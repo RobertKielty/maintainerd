@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: github-profile-sync
+  namespace: maintainerd
+spec:
+  concurrencyPolicy: Forbid
+  failedJobsHistoryLimit: 1
+  startingDeadlineSeconds: 600
+  jobTemplate:
+    metadata: {}
+    spec:
+      activeDeadlineSeconds: 5400
+      ttlSecondsAfterFinished: 3600
+      backoffLimit: 1
+      template:
+        metadata: {}
+        spec:
+          containers:
+          - image: ghcr.io/robertkielty/maintainerd-github-profile-sync:latest
+            imagePullPolicy: Always
+            name: github-profile-sync
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
+            terminationMessagePath: /dev/termination-log
+            terminationMessagePolicy: File
+            envFrom:
+            - secretRef:
+                name: maintainerd-db-env
+            - secretRef:
+                name: maintainerd-server-env
+          dnsPolicy: ClusterFirst
+          imagePullSecrets:
+          - name: ghcr-secret
+          restartPolicy: Never
+          schedulerName: default-scheduler
+          securityContext: {}
+          terminationGracePeriodSeconds: 30
+  schedule: "0 3 * * *"
+  successfulJobsHistoryLimit: 1
+  suspend: false

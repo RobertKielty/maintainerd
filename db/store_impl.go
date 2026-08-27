@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maintainerd/geo"
 	"maintainerd/model"
 	"strings"
 	"time"
@@ -326,6 +327,16 @@ func normalizeOrSentinel(value, sentinel string) string {
 	return trimmed
 }
 
+// stringPtrToUpdateValue converts a *string into the value a GORM Updates map needs: an
+// explicit literal nil clears the column, while a typed-nil *string left in the map would not
+// (GORM sees a non-nil interface{} wrapping a nil pointer, not an explicit NULL).
+func stringPtrToUpdateValue(v *string) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
 // CreateCompany creates or retrieves a company by name.
 func (s *SQLStore) CreateCompany(name string) (*model.Company, error) {
 	trimmed := strings.TrimSpace(name)
@@ -465,18 +476,26 @@ func (s *SQLStore) UpdateMaintainerDetails(maintainerID uint, name, email, githu
 		}
 	}
 
-	var locationValue interface{}
-	if location != nil && strings.TrimSpace(*location) != "" {
-		trimmed := strings.TrimSpace(*location)
-		locationValue = trimmed
+	var existing model.Maintainer
+	if err := s.db.First(&existing, maintainerID).Error; err != nil {
+		return nil, err
 	}
+
+	rawLocation := ""
+	if location != nil {
+		rawLocation = strings.TrimSpace(*location)
+	}
+	previous := geo.ResolvedLocation{Location: existing.Location, Country: existing.Country, Timezone: existing.Timezone}
+	resolved := geo.ResolveLocation(rawLocation, previous)
 
 	updates := map[string]interface{}{
 		"name":            strings.TrimSpace(name),
 		"email":           normalizeOrSentinel(email, "EMAIL_MISSING"),
 		"git_hub_account": normalizeOrSentinel(github, "GITHUB_MISSING"),
 		"git_hub_email":   normalizeOrSentinel(githubEmail, "GITHUB_MISSING"),
-		"location":        locationValue,
+		"location":        stringPtrToUpdateValue(resolved.Location),
+		"country":         stringPtrToUpdateValue(resolved.Country),
+		"timezone":        stringPtrToUpdateValue(resolved.Timezone),
 		"company_id":      companyID,
 	}
 
@@ -602,20 +621,6 @@ func (s *SQLStore) MergeCompanies(fromID, toID uint) error {
 		}
 		return nil
 	})
-}
-
-// GetMaintainerMapByEmail returns a map of Maintainers keyed by email address
-func (s *SQLStore) GetMaintainerMapByEmail() (map[string]model.Maintainer, error) {
-	var maintainers []model.Maintainer
-	err := s.db.Preload("Company").Find(&maintainers).Error
-	if err != nil {
-		return nil, err
-	}
-	m := make(map[string]model.Maintainer)
-	for _, maintainer := range maintainers {
-		m[maintainer.Email] = maintainer
-	}
-	return m, nil
 }
 
 // GetMaintainerMapByGitHubAccount returns a map of Maintainers keyed by GitHub Account

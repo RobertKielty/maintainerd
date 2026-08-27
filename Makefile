@@ -362,8 +362,17 @@ github-profile-sync-run:
 	echo "Recreating GitHub profile sync job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete job github-profile-sync --ignore-not-found; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/github-profile-sync-job.yaml; \
-	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/github-profile-sync --timeout=1800s; \
+	deadline=$$(( $$(date +%s) + 5400 )); \
+	wait_status=1; \
+	while [ "$$(date +%s)" -lt "$$deadline" ]; do \
+		condition=$$(kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) get job/github-profile-sync -o jsonpath="{.status.conditions[?(@.status==\"True\")].type}"); \
+		if echo "$$condition" | grep -q Complete; then wait_status=0; break; fi; \
+		if echo "$$condition" | grep -q Failed; then wait_status=1; break; fi; \
+		sleep 10; \
+	done; \
+	if [ "$$wait_status" -ne 0 ]; then echo "job did not reach Complete (timed out or Failed); collecting logs anyway"; fi; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) logs job/github-profile-sync --tail=-1; \
+	exit $$wait_status; \
 	'
 
 .PHONY: fossa-poller-deploy

@@ -60,30 +60,37 @@ func redactPostgresDSN(dsn string) (string, error) {
 }
 
 const (
-	defaultAddr                     = ":8000"
-	defaultSessionCookieName        = "md_session"
-	defaultStateCookieName          = "md_oauth_state"
-	defaultSessionTTL               = 8 * time.Hour
-	defaultStateTTL                 = 10 * time.Minute
-	defaultDBPath                   = "/data/onboarding.db"
-	defaultWebBaseURL               = "http://localhost:3000"
-	defaultRedirectCallback         = "http://localhost:8000/auth/callback"
-	loginRedirectParam              = "next"
-	headerContentType               = "Content-Type"
-	contentTypeJSON                 = "application/json"
-	roleStaff                       = "staff"
-	roleMaintainer                  = "maintainer"
-	capabilityLFXEnrichment         = "lfx:enrichment:run"
-	onboardingIssueCacheTTL         = 15 * time.Minute
-	lfxAdminLoginsEnv               = "LFX_ENRICHMENT_ADMIN_GITHUB_LOGINS"
-	actionDotProjectSyncRunStarted  = "DOT_PROJECT_SYNC_RUN_STARTED"
-	actionDotProjectSyncRunFinished = "DOT_PROJECT_SYNC_RUN_FINISHED"
+	defaultAddr                        = ":8000"
+	defaultSessionCookieName           = "md_session"
+	defaultStateCookieName             = "md_oauth_state"
+	defaultSessionTTL                  = 8 * time.Hour
+	defaultStateTTL                    = 10 * time.Minute
+	defaultDBPath                      = "/data/onboarding.db"
+	defaultWebBaseURL                  = "http://localhost:3000"
+	defaultRedirectCallback            = "http://localhost:8000/auth/callback"
+	loginRedirectParam                 = "next"
+	headerContentType                  = "Content-Type"
+	contentTypeJSON                    = "application/json"
+	roleStaff                          = "staff"
+	roleMaintainer                     = "maintainer"
+	capabilityLFXEnrichment            = "lfx:enrichment:run"
+	onboardingIssueCacheTTL            = 15 * time.Minute
+	lfxAdminLoginsEnv                  = "LFX_ENRICHMENT_ADMIN_GITHUB_LOGINS"
+	actionDotProjectSyncRunStarted     = "DOT_PROJECT_SYNC_RUN_STARTED"
+	actionDotProjectSyncRunFinished    = "DOT_PROJECT_SYNC_RUN_FINISHED"
+	actionGitHubProfileSyncRunStarted  = "GITHUB_PROFILE_SYNC_RUN_STARTED"
+	actionGitHubProfileSyncRunFinished = "GITHUB_PROFILE_SYNC_RUN_FINISHED"
 )
 
-// syncRunActions are audit actions describing a dot-project sync run's lifecycle.
-// They are excluded from the general audit log view by default and surfaced on
-// their own "Sync Runs" page instead.
-var syncRunActions = []string{actionDotProjectSyncRunStarted, actionDotProjectSyncRunFinished}
+// syncRunActions are audit actions describing a sync job's run lifecycle (dot-project sync,
+// github-profile-sync). They are excluded from the general audit log view by default and
+// surfaced on their own "Sync Runs" page instead.
+var syncRunActions = []string{
+	actionDotProjectSyncRunStarted,
+	actionDotProjectSyncRunFinished,
+	actionGitHubProfileSyncRunStarted,
+	actionGitHubProfileSyncRunFinished,
+}
 
 type server struct {
 	oauthConfig                 *oauth2.Config
@@ -2519,6 +2526,40 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 		}
 		if beforeLocation != afterLocation {
 			changes["location"] = map[string]string{"from": beforeLocation, "to": afterLocation}
+		}
+		beforeCountry := ""
+		if before.Country != nil {
+			beforeCountry = strings.TrimSpace(*before.Country)
+		}
+		if beforeCountry == "" {
+			beforeCountry = "COUNTRY_MISSING"
+		}
+		afterCountry := ""
+		if updated.Country != nil {
+			afterCountry = strings.TrimSpace(*updated.Country)
+		}
+		if afterCountry == "" {
+			afterCountry = "COUNTRY_MISSING"
+		}
+		if beforeCountry != afterCountry {
+			changes["country"] = map[string]string{"from": beforeCountry, "to": afterCountry}
+		}
+		beforeTimezone := ""
+		if before.Timezone != nil {
+			beforeTimezone = strings.TrimSpace(*before.Timezone)
+		}
+		if beforeTimezone == "" {
+			beforeTimezone = "TIMEZONE_MISSING"
+		}
+		afterTimezone := ""
+		if updated.Timezone != nil {
+			afterTimezone = strings.TrimSpace(*updated.Timezone)
+		}
+		if afterTimezone == "" {
+			afterTimezone = "TIMEZONE_MISSING"
+		}
+		if beforeTimezone != afterTimezone {
+			changes["timezone"] = map[string]string{"from": beforeTimezone, "to": afterTimezone}
 		}
 
 		metadata := map[string]any{

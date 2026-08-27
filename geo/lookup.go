@@ -40,6 +40,44 @@ func maxAliasLen(aliases []string) int {
 	return max
 }
 
+// ResolvedLocation is the location, country, and timezone stored for a maintainer.
+type ResolvedLocation struct {
+	Location *string
+	Country  *string
+	Timezone *string
+}
+
+// ResolveLocation decides the location/country/timezone that should be stored for a new raw
+// location observation (from a GitHub profile or a staff edit), given the maintainer's
+// previously-stored values:
+//
+//   - rawLocation is empty: everything is cleared. This is the clearest signal available that
+//     a maintainer wants their location removed, so nothing stale should be left behind.
+//   - rawLocation derives a country/timezone: all three fields are set to the new values.
+//   - rawLocation doesn't derive and is unchanged from previous.Location: location is set (a
+//     no-op) and country/timezone carry over unchanged. A parser gap must not destroy data
+//     that's still valid.
+//   - rawLocation doesn't derive and differs from previous.Location: location is set and
+//     country/timezone are cleared. The location changed to something we can't resolve (often
+//     a deliberate privacy choice like "Earth"), so a stale derived value must not be kept.
+func ResolveLocation(rawLocation string, previous ResolvedLocation) ResolvedLocation {
+	trimmed := strings.TrimSpace(rawLocation)
+	if trimmed == "" {
+		return ResolvedLocation{}
+	}
+	resolved := ResolvedLocation{Location: &trimmed}
+	if country, tz, ok := DeriveCountryAndTimezone(trimmed); ok {
+		resolved.Country = &country
+		resolved.Timezone = &tz
+		return resolved
+	}
+	if previous.Location != nil && *previous.Location == trimmed {
+		resolved.Country = previous.Country
+		resolved.Timezone = previous.Timezone
+	}
+	return resolved
+}
+
 // DeriveCountryAndTimezone returns the ISO-3166 alpha-2 country code and IANA
 // timezone for rawLocation using a word-boundary substring match against the
 // curated alias list. Returns ok=false when no match is found.

@@ -1,0 +1,27 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: github-profile-sync
+  namespace: maintainerd
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 3600
+  activeDeadlineSeconds: 5400
+  template:
+    spec:
+      restartPolicy: Never
+      imagePullSecrets:
+      - name: ghcr-secret
+      containers:
+      - name: github-profile-sync
+        image: ghcr.io/robertkielty/maintainerd-github-profile-sync:latest
+        imagePullPolicy: Always
+        envFrom:
+        - secretRef:
+            name: maintainerd-db-env
+        - secretRef:
+            name: maintainerd-server-env
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi

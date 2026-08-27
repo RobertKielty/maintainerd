@@ -24,7 +24,6 @@ type Store interface {
 	GetMaintainerProjectStatuses(maintainerID uint) (map[uint]model.MaintainerStatus, error)
 	ListMaintainersActiveOnAnyProject(maintainerIDs []uint) (map[uint]bool, error)
 	GetProjectRemoteTeamMap(serviceName string) (map[uint]*model.RemoteTeam, error)
-	GetMaintainerMapByEmail() (map[string]model.Maintainer, error)
 	GetRemoteTeamByProject(projectID uint, serviceID uint) (*model.RemoteTeam, error)
 	LogAuditEvent(logger *zap.SugaredLogger, event model.AuditLog) error
 	GetMaintainerMapByGitHubAccount() (map[string]model.Maintainer, error)
