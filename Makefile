@@ -362,7 +362,7 @@ github-profile-sync-run:
 	echo "Recreating GitHub profile sync job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete job github-profile-sync --ignore-not-found; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/github-profile-sync-job.yaml; \
-	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/github-profile-sync --timeout=1800s; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/github-profile-sync --timeout=5400s || echo "wait timed out or job failed; collecting logs anyway"; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) logs job/github-profile-sync --tail=-1; \
 	'
 

@@ -102,12 +102,22 @@ func TestErrorRateExcludes404s(t *testing.T) {
 			want: 0.8,
 		},
 		{
-			name: "mixed 404s and credible errors only count the credible ones",
+			name: "mixed 404s and credible errors excludes 404s from both numerator and denominator",
 			summary: syncSummary{
 				Attempted: 10, Errored: 8, NotFoundCount: 5,
 				GitHubErrorCount: 3,
 			},
-			want: 0.3,
+			want: 0.6, // 3 credible errors / (10 attempted - 5 not-found) = 3/5
+		},
+		{
+			name: "every existing account fails behind majority 404 attrition",
+			summary: syncSummary{
+				Attempted: 10, Errored: 10, NotFoundCount: 6,
+				GitHubErrorCount: 4,
+			},
+			want: 1, // 4 credible errors / (10 attempted - 6 not-found) = 4/4; NOT 0.4 if 404s
+			// were only excluded from the numerator -- every account that should have
+			// worked failed, and the rate must reflect that.
 		},
 	}
 
@@ -120,19 +130,43 @@ func TestErrorRateExcludes404s(t *testing.T) {
 	}
 }
 
-func TestErrorRateExceedsThresholdTriggersNonZeroExit(t *testing.T) {
-	summary := syncSummary{Attempted: 10, Errored: 8, GitHubErrorCount: 8, RateLimitErrorCount: 8}
-	cfg := syncConfig{MaxErrorRate: 0.5}
-	errRate := errorRate(summary)
-	exceeded := summary.Attempted > 0 && errRate > cfg.MaxErrorRate
-	if !exceeded {
-		t.Fatalf("expected error rate %.3f to exceed max-error-rate %.3f", errRate, cfg.MaxErrorRate)
+// TestShouldFailRun exercises the actual predicate main() uses to decide log.Fatalf, rather
+// than re-deriving the same comparison inline -- a prior version of this test duplicated the
+// "exceeded" expression instead of calling shouldFailRun, so it stayed green even if main()'s
+// use of the predicate were removed or broken.
+func TestShouldFailRun(t *testing.T) {
+	tests := []struct {
+		name    string
+		summary syncSummary
+		cfg     syncConfig
+		want    bool
+	}{
+		{
+			name:    "credible errors exceed the threshold",
+			summary: syncSummary{Attempted: 10, Errored: 8, GitHubErrorCount: 8, RateLimitErrorCount: 8},
+			cfg:     syncConfig{MaxErrorRate: 0.5},
+			want:    true,
+		},
+		{
+			name:    "all-404s do not exceed the threshold",
+			summary: syncSummary{Attempted: 10, Errored: 8, NotFoundCount: 8},
+			cfg:     syncConfig{MaxErrorRate: 0.5},
+			want:    false,
+		},
+		{
+			name:    "zero attempts never fails the run",
+			summary: syncSummary{},
+			cfg:     syncConfig{MaxErrorRate: 0},
+			want:    false,
+		},
 	}
 
-	notFoundSummary := syncSummary{Attempted: 10, Errored: 8, NotFoundCount: 8}
-	notFoundRate := errorRate(notFoundSummary)
-	if notFoundExceeded := notFoundSummary.Attempted > 0 && notFoundRate > cfg.MaxErrorRate; notFoundExceeded {
-		t.Fatalf("expected all-404 error rate %.3f not to exceed max-error-rate %.3f", notFoundRate, cfg.MaxErrorRate)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldFailRun(tc.summary, tc.cfg); got != tc.want {
+				t.Errorf("shouldFailRun(%+v, %+v) = %v, want %v", tc.summary, tc.cfg, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -161,7 +195,7 @@ func TestBuildFinishAuditEvent(t *testing.T) {
 	}
 	cfg := syncConfig{MaxErrorRate: 0.1}
 	errRate := errorRate(summary)
-	exceeded := summary.Attempted > 0 && errRate > cfg.MaxErrorRate
+	exceeded := shouldFailRun(summary, cfg)
 	if !exceeded {
 		t.Fatalf("expected error rate %.3f to exceed max-error-rate %.3f for this test's fixture", errRate, cfg.MaxErrorRate)
 	}

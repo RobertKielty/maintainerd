@@ -107,12 +107,6 @@ func main() {
 			time.Sleep(cfg.Pause)
 			continue
 		}
-		if resolved.Location == nil {
-			summary.Cleared++
-		} else {
-			summary.Updated++
-		}
-
 		updates := map[string]any{
 			"location": stringPtrToUpdateValue(resolved.Location),
 			"country":  stringPtrToUpdateValue(resolved.Country),
@@ -125,6 +119,15 @@ func main() {
 			summary.Errored++
 			time.Sleep(cfg.Pause)
 			continue
+		}
+
+		// Only count the outcome once the write has actually succeeded -- counting it
+		// beforehand double-counts a failed write as both updated/cleared and errored,
+		// which overstates the run log and finish-audit totals.
+		if resolved.Location == nil {
+			summary.Cleared++
+		} else {
+			summary.Updated++
 		}
 
 		if err := store.LogAuditEvent(logger, buildUpdateAuditEvent(m, changes)); err != nil {
@@ -141,7 +144,7 @@ func main() {
 		summary.GitHubErrorCount, summary.RateLimitErrorCount, summary.NotFoundCount, errRate,
 	)
 
-	exceeded := summary.Attempted > 0 && errRate > cfg.MaxErrorRate
+	exceeded := shouldFailRun(summary, cfg)
 	if err := store.LogAuditEvent(logger, buildFinishAuditEvent(summary, cfg, errRate, exceeded)); err != nil {
 		log.Printf("github-profile-sync finish audit log failed: %v", err)
 	}
@@ -168,15 +171,25 @@ func recordFetchError(summary *syncSummary, err error) {
 	}
 }
 
-// errorRate is the fraction of attempted fetches that failed for a reason other than a
-// not-found account. A credible run's failures should be auth/rate-limit/5xx errors, not a
-// mix diluted by expected 404 attrition.
+// errorRate is the fraction of fetches -- excluding not-found accounts from both the numerator
+// and the denominator -- that failed. A credible run's failures should be auth/rate-limit/5xx
+// errors, not a mix diluted by expected 404 attrition: with 404s only removed from the
+// numerator, e.g. 6 not-found accounts plus 4 auth failures out of 10 attempts would report
+// 0.4 and pass the default threshold even though every existing account failed.
 func errorRate(summary syncSummary) float64 {
-	if summary.Attempted == 0 {
+	denominator := summary.Attempted - summary.NotFoundCount
+	if denominator <= 0 {
 		return 0
 	}
 	credibleErrors := max(summary.Errored-summary.NotFoundCount, 0)
-	return float64(credibleErrors) / float64(summary.Attempted)
+	return float64(credibleErrors) / float64(denominator)
+}
+
+// shouldFailRun reports whether the run's credible error rate exceeds the configured threshold,
+// making a genuine operational failure (auth, rate-limit, 5xx) visible as a non-zero exit
+// instead of a silently "successful" Kubernetes Job.
+func shouldFailRun(summary syncSummary, cfg syncConfig) bool {
+	return summary.Attempted > 0 && errorRate(summary) > cfg.MaxErrorRate
 }
 
 func parseFlags() syncConfig {
