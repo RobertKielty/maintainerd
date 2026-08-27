@@ -2527,6 +2527,40 @@ func (s *server) handleMaintainer(w http.ResponseWriter, r *http.Request) {
 		if beforeLocation != afterLocation {
 			changes["location"] = map[string]string{"from": beforeLocation, "to": afterLocation}
 		}
+		beforeCountry := ""
+		if before.Country != nil {
+			beforeCountry = strings.TrimSpace(*before.Country)
+		}
+		if beforeCountry == "" {
+			beforeCountry = "COUNTRY_MISSING"
+		}
+		afterCountry := ""
+		if updated.Country != nil {
+			afterCountry = strings.TrimSpace(*updated.Country)
+		}
+		if afterCountry == "" {
+			afterCountry = "COUNTRY_MISSING"
+		}
+		if beforeCountry != afterCountry {
+			changes["country"] = map[string]string{"from": beforeCountry, "to": afterCountry}
+		}
+		beforeTimezone := ""
+		if before.Timezone != nil {
+			beforeTimezone = strings.TrimSpace(*before.Timezone)
+		}
+		if beforeTimezone == "" {
+			beforeTimezone = "TIMEZONE_MISSING"
+		}
+		afterTimezone := ""
+		if updated.Timezone != nil {
+			afterTimezone = strings.TrimSpace(*updated.Timezone)
+		}
+		if afterTimezone == "" {
+			afterTimezone = "TIMEZONE_MISSING"
+		}
+		if beforeTimezone != afterTimezone {
+			changes["timezone"] = map[string]string{"from": beforeTimezone, "to": afterTimezone}
+		}
 
 		metadata := map[string]any{
 			"actor": map[string]string{
