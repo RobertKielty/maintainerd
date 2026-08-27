@@ -427,7 +427,7 @@ func IsGitHubNotFoundError(err error) bool {
 }
 
 // GitHubRateLimitWait returns how long to wait before retrying after a rate limit error,
-// honouring Retry-After (secondary/abuse limits) or the primary limit's reset time when
+// honoring Retry-After (secondary/abuse limits) or the primary limit's reset time when
 // available, falling back to floor otherwise.
 func GitHubRateLimitWait(err error, floor time.Duration) time.Duration {
 	var abuseErr *github.AbuseRateLimitError
