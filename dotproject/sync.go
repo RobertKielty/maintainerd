@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"time"
 
@@ -161,10 +162,10 @@ func (s *SyncSummary) recordError(projectLabel string, err error) {
 	if err == nil {
 		return
 	}
-	if isGitHubRateLimitError(err) {
+	if IsGitHubRateLimitError(err) {
 		s.RateLimitErrorCount++
 		s.GitHubErrorCount++
-	} else if isGitHubAPIError(err) {
+	} else if IsGitHubAPIError(err) {
 		s.GitHubErrorCount++
 	}
 	message := strings.TrimSpace(err.Error())
@@ -389,7 +390,9 @@ func isArchivedProject(project model.Project) bool {
 	return project.Maturity == model.Archived
 }
 
-func isGitHubRateLimitError(err error) bool {
+// IsGitHubRateLimitError reports whether err is a primary or secondary (abuse) GitHub rate
+// limit error.
+func IsGitHubRateLimitError(err error) bool {
 	var rateLimitErr *github.RateLimitError
 	if errors.As(err, &rateLimitErr) {
 		return true
@@ -398,8 +401,10 @@ func isGitHubRateLimitError(err error) bool {
 	return errors.As(err, &abuseRateLimitErr)
 }
 
-func isGitHubAPIError(err error) bool {
-	if isGitHubRateLimitError(err) {
+// IsGitHubAPIError reports whether err originated from a GitHub API response (rate limit,
+// error response, or accepted-but-not-ready), as opposed to a transport-level failure.
+func IsGitHubAPIError(err error) bool {
+	if IsGitHubRateLimitError(err) {
 		return true
 	}
 	var responseErr *github.ErrorResponse
@@ -408,4 +413,32 @@ func isGitHubAPIError(err error) bool {
 	}
 	var acceptedErr *github.AcceptedError
 	return errors.As(err, &acceptedErr)
+}
+
+// IsGitHubNotFoundError reports whether err is a 404 response, e.g. a deleted or renamed
+// GitHub account. Callers typically want to exclude these from error-rate thresholds since
+// they represent expected attrition rather than an operational fault.
+func IsGitHubNotFoundError(err error) bool {
+	var responseErr *github.ErrorResponse
+	if errors.As(err, &responseErr) {
+		return responseErr.Response != nil && responseErr.Response.StatusCode == http.StatusNotFound
+	}
+	return false
+}
+
+// GitHubRateLimitWait returns how long to wait before retrying after a rate limit error,
+// honouring Retry-After (secondary/abuse limits) or the primary limit's reset time when
+// available, falling back to floor otherwise.
+func GitHubRateLimitWait(err error, floor time.Duration) time.Duration {
+	var abuseErr *github.AbuseRateLimitError
+	if errors.As(err, &abuseErr) && abuseErr.RetryAfter != nil {
+		return *abuseErr.RetryAfter
+	}
+	var rateLimitErr *github.RateLimitError
+	if errors.As(err, &rateLimitErr) {
+		if wait := time.Until(rateLimitErr.Rate.Reset.Time); wait > 0 {
+			return wait
+		}
+	}
+	return floor
 }

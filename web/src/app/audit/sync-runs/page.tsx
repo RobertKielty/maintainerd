@@ -3,7 +3,12 @@
 import AppShell from "@/components/AppShell";
 import AuditLogExplorer from "../AuditLogExplorer";
 
-const syncRunActions = ["DOT_PROJECT_SYNC_RUN_STARTED", "DOT_PROJECT_SYNC_RUN_FINISHED"];
+const syncRunActions = [
+  "DOT_PROJECT_SYNC_RUN_STARTED",
+  "DOT_PROJECT_SYNC_RUN_FINISHED",
+  "GITHUB_PROFILE_SYNC_RUN_STARTED",
+  "GITHUB_PROFILE_SYNC_RUN_FINISHED",
+];
 
 export default function AuditSyncRunsPage() {
   return (

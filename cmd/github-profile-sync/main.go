@@ -2,39 +2,55 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
 	"maintainerd/db"
+	"maintainerd/dotproject"
 	"maintainerd/geo"
 	"maintainerd/model"
 
 	"github.com/google/go-github/v55/github"
+	"go.uber.org/zap"
 	"golang.org/x/oauth2"
 	"gorm.io/gorm"
 )
 
-const (
-	defaultDBPath      = "/data/maintainers.db"
-	missingPlaceholder = "GITHUB_MISSING"
-	// pauseBetweenRequests keeps us well under GitHub's 5000 req/hr authenticated limit.
-	pauseBetweenRequests = 750 * time.Millisecond
-)
+const missingPlaceholder = "GITHUB_MISSING"
+
+type syncConfig struct {
+	Pause        time.Duration
+	MaxErrorRate float64
+}
+
+type syncSummary struct {
+	Attempted           int
+	Updated             int
+	Cleared             int
+	Unchanged           int
+	Errored             int
+	GitHubErrorCount    int
+	RateLimitErrorCount int
+	NotFoundCount       int
+}
 
 func main() {
 	ctx := context.Background()
+	cfg := parseFlags()
 
-	dbDriver := envOr("MD_DB_DRIVER", "sqlite")
-	dbDSN := envOr("MD_DB_DSN", "")
-	dbPath := envOr("MD_DB_PATH", defaultDBPath)
-	if dbDriver == "postgres" && dbDSN == "" {
-		log.Fatal("MD_DB_DSN is required when MD_DB_DRIVER=postgres")
+	dbDriver := envOr("MD_DB_DRIVER", "postgres")
+	if dbDriver != "postgres" {
+		log.Fatalf("github-profile-sync requires MD_DB_DRIVER=postgres, got %q", dbDriver)
 	}
-	dsn := dbPath
-	if dbDriver == "postgres" {
-		dsn = dbDSN
+	dbDSN := envOr("MD_DB_DSN", "")
+	if dbDSN == "" {
+		log.Fatal("MD_DB_DSN is required when MD_DB_DRIVER=postgres")
 	}
 
 	githubToken := strings.TrimSpace(os.Getenv("GITHUB_API_TOKEN"))
@@ -42,9 +58,15 @@ func main() {
 		log.Fatal("GITHUB_API_TOKEN is required")
 	}
 
-	dbConn, err := db.OpenGorm(dbDriver, dsn, &gorm.Config{})
+	dbConn, err := db.OpenGorm(dbDriver, dbDSN, &gorm.Config{})
 	if err != nil {
 		log.Fatalf("failed to open DB: %v", err)
+	}
+	store := db.NewSQLStore(dbConn)
+	logger := zap.NewNop().Sugar()
+
+	if err := store.LogAuditEvent(logger, buildStartAuditEvent(cfg)); err != nil {
+		log.Printf("github-profile-sync start audit log failed: %v", err)
 	}
 
 	ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
@@ -59,49 +81,225 @@ func main() {
 	}
 
 	log.Printf("github-profile-sync: syncing %d maintainers", len(maintainers))
-	updated := 0
-	skipped := 0
-	errored := 0
+	summary := syncSummary{}
 
 	for _, m := range maintainers {
+		summary.Attempted++
 		ghUser, _, err := client.Users.Get(ctx, m.GitHubAccount)
 		if err != nil {
+			recordFetchError(&summary, err)
 			log.Printf("github-profile-sync: WARN failed to fetch %q: %v", m.GitHubAccount, err)
-			errored++
-			time.Sleep(pauseBetweenRequests)
+			pause := cfg.Pause
+			if dotproject.IsGitHubRateLimitError(err) {
+				pause = dotproject.GitHubRateLimitWait(err, cfg.Pause)
+			}
+			time.Sleep(pause)
 			continue
 		}
 
-		rawLocation := strings.TrimSpace(ghUser.GetLocation())
-		if rawLocation == "" {
-			skipped++
-			time.Sleep(pauseBetweenRequests)
+		rawLocation := ghUser.GetLocation()
+		previous := geo.ResolvedLocation{Location: m.Location, Country: m.Country, Timezone: m.Timezone}
+		resolved := geo.ResolveLocation(rawLocation, previous)
+
+		changes := diffResolvedLocation(previous, resolved)
+		if len(changes) == 0 {
+			summary.Unchanged++
+			time.Sleep(cfg.Pause)
 			continue
 		}
-
-		updates := map[string]interface{}{
-			"location": rawLocation,
-			"country":  nil,
-			"timezone": nil,
-		}
-		if country, tz, ok := geo.DeriveCountryAndTimezone(rawLocation); ok {
-			updates["country"] = country
-			updates["timezone"] = tz
+		if resolved.Location == nil {
+			summary.Cleared++
+		} else {
+			summary.Updated++
 		}
 
+		updates := map[string]any{
+			"location": stringPtrToUpdateValue(resolved.Location),
+			"country":  stringPtrToUpdateValue(resolved.Country),
+			"timezone": stringPtrToUpdateValue(resolved.Timezone),
+		}
 		if err := dbConn.Model(&model.Maintainer{}).
 			Where("id = ?", m.ID).
 			Updates(updates).Error; err != nil {
 			log.Printf("github-profile-sync: WARN failed to update maintainer id=%d: %v", m.ID, err)
-			errored++
-		} else {
-			updated++
+			summary.Errored++
+			time.Sleep(cfg.Pause)
+			continue
 		}
 
-		time.Sleep(pauseBetweenRequests)
+		if err := store.LogAuditEvent(logger, buildUpdateAuditEvent(m, changes)); err != nil {
+			log.Printf("github-profile-sync: WARN failed to write audit log for maintainer id=%d: %v", m.ID, err)
+		}
+
+		time.Sleep(cfg.Pause)
 	}
 
-	log.Printf("github-profile-sync: done — updated=%d skipped=%d errored=%d", updated, skipped, errored)
+	errRate := errorRate(summary)
+	log.Printf(
+		"github-profile-sync: done attempted=%d updated=%d cleared=%d unchanged=%d errored=%d github_errors=%d rate_limit_errors=%d not_found=%d error_rate=%.3f",
+		summary.Attempted, summary.Updated, summary.Cleared, summary.Unchanged, summary.Errored,
+		summary.GitHubErrorCount, summary.RateLimitErrorCount, summary.NotFoundCount, errRate,
+	)
+
+	exceeded := summary.Attempted > 0 && errRate > cfg.MaxErrorRate
+	if err := store.LogAuditEvent(logger, buildFinishAuditEvent(summary, cfg, errRate, exceeded)); err != nil {
+		log.Printf("github-profile-sync finish audit log failed: %v", err)
+	}
+
+	if exceeded {
+		log.Fatalf("github-profile-sync: error rate %.3f exceeds -max-error-rate %.3f, failing run", errRate, cfg.MaxErrorRate)
+	}
+}
+
+// recordFetchError classifies a GitHub API error into the appropriate summary counter.
+// 404s (deleted/renamed accounts) are counted separately from GitHubErrorCount/
+// RateLimitErrorCount so they don't inflate the error-rate threshold — they're expected
+// attrition across thousands of maintainers, not an operational fault.
+func recordFetchError(summary *syncSummary, err error) {
+	summary.Errored++
+	switch {
+	case dotproject.IsGitHubNotFoundError(err):
+		summary.NotFoundCount++
+	case dotproject.IsGitHubRateLimitError(err):
+		summary.RateLimitErrorCount++
+		summary.GitHubErrorCount++
+	case dotproject.IsGitHubAPIError(err):
+		summary.GitHubErrorCount++
+	}
+}
+
+// errorRate is the fraction of attempted fetches that failed for a reason other than a
+// not-found account. A credible run's failures should be auth/rate-limit/5xx errors, not a
+// mix diluted by expected 404 attrition.
+func errorRate(summary syncSummary) float64 {
+	if summary.Attempted == 0 {
+		return 0
+	}
+	credibleErrors := max(summary.Errored-summary.NotFoundCount, 0)
+	return float64(credibleErrors) / float64(summary.Attempted)
+}
+
+func parseFlags() syncConfig {
+	cfg := syncConfig{}
+	flag.DurationVar(&cfg.Pause, "pause", 750*time.Millisecond, "minimum pause between GitHub API requests")
+	flag.Float64Var(&cfg.MaxErrorRate, "max-error-rate", 0.5, "fail the run if the fraction of non-404 GitHub errors exceeds this")
+	flag.Parse()
+	return cfg
+}
+
+func buildStartAuditEvent(cfg syncConfig) model.AuditLog {
+	metadata := map[string]any{
+		"pause_ms":       cfg.Pause.Milliseconds(),
+		"max_error_rate": cfg.MaxErrorRate,
+	}
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		body = []byte("{}")
+	}
+	return model.AuditLog{
+		Action:   "GITHUB_PROFILE_SYNC_RUN_STARTED",
+		Message:  fmt.Sprintf("GITHUB_PROFILE_SYNC_RUN_STARTED: pause=%s max_error_rate=%.3f", cfg.Pause, cfg.MaxErrorRate),
+		Metadata: string(body),
+	}
+}
+
+func buildFinishAuditEvent(summary syncSummary, cfg syncConfig, errRate float64, exceeded bool) model.AuditLog {
+	metadata := map[string]any{
+		"attempted":              summary.Attempted,
+		"updated":                summary.Updated,
+		"cleared":                summary.Cleared,
+		"unchanged":              summary.Unchanged,
+		"errored":                summary.Errored,
+		"github_error_count":     summary.GitHubErrorCount,
+		"rate_limit_error_count": summary.RateLimitErrorCount,
+		"not_found_count":        summary.NotFoundCount,
+		"error_rate":             errRate,
+		"max_error_rate":         cfg.MaxErrorRate,
+		"error_rate_exceeded":    exceeded,
+	}
+	body, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		body = []byte("{}")
+	}
+	message := fmt.Sprintf(
+		"GITHUB_PROFILE_SYNC_RUN: attempted=%d updated=%d cleared=%d unchanged=%d errored=%d github_errors=%d rate_limit_errors=%d not_found=%d error_rate=%.3f",
+		summary.Attempted, summary.Updated, summary.Cleared, summary.Unchanged, summary.Errored,
+		summary.GitHubErrorCount, summary.RateLimitErrorCount, summary.NotFoundCount, errRate,
+	)
+	return model.AuditLog{
+		Action:   "GITHUB_PROFILE_SYNC_RUN_FINISHED",
+		Message:  message,
+		Metadata: string(body),
+	}
+}
+
+// diffResolvedLocation returns a {field: {from, to}} changes map for every field that differs
+// between previous and resolved, using the display-value placeholder for nil fields. An empty
+// map means nothing changed and no DB write or audit event should happen.
+func diffResolvedLocation(previous, resolved geo.ResolvedLocation) map[string]map[string]string {
+	changes := map[string]map[string]string{}
+	addIfChanged := func(field string, from, to *string) {
+		if stringPtrEqual(from, to) {
+			return
+		}
+		changes[field] = map[string]string{
+			"from": displayValue(field, from),
+			"to":   displayValue(field, to),
+		}
+	}
+	addIfChanged("location", previous.Location, resolved.Location)
+	addIfChanged("country", previous.Country, resolved.Country)
+	addIfChanged("timezone", previous.Timezone, resolved.Timezone)
+	return changes
+}
+
+func stringPtrEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+func displayValue(field string, v *string) string {
+	if v != nil {
+		return *v
+	}
+	return strings.ToUpper(field) + "_MISSING"
+}
+
+// stringPtrToUpdateValue converts a *string into the value a GORM Updates map needs: an
+// explicit literal nil clears the column, while a typed-nil *string left in the map would not
+// (GORM sees a non-nil interface{} wrapping a nil pointer, not an explicit NULL).
+func stringPtrToUpdateValue(v *string) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
+// buildUpdateAuditEvent records a per-maintainer location/country/timezone change so staff
+// unfamiliar with a maintainer can see, at a glance, what this sync run changed on their record.
+func buildUpdateAuditEvent(m model.Maintainer, changes map[string]map[string]string) model.AuditLog {
+	fields := make([]string, 0, len(changes))
+	for field := range changes {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	metadata := map[string]any{
+		"actor":   map[string]string{"login": "github-profile-sync"},
+		"changes": changes,
+	}
+	body, err := json.Marshal(metadata)
+	if err != nil {
+		body = []byte("{}")
+	}
+	message := fmt.Sprintf("GITHUB_PROFILE_SYNC_UPDATE: updated %s for %s", strings.Join(fields, ", "), m.GitHubAccount)
+	return model.AuditLog{
+		MaintainerID: &m.ID,
+		Action:       "GITHUB_PROFILE_SYNC_UPDATE",
+		Message:      message,
+		Metadata:     string(body),
+	}
 }
 
 func envOr(key, fallback string) string {

@@ -10,25 +10,20 @@ spec:
   jobTemplate:
     metadata: {}
     spec:
+      activeDeadlineSeconds: 5400
       ttlSecondsAfterFinished: 3600
       backoffLimit: 1
       template:
         metadata: {}
         spec:
-          affinity:
-            podAffinity:
-              requiredDuringSchedulingIgnoredDuringExecution:
-              - labelSelector:
-                  matchLabels:
-                    app: maintainerd
-                namespaces:
-                - maintainerd
-                topologyKey: kubernetes.io/hostname
           containers:
           - image: ghcr.io/robertkielty/maintainerd-github-profile-sync:latest
             imagePullPolicy: Always
             name: github-profile-sync
-            resources: {}
+            resources:
+              requests:
+                cpu: 50m
+                memory: 64Mi
             terminationMessagePath: /dev/termination-log
             terminationMessagePolicy: File
             envFrom:
