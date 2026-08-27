@@ -362,8 +362,11 @@ github-profile-sync-run:
 	echo "Recreating GitHub profile sync job in namespace $(NAMESPACE) [ctx=$(CTX_STR)]"; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) delete job github-profile-sync --ignore-not-found; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) apply -f deploy/manifests/github-profile-sync-job.yaml; \
-	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/github-profile-sync --timeout=5400s || echo "wait timed out or job failed; collecting logs anyway"; \
+	wait_status=0; \
+	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) wait --for=condition=complete job/github-profile-sync --timeout=5400s || wait_status=$$?; \
+	if [ "$$wait_status" -ne 0 ]; then echo "wait timed out or job failed; collecting logs anyway"; fi; \
 	kubectl -n $(NAMESPACE) $(if $(KUBECONTEXT),--context $(KUBECONTEXT)) logs job/github-profile-sync --tail=-1; \
+	exit $$wait_status; \
 	'
 
 .PHONY: fossa-poller-deploy
