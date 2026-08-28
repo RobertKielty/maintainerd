@@ -220,7 +220,7 @@ func (e *Enricher) enrichCandidate(ctx context.Context, projectID *uint, candida
 	}
 
 	summary.Attempted++
-	users, err := e.searchUsers(ctx, githubUser, email)
+	users, matched, err := e.searchUsers(ctx, githubUser, email)
 	if err != nil {
 		if writeErr := e.writeObservation(projectID, candidate, nil, nil, now, "error", err.Error(), ""); writeErr != nil {
 			return fmt.Errorf("%w; failed to record LFX error observation: %v", PlatformAccessError(err), writeErr)
@@ -241,7 +241,7 @@ func (e *Enricher) enrichCandidate(ctx context.Context, projectID *uint, candida
 			}
 			return PlatformAccessError(err)
 		}
-		confidence := confidenceFor(user, identities, githubUser, email)
+		confidence := confidenceFor(user, identities, githubUser, email, matched)
 		return e.writeObservation(projectID, candidate, &user, identities, now, "matched", "single LFX user match", confidence)
 	default:
 		summary.Ambiguous++
@@ -253,20 +253,37 @@ func (e *Enricher) enrichCandidate(ctx context.Context, projectID *uint, candida
 	}
 }
 
-func (e *Enricher) searchUsers(ctx context.Context, githubUser, email string) ([]User, error) {
+// matchedBy records which query actually produced a result, so confidence
+// can be based on how a user was found rather than re-derived from which
+// inputs happened to be supplied.
+type matchedBy int
+
+const (
+	matchedByNone matchedBy = iota
+	matchedByGitHubID
+	matchedByEmail
+)
+
+func (e *Enricher) searchUsers(ctx context.Context, githubUser, email string) ([]User, matchedBy, error) {
 	if githubUser != "" {
 		users, err := e.Client.SearchUsers(ctx, UserSearch{GitHubID: githubUser, PageSize: 10})
 		if err != nil {
-			return nil, err
+			return nil, matchedByNone, err
 		}
 		if len(users) > 0 {
-			return users, nil
+			return users, matchedByGitHubID, nil
 		}
 	}
 	if email != "" {
-		return e.Client.SearchUsers(ctx, UserSearch{Email: email, PageSize: 10})
+		users, err := e.Client.SearchUsers(ctx, UserSearch{Email: email, PageSize: 10})
+		if err != nil {
+			return nil, matchedByNone, err
+		}
+		if len(users) > 0 {
+			return users, matchedByEmail, nil
+		}
 	}
-	return nil, nil
+	return nil, matchedByNone, nil
 }
 
 // observationPayload is the on-disk shape written to
@@ -353,7 +370,7 @@ func (e *Enricher) writeRawObservation(projectID *uint, candidate candidate, now
 	return err
 }
 
-func confidenceFor(user User, identities []Identity, githubUser, email string) string {
+func confidenceFor(user User, identities []Identity, githubUser, email string, matched matchedBy) string {
 	for _, identity := range identities {
 		if strings.EqualFold(strings.TrimSpace(identity.Source), "github") && githubUser != "" && strings.EqualFold(identity.Username, githubUser) {
 			return "exact"
@@ -362,7 +379,13 @@ func confidenceFor(user User, identities []Identity, githubUser, email string) s
 	if email != "" && strings.EqualFold(user.Email, email) {
 		return "strong"
 	}
-	if githubUser != "" {
+	// Granting "strong" here must be based on how the user was actually
+	// found (matched == matchedByGitHubID), not merely on whether a handle
+	// was supplied to the query - searchUsers falls back to an email-only
+	// search when the GitHub-ID search returns nothing, so a purely
+	// email-matched user must not inherit "strong" confidence from an
+	// unrelated handle that was passed in alongside the email.
+	if githubUser != "" && matched == matchedByGitHubID {
 		return "strong"
 	}
 	return "weak"

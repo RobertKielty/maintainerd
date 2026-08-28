@@ -126,6 +126,113 @@ func unmarshalStrict(raw []byte, target any) error {
 	return json.Unmarshal(raw, target)
 }
 
+func TestConfidenceFor(t *testing.T) {
+	t.Parallel()
+
+	user := User{Email: "fixture@example.com"}
+
+	tests := []struct {
+		name       string
+		user       User
+		identities []Identity
+		githubUser string
+		email      string
+		matched    matchedBy
+		want       string
+	}{
+		{
+			name:       "verified github identity matches supplied handle",
+			user:       user,
+			identities: []Identity{{Source: "github", Username: "fixture-handle"}},
+			githubUser: "fixture-handle",
+			matched:    matchedByGitHubID,
+			want:       "exact",
+		},
+		{
+			name:       "matched by github-ID query, no verified identity",
+			user:       user,
+			githubUser: "fixture-handle",
+			matched:    matchedByGitHubID,
+			want:       "strong",
+		},
+		{
+			name:    "matched by email query, email matches exactly",
+			user:    user,
+			email:   "fixture@example.com",
+			matched: matchedByEmail,
+			want:    "strong",
+		},
+		{
+			name:       "email-fallback match while a handle was supplied must not inherit strong",
+			user:       User{Email: "other@example.com"},
+			githubUser: "fixture-handle",
+			email:      "fixture@example.com",
+			matched:    matchedByEmail,
+			want:       "weak",
+		},
+		{
+			name: "no match signal at all",
+			user: user,
+			want: "weak",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := confidenceFor(tc.user, tc.identities, tc.githubUser, tc.email, tc.matched)
+			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+// fakeGitHubMissEmailHitSearcher simulates the real searchUsers fallback:
+// the GitHub-ID query returns nothing, so it falls back to an email query
+// that returns a user whose email does not corroborate the supplied handle.
+type fakeGitHubMissEmailHitSearcher struct {
+	emailMatch User
+}
+
+func (f *fakeGitHubMissEmailHitSearcher) SearchUsers(_ context.Context, query UserSearch) ([]User, error) {
+	if query.GitHubID != "" {
+		return nil, nil
+	}
+	if query.Email != "" {
+		return []User{f.emailMatch}, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeGitHubMissEmailHitSearcher) GetUserIdentities(context.Context, string) ([]Identity, error) {
+	return nil, nil
+}
+
+func TestEnrichCandidateDoesNotGrantStrongOnEmailFallbackMatch(t *testing.T) {
+	t.Parallel()
+
+	var captured model.MaintainerIdentityObservation
+	enricher := &Enricher{
+		Store: fakeObservationStore{maintainers: map[string]model.Maintainer{}, captured: &captured},
+		Client: &fakeGitHubMissEmailHitSearcher{
+			// LFX's email search can match on a secondary/alternate email
+			// that differs from the primary Email field the API returns -
+			// this is the case the regression guards against: the matched
+			// user's own Email doesn't corroborate the query email either.
+			emailMatch: User{ID: "sfid-fixture-2", Email: "secondary@example.com", Username: "unrelated-handle"},
+		},
+	}
+
+	var summary dotproject.EnrichmentSummary
+	err := enricher.enrichCandidate(context.Background(), nil, candidate{
+		GitHubUser: "fixture-handle",
+		Email:      "fixture@example.com",
+		SourceRef:  "github:fixture-handle",
+	}, time.Now().UTC(), &summary)
+	require.NoError(t, err)
+
+	assert.Equal(t, "weak", captured.Confidence, "an email-only match must not inherit strong confidence just because a github handle was also supplied")
+}
+
 func TestEnricherSkipsInvalidProjectMaintainersFile(t *testing.T) {
 	t.Parallel()
 
