@@ -269,14 +269,46 @@ func (e *Enricher) searchUsers(ctx context.Context, githubUser, email string) ([
 	return nil, nil
 }
 
+// observationPayload is the on-disk shape written to
+// MaintainerIdentityObservation.RawPayload. It preserves the raw bytes LFX
+// returned (User.Raw / Identity.Raw) rather than re-marshaling the typed
+// structs, so fields we haven't modelled yet survive and can be mined later.
+// The "user"/"identities" keys must stay stable: writeRawObservation
+// re-unmarshals this exact shape to extract SourceUserID/Name/Email/LFID/
+// CompanyName.
+type observationPayload struct {
+	User       json.RawMessage   `json:"user"`
+	Identities []json.RawMessage `json:"identities,omitempty"`
+}
+
 func (e *Enricher) writeObservation(projectID *uint, candidate candidate, user *User, identities []Identity, now time.Time, status, reason, confidence string) error {
 	rawPayload := ""
 	if user != nil {
-		raw := struct {
-			User       User       `json:"user"`
-			Identities []Identity `json:"identities,omitempty"`
-		}{User: *user, Identities: identities}
-		body, err := json.Marshal(raw)
+		userRaw := user.Raw
+		if len(userRaw) == 0 {
+			// Raw is empty for synthesized data (e.g. tests) that construct
+			// a User directly instead of decoding one from the API. Fall
+			// back to marshaling the typed struct so callers still get a
+			// usable payload.
+			body, err := json.Marshal(user)
+			if err != nil {
+				return err
+			}
+			userRaw = body
+		}
+		identitiesRaw := make([]json.RawMessage, 0, len(identities))
+		for _, identity := range identities {
+			identityRaw := identity.Raw
+			if len(identityRaw) == 0 {
+				body, err := json.Marshal(identity)
+				if err != nil {
+					return err
+				}
+				identityRaw = body
+			}
+			identitiesRaw = append(identitiesRaw, identityRaw)
+		}
+		body, err := json.Marshal(observationPayload{User: userRaw, Identities: identitiesRaw})
 		if err != nil {
 			return err
 		}
@@ -305,15 +337,16 @@ func (e *Enricher) writeRawObservation(projectID *uint, candidate candidate, now
 		ObservedAt:   now,
 	}
 	if rawPayload != "" {
-		var payload struct {
-			User User `json:"user"`
-		}
+		var payload observationPayload
+		var user User
 		if err := json.Unmarshal([]byte(rawPayload), &payload); err == nil {
-			observation.SourceUserID = strings.TrimSpace(payload.User.ID)
-			observation.Name = firstNonEmpty(payload.User.Name, strings.TrimSpace(payload.User.FirstName+" "+payload.User.LastName))
-			observation.Email = firstNonEmpty(payload.User.Email, observation.Email)
-			observation.LFID = payload.User.Username
-			observation.CompanyName = accountCompanyName(payload.User.Account)
+			if err := json.Unmarshal(payload.User, &user); err == nil {
+				observation.SourceUserID = strings.TrimSpace(user.ID)
+				observation.Name = firstNonEmpty(user.Name, strings.TrimSpace(user.FirstName+" "+user.LastName))
+				observation.Email = firstNonEmpty(user.Email, observation.Email)
+				observation.LFID = user.Username
+				observation.CompanyName = accountCompanyName(user.Account)
+			}
 		}
 	}
 	_, err := e.Store.UpsertMaintainerIdentityObservation(observation)
