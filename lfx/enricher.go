@@ -272,7 +272,7 @@ func (e *Enricher) searchUsers(ctx context.Context, githubUser, email string) ([
 // observationPayload is the on-disk shape written to
 // MaintainerIdentityObservation.RawPayload. It preserves the raw bytes LFX
 // returned (User.Raw / Identity.Raw) rather than re-marshaling the typed
-// structs, so fields we haven't modelled yet survive and can be mined later.
+// structs, so fields we haven't modeled yet survive and can be mined later.
 // The "user"/"identities" keys must stay stable: writeRawObservation
 // re-unmarshals this exact shape to extract SourceUserID/Name/Email/LFID/
 // CompanyName.

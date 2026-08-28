@@ -79,7 +79,7 @@ func TestWriteObservationPreservesRawBytesBeyondTypedFields(t *testing.T) {
 	t.Parallel()
 
 	// "Nickname" is not a field on User. It stands in for any real LFX
-	// response field we haven't modelled yet - the point of this test is
+	// response field we haven't modeled yet - the point of this test is
 	// that such fields survive into RawPayload instead of being dropped.
 	userRaw := []byte(`{"ID":"sfid-synthetic-001","FirstName":"Test","LastName":"Fixture","Name":"Test Fixture","Email":"fixture@example.com","Username":"test-fixture-handle","Account":{"Name":"Example Org"},"Nickname":"unmodelled-field-value"}`)
 	var user User
