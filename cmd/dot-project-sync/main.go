@@ -112,6 +112,15 @@ func main() {
 		MaintainersFileVisitor: func(project model.Project, file dotproject.FileDiscovery) {
 			log.Printf("%s has a %s file", projectLabel(project), dotProjectFileURL(file))
 		},
+		Progress: func(progress dotproject.SyncProgress) {
+			if progress.CurrentProject == "" {
+				return // final call after the loop completes; nothing left to announce
+			}
+			if progress.ProjectsProcessed == 0 {
+				log.Printf("dot-project sync starting: %d project(s) to process", progress.TotalProjects)
+			}
+			log.Printf("dot-project sync processing project %d of %d: %s", progress.ProjectsProcessed+1, progress.TotalProjects, progress.CurrentProject)
+		},
 	}
 
 	summary, err := syncer.SyncAll(ctx)

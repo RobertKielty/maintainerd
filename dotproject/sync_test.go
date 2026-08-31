@@ -260,6 +260,33 @@ func TestSyncAllSummarizesStatuses(t *testing.T) {
 	assert.Contains(t, summary.ErrorSummaries[0], "boom")
 }
 
+func TestSyncAllReportsProjectProgress(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+		},
+	}
+	var updates []SyncProgress
+	syncer := &Syncer{
+		Store:      store,
+		Discoverer: &fakeDiscoveryRunner{},
+		Progress: func(progress SyncProgress) {
+			updates = append(updates, progress)
+		},
+	}
+
+	_, err := syncer.SyncAll(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, updates, 3, "one update per project visited plus a final completion update")
+	assert.Equal(t, SyncProgress{TotalProjects: 2, ProjectsProcessed: 0, CurrentProject: "Project One"}, updates[0])
+	assert.Equal(t, SyncProgress{TotalProjects: 2, ProjectsProcessed: 1, CurrentProject: "Project Two"}, updates[1])
+	assert.Equal(t, SyncProgress{TotalProjects: 2, ProjectsProcessed: 2, CurrentProject: ""}, updates[2])
+}
+
 func TestSyncAllSummarizesMaintainersParseWarnings(t *testing.T) {
 	t.Parallel()
 

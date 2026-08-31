@@ -4829,6 +4829,9 @@ type lfxEnrichmentRun struct {
 	Total              int                    `json:"total"`
 	Processed          int                    `json:"processed"`
 	Current            string                 `json:"current,omitempty"`
+	TotalProjects      int                    `json:"totalProjects"`
+	ProjectsProcessed  int                    `json:"projectsProcessed"`
+	CurrentProject     string                 `json:"currentProject,omitempty"`
 	Attempted          int                    `json:"attempted"`
 	Matched            int                    `json:"matched"`
 	Ambiguous          int                    `json:"ambiguous"`
@@ -5175,6 +5178,7 @@ func (s *server) runLFXEnrichment(runID string, options lfxEnrichmentRunOptions,
 				Logger:             nil,
 			},
 			Enricher: syncEnricher,
+			Progress: s.lfxSyncProgressUpdater(runID),
 		}
 		summary, err = syncer.SyncAll(ctx)
 	}
@@ -5208,6 +5212,7 @@ func (s *server) runLFXEnrichment(runID string, options lfxEnrichmentRunOptions,
 	s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
 		run.FinishedAt = &finishedAt
 		run.Current = ""
+		run.CurrentProject = ""
 		applyLFXRunSummary(run, summary.Enrichment)
 		run.GistID = gistID
 		run.GistURL = gistURL
@@ -5229,6 +5234,16 @@ func (s *server) lfxProgressUpdater(runID string) func(lfx.EnrichmentProgress) {
 			run.Processed = progress.Processed
 			run.Current = progress.Current
 			applyLFXRunSummary(run, progress.Summary)
+		})
+	}
+}
+
+func (s *server) lfxSyncProgressUpdater(runID string) func(dotproject.SyncProgress) {
+	return func(progress dotproject.SyncProgress) {
+		s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
+			run.TotalProjects = progress.TotalProjects
+			run.ProjectsProcessed = progress.ProjectsProcessed
+			run.CurrentProject = progress.CurrentProject
 		})
 	}
 }

@@ -31,6 +31,9 @@ type LFXRun = {
   total: number;
   processed: number;
   current?: string;
+  totalProjects: number;
+  projectsProcessed: number;
+  currentProject?: string;
   attempted: number;
   matched: number;
   ambiguous: number;
@@ -67,6 +70,11 @@ const formatDate = (value?: string) => {
 const progressPercent = (run: LFXRun) => {
   if (run.total <= 0) return 0;
   return Math.min(100, Math.round((run.processed / run.total) * 100));
+};
+
+const projectProgressPercent = (run: LFXRun) => {
+  if (run.totalProjects <= 0) return 0;
+  return Math.min(100, Math.round((run.projectsProcessed / run.totalProjects) * 100));
 };
 
 export default function LFXPage() {
@@ -450,6 +458,22 @@ export default function LFXPage() {
                         {statusLabel(activeRun.status)}
                       </span>
                     </div>
+                    {activeRun.totalProjects > 0 ? (
+                      <>
+                        <div className={styles.progressTrack}>
+                          <div
+                            className={styles.progressFill}
+                            style={{ width: `${projectProgressPercent(activeRun)}%` }}
+                          />
+                        </div>
+                        <div className={styles.progressText}>
+                          {activeRun.projectsProcessed.toLocaleString()} / {activeRun.totalProjects.toLocaleString()} projects
+                        </div>
+                        {activeRun.currentProject ? (
+                          <div className={styles.current}>Project: {activeRun.currentProject}</div>
+                        ) : null}
+                      </>
+                    ) : null}
                     <div className={styles.progressTrack}>
                       <div className={styles.progressFill} style={{ width: `${progressPercent(activeRun)}%` }} />
                     </div>

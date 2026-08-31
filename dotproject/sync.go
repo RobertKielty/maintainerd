@@ -78,6 +78,23 @@ type Syncer struct {
 	AutoAdder              MaintainerAutoAdder
 	MaintainersFileVisitor func(project model.Project, file FileDiscovery)
 	Now                    func() time.Time
+	Progress               func(SyncProgress)
+}
+
+// SyncProgress reports which project a SyncAll run is currently visiting, so
+// a caller can render a projects-processed progress bar alongside the
+// per-project candidate-level EnrichmentProgress.
+type SyncProgress struct {
+	TotalProjects     int
+	ProjectsProcessed int
+	CurrentProject    string
+}
+
+func (s *Syncer) reportSyncProgress(progress SyncProgress) {
+	if s == nil || s.Progress == nil {
+		return
+	}
+	s.Progress(progress)
 }
 
 type FatalSyncError struct {
@@ -108,6 +125,11 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 	summary := SyncSummary{Loaded: len(projects)}
 	totalProjects := len(projects)
 	for i, project := range projects {
+		s.reportSyncProgress(SyncProgress{
+			TotalProjects:     totalProjects,
+			ProjectsProcessed: i,
+			CurrentProject:    projectLabel(project),
+		})
 		if !shouldSyncProject(project) {
 			summary.Skipped++
 			if isArchivedProject(project) {
@@ -164,6 +186,11 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 			summary.RepoOnly++
 		}
 	}
+	s.reportSyncProgress(SyncProgress{
+		TotalProjects:     totalProjects,
+		ProjectsProcessed: totalProjects,
+		CurrentProject:    "",
+	})
 	return summary, nil
 }
 
