@@ -3,6 +3,7 @@ package lfx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -28,11 +29,42 @@ type Client struct {
 	lastRequest time.Time
 }
 
+// HTTPStatusError is returned by Client.get for any non-2xx response, so
+// callers can classify LFX failures by status code instead of guessing from
+// error text.
+type HTTPStatusError struct {
+	StatusCode int
+	Status     string
+	Body       string
+	URL        string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("GET %s: %s: %s", e.URL, e.Status, e.Body)
+}
+
+// PlatformAccessError wraps an LFX API failure with a message matched to its
+// actual cause: an expired/invalid token (401/403) genuinely needs a token
+// refresh, but a timeout, rate limit, or 5xx does not - pointing at
+// LFX_AUTH_TOKEN in those cases is misleading and sends whoever is
+// debugging an outage to the wrong place.
 func PlatformAccessError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("LFX Platform access failed; update LFX_AUTH_TOKEN with a fresh token from %s: %w", TokenRefreshURL, err)
+	var httpErr *HTTPStatusError
+	switch {
+	case errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden):
+		return fmt.Errorf("LFX Platform access failed (HTTP %d, invalid or expired token); update LFX_AUTH_TOKEN with a fresh token from %s: %w", httpErr.StatusCode, TokenRefreshURL, err)
+	case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusTooManyRequests:
+		return fmt.Errorf("LFX Platform rate limited this request (HTTP 429); not a token problem, back off LFX_REQUEST_DELAY: %w", err)
+	case errors.As(err, &httpErr):
+		return fmt.Errorf("LFX Platform returned HTTP %d; not necessarily a token problem: %w", httpErr.StatusCode, err)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("LFX Platform request timed out (context deadline exceeded); not a token problem, this is a slow response or the run's overall time budget was exhausted: %w", err)
+	default:
+		return fmt.Errorf("LFX Platform access failed; update LFX_AUTH_TOKEN with a fresh token from %s: %w", TokenRefreshURL, err)
+	}
 }
 
 func (c *Client) CheckToken(ctx context.Context) error {
@@ -172,7 +204,12 @@ func (c *Client) get(ctx context.Context, path string, values url.Values, target
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("GET %s: %s: %s", endpoint.String(), resp.Status, strings.TrimSpace(string(body)))
+		return &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       strings.TrimSpace(string(body)),
+			URL:        endpoint.String(),
+		}
 	}
 	if target == nil {
 		return nil

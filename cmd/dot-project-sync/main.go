@@ -54,10 +54,14 @@ const lfxTokenHelp = "LFX Platform access failed; update LFX_AUTH_TOKEN with a f
 func main() {
 	cfg := parseFlags()
 	timeout := envDuration("DOT_PROJECT_SYNC_TIMEOUT", 10*time.Minute)
-	if strings.TrimSpace(os.Getenv("DOT_PROJECT_SYNC_TIMEOUT")) == "" &&
-		strings.EqualFold(strings.TrimSpace(os.Getenv("LFX_ENRICH_ALL_MAINTAINERS")), "true") {
+	timeoutSource := "default"
+	if strings.TrimSpace(os.Getenv("DOT_PROJECT_SYNC_TIMEOUT")) != "" {
+		timeoutSource = "DOT_PROJECT_SYNC_TIMEOUT"
+	} else if strings.EqualFold(strings.TrimSpace(os.Getenv("LFX_ENRICH_ALL_MAINTAINERS")), "true") {
 		timeout = time.Hour
+		timeoutSource = "LFX_ENRICH_ALL_MAINTAINERS=true"
 	}
+	log.Printf("dot-project sync run timeout=%s source=%s", timeout, timeoutSource)
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -138,7 +142,7 @@ func main() {
 	}
 
 	log.Printf(
-		"dot-project sync complete loaded=%d total=%d skipped=%d skipped_archived=%d skipped_excluded=%d synced=%d errored=%d github_errors=%d rate_limit_errors=%d not_found=%d repo_only=%d partial=%d adopted=%d auto_add_candidates=%d auto_add_created=%d auto_add_linked=%d auto_add_would_create=%d auto_add_would_link=%d auto_add_skipped_foundation=%d auto_add_skipped_project=%d auto_add_skipped_invalid=%d auto_add_errored=%d lfx_attempted=%d lfx_matched=%d lfx_ambiguous=%d lfx_unmatched=%d lfx_errored=%d",
+		"dot-project sync complete loaded=%d total=%d skipped=%d skipped_archived=%d skipped_excluded=%d synced=%d errored=%d github_errors=%d rate_limit_errors=%d not_found=%d repo_only=%d partial=%d adopted=%d auto_add_candidates=%d auto_add_created=%d auto_add_linked=%d auto_add_would_create=%d auto_add_would_link=%d auto_add_skipped_foundation=%d auto_add_skipped_project=%d auto_add_skipped_invalid=%d auto_add_errored=%d lfx_attempted=%d lfx_matched=%d lfx_ambiguous=%d lfx_unmatched=%d lfx_errored=%d stopped_early=%t remaining=%d",
 		summary.Loaded,
 		summary.Total,
 		summary.Skipped,
@@ -166,6 +170,8 @@ func main() {
 		summary.Enrichment.Ambiguous,
 		summary.Enrichment.Unmatched,
 		summary.Enrichment.Errored,
+		summary.StoppedEarly,
+		summary.RemainingProjects,
 	)
 }
 

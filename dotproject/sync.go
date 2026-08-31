@@ -67,6 +67,8 @@ type SyncSummary struct {
 	GistReportRows      []GistReportRow
 	WarningSummaries    []string
 	ErrorSummaries      []string
+	StoppedEarly        bool
+	RemainingProjects   int
 }
 
 type Syncer struct {
@@ -104,7 +106,8 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 	}
 
 	summary := SyncSummary{Loaded: len(projects)}
-	for _, project := range projects {
+	totalProjects := len(projects)
+	for i, project := range projects {
 		if !shouldSyncProject(project) {
 			summary.Skipped++
 			if isArchivedProject(project) {
@@ -119,6 +122,22 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 		if err != nil {
 			var fatal FatalSyncError
 			if errors.As(err, &fatal) {
+				// A run-level deadline being exhausted mid-project is expected
+				// under load, not a broken integration: stop cleanly and let
+				// the caller report a partial success, rather than failing
+				// the whole run and losing everything already persisted this
+				// pass. A genuine LFX auth failure (no deadline involved)
+				// still aborts the run - retrying it for every remaining
+				// project would just burn the GitHub API rate limit for
+				// certain failures.
+				if errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+					summary.StoppedEarly = true
+					summary.RemainingProjects = totalProjects - i - 1
+					summary.recordWarning(projectLabel(project), fmt.Sprintf(
+						"sync run ran out of time (context deadline exceeded); %d project(s) after this one were not attempted this run",
+						summary.RemainingProjects))
+					break
+				}
 				return summary, err
 			}
 			summary.Errored++

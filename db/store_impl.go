@@ -75,9 +75,15 @@ func (s *SQLStore) GetProjectByID(projectID uint) (*model.Project, error) {
 }
 
 // ListProjects returns all projects without preloading associations.
+// ListProjects orders by dot_project_last_synced_at ascending (nulls/never-
+// synced first). dot-project-sync iterates this list under a run-level
+// deadline and stops early if it runs out of time (see Syncer.SyncAll) - a
+// stable order here would let the same tail of projects starve every run;
+// ordering by staleness means a run that stops early always skips the
+// projects it most recently refreshed.
 func (s *SQLStore) ListProjects() ([]model.Project, error) {
 	var projects []model.Project
-	err := s.db.Find(&projects).Error
+	err := s.db.Order("dot_project_last_synced_at ASC NULLS FIRST").Find(&projects).Error
 	return projects, err
 }
 

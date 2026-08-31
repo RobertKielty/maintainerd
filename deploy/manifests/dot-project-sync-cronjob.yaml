@@ -24,6 +24,9 @@ spec:
             resources: {}
             terminationMessagePath: /dev/termination-log
             terminationMessagePolicy: File
+            env:
+            - name: DOT_PROJECT_SYNC_TIMEOUT
+              value: "50m"
             envFrom:
             - secretRef:
                 name: maintainerd-db-env
