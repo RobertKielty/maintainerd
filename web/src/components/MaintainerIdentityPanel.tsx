@@ -47,7 +47,7 @@ const confidenceLabel: Record<string, string> = {
 
 const sourceLabel: Record<string, string> = {
   lfx: "LFX",
-  foundation_csv: "Foundation CSV",
+  "foundation-csv": "Foundation CSV",
 };
 
 function formatDateTime(value?: string | null) {
