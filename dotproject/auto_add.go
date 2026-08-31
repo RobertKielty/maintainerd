@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"maintainerd/model"
+	"maintainerd/provenance"
 
 	"go.uber.org/zap"
 )
@@ -39,9 +40,14 @@ type LFXIdentityResult struct {
 }
 
 type AutoMaintainerAdder struct {
-	Store              AutoAddStore
-	Foundation         *FoundationMaintainerIndex
-	LFX                LFXIdentityResolver
+	Store      AutoAddStore
+	Foundation *FoundationMaintainerIndex
+	LFX        LFXIdentityResolver
+	// Provenance resolves a source line to the commit/PR/review that
+	// introduced it. Optional: when nil, observations still write with
+	// their location fields but no PR/review evidence, and confidence
+	// derivation treats the review state as unresolvable.
+	Provenance         *provenance.Resolver
 	Actor              string
 	CheckFoundationCSV bool
 	AutoAddMaintainers bool
@@ -114,7 +120,7 @@ func (a *AutoMaintainerAdder) ProcessProject(ctx context.Context, project model.
 		return summary, fmt.Errorf("foundation csv gate is enabled but foundation csv was not loaded")
 	}
 
-	handles, status, parseErr := ParseProjectMaintainerHandles(result.MaintainersFile.Body)
+	entries, status, parseErr := ParseProjectMaintainerEntries(result.MaintainersFile.Body)
 	if status != ParseStatusParsed {
 		summary.SkippedInvalidMaintainers++
 		if a.Logger != nil {
@@ -128,6 +134,12 @@ func (a *AutoMaintainerAdder) ProcessProject(ctx context.Context, project model.
 			)
 		}
 		return summary, nil
+	}
+	lineByHandle := make(map[string]int, len(entries))
+	handles := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		lineByHandle[entry.Handle] = entry.Line
+		handles = append(handles, entry.Handle)
 	}
 
 	byHandle, err := a.Store.GetMaintainerMapByGitHubAccount()
@@ -165,6 +177,10 @@ func (a *AutoMaintainerAdder) ProcessProject(ctx context.Context, project model.
 			maintainerID = &id
 		}
 
+		if err := a.writeDotProjectObservation(ctx, project, maintainerID, normalized, result.MaintainersFile, lineByHandle[normalized], now); err != nil {
+			summary.AuditFailures++
+		}
+
 		record := FoundationMaintainerRecord{
 			Project: strings.TrimSpace(project.Name),
 			GitHub:  handle,
@@ -184,14 +200,14 @@ func (a *AutoMaintainerAdder) ProcessProject(ctx context.Context, project model.
 				} else {
 					summary.SkippedFoundationMissing++
 				}
-				if err := a.writeFoundationObservation(project.ID, maintainerID, normalized, record, now, "unmatched", reason, "", nil); err != nil {
+				if err := a.writeFoundationObservation(ctx, project.ID, maintainerID, normalized, record, now, "unmatched", reason, false, nil); err != nil {
 					summary.AuditFailures++
 				}
 				continue
 			}
 		}
 
-		if err := a.writeFoundationObservation(project.ID, maintainerID, normalized, record, now, "matched", "present in cncf/foundation project-maintainers.csv", "strong", nil); err != nil {
+		if err := a.writeFoundationObservation(ctx, project.ID, maintainerID, normalized, record, now, "matched", "present in cncf/foundation project-maintainers.csv", a.CheckFoundationCSV, nil); err != nil {
 			summary.AuditFailures++
 		}
 
@@ -268,7 +284,7 @@ func (a *AutoMaintainerAdder) ProcessProject(ctx context.Context, project model.
 	return summary, nil
 }
 
-func (a *AutoMaintainerAdder) writeFoundationObservation(projectID uint, maintainerID *uint, github string, record FoundationMaintainerRecord, now time.Time, status, reason, confidence string, extra map[string]any) error {
+func (a *AutoMaintainerAdder) writeFoundationObservation(ctx context.Context, projectID uint, maintainerID *uint, github string, record FoundationMaintainerRecord, now time.Time, status, reason string, lookupPerformed bool, extra map[string]any) error {
 	payload := map[string]any{
 		"row":        record.Raw,
 		"project":    record.Project,
@@ -292,23 +308,137 @@ func (a *AutoMaintainerAdder) writeFoundationObservation(projectID uint, maintai
 	if err != nil {
 		return err
 	}
+
+	var prov provenance.LineProvenance
+	reviewState := provenance.ReviewStateUnknown
+	if lookupPerformed && record.LineNumber > 0 {
+		prov, reviewState = a.resolveFoundationProvenance(ctx, record)
+	}
+	confidence := provenance.Confidence(provenance.SourceFoundationCSV, reviewState, lookupPerformed)
+
 	pid := projectID
 	observation := &model.MaintainerIdentityObservation{
-		MaintainerID: maintainerID,
-		ProjectID:    &pid,
-		Source:       FoundationCSVSource,
-		SourceRef:    "github:" + NormalizeGitHubHandle(github),
-		Name:         strings.TrimSpace(record.Name),
-		GitHubUser:   displayGitHub(record, github),
-		CompanyName:  strings.TrimSpace(record.Company),
-		MatchStatus:  status,
-		MatchReason:  reason,
-		Confidence:   confidence,
-		RawPayload:   string(raw),
-		ObservedAt:   now,
+		MaintainerID:      maintainerID,
+		ProjectID:         &pid,
+		Source:            FoundationCSVSource,
+		SourceRef:         "github:" + NormalizeGitHubHandle(github),
+		Name:              strings.TrimSpace(record.Name),
+		GitHubUser:        displayGitHub(record, github),
+		CompanyName:       strings.TrimSpace(record.Company),
+		MatchStatus:       status,
+		MatchReason:       reason,
+		Confidence:        confidence,
+		RawPayload:        string(raw),
+		ObservedAt:        now,
+		SourceFilePath:    "project-maintainers.csv",
+		SourceLine:        record.LineNumber,
+		SourceCommitSHA:   prov.CommitSHA,
+		SourceLineURL:     a.foundationLineURL(record),
+		SourcePRNumber:    prov.PRNumber,
+		SourcePRURL:       prov.PRURL,
+		SourceReviewState: reviewState,
+	}
+	if a.Foundation != nil {
+		observation.SourceCommitSHA = a.Foundation.CommitSHA
 	}
 	_, err = a.Store.UpsertMaintainerIdentityObservation(observation)
 	return err
+}
+
+// resolveFoundationProvenance resolves the commit/PR/review evidence behind
+// a foundation-csv line. A resolution failure (unparseable source URL, no
+// resolver configured, or an API error) reports ReviewStateUnknown rather
+// than treating the line as unreviewed - an unresolvable source must never
+// read as negative evidence.
+func (a *AutoMaintainerAdder) resolveFoundationProvenance(ctx context.Context, record FoundationMaintainerRecord) (provenance.LineProvenance, string) {
+	if a.Provenance == nil || a.Foundation == nil {
+		return provenance.LineProvenance{}, provenance.ReviewStateUnknown
+	}
+	owner, repo, ref, path, ok := provenance.ParseGitHubBlobURL(a.Foundation.SourceURL)
+	if !ok {
+		return provenance.LineProvenance{}, provenance.ReviewStateUnknown
+	}
+	if sha := strings.TrimSpace(a.Foundation.CommitSHA); sha != "" {
+		ref = sha
+	}
+	prov, err := a.Provenance.Resolve(ctx, owner, repo, ref, path, record.LineNumber)
+	if err != nil {
+		if a.Logger != nil {
+			a.Logger.Warnw("failed to resolve foundation-csv provenance", "error", err, "owner", owner, "repo", repo, "path", path, "line", record.LineNumber)
+		}
+		return provenance.LineProvenance{}, provenance.ReviewStateUnknown
+	}
+	reviewState := prov.ReviewState
+	if reviewState == "" {
+		reviewState = provenance.ReviewStateUnknown
+	}
+	return prov, reviewState
+}
+
+// writeDotProjectObservation records that github was found in the
+// project-maintainers team of the dot-project maintainers.yaml file -
+// membership there is the current gatekeeping mechanism for official CNCF
+// project maintainer status.
+func (a *AutoMaintainerAdder) writeDotProjectObservation(ctx context.Context, project model.Project, maintainerID *uint, github string, file FileDiscovery, line int, now time.Time) error {
+	prov, reviewState := a.resolveDotProjectProvenance(ctx, project, file, line)
+	confidence := provenance.Confidence(provenance.SourceDotProject, reviewState, true)
+
+	pid := project.ID
+	observation := &model.MaintainerIdentityObservation{
+		MaintainerID:      maintainerID,
+		ProjectID:         &pid,
+		Source:            provenance.SourceDotProject,
+		SourceRef:         "github:" + NormalizeGitHubHandle(github),
+		GitHubUser:        github,
+		MatchStatus:       "matched",
+		MatchReason:       "member of project-maintainers team in .project/maintainers.yaml",
+		Confidence:        confidence,
+		ObservedAt:        now,
+		SourceFilePath:    strings.TrimSpace(file.Path),
+		SourceLine:        line,
+		SourceCommitSHA:   file.CommitSHA,
+		SourceLineURL:     dotProjectLineURL(file, line),
+		SourcePRNumber:    prov.PRNumber,
+		SourcePRURL:       prov.PRURL,
+		SourceReviewState: reviewState,
+	}
+	_, err := a.Store.UpsertMaintainerIdentityObservation(observation)
+	return err
+}
+
+func dotProjectLineURL(file FileDiscovery, line int) string {
+	if strings.TrimSpace(file.BlobURL) == "" || line <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s#L%d", strings.TrimSpace(file.BlobURL), line)
+}
+
+// resolveDotProjectProvenance resolves the commit/PR/review evidence behind
+// a project-maintainers.yaml team-membership line. An unresolvable blob URL
+// or resolver error reports ReviewStateUnknown, never a negative signal.
+func (a *AutoMaintainerAdder) resolveDotProjectProvenance(ctx context.Context, project model.Project, file FileDiscovery, line int) (provenance.LineProvenance, string) {
+	if a.Provenance == nil || line <= 0 {
+		return provenance.LineProvenance{}, provenance.ReviewStateUnknown
+	}
+	owner, repo, ref, path, ok := provenance.ParseGitHubBlobURL(file.BlobURL)
+	if !ok {
+		return provenance.LineProvenance{}, provenance.ReviewStateUnknown
+	}
+	if sha := strings.TrimSpace(file.CommitSHA); sha != "" {
+		ref = sha
+	}
+	prov, err := a.Provenance.Resolve(ctx, owner, repo, ref, path, line)
+	if err != nil {
+		if a.Logger != nil {
+			a.Logger.Warnw("failed to resolve dot-project provenance", "error", err, "project_id", project.ID, "owner", owner, "repo", repo, "path", path, "line", line)
+		}
+		return provenance.LineProvenance{}, provenance.ReviewStateUnknown
+	}
+	reviewState := prov.ReviewState
+	if reviewState == "" {
+		reviewState = provenance.ReviewStateUnknown
+	}
+	return prov, reviewState
 }
 
 func (a *AutoMaintainerAdder) logAutoAdd(project model.Project, maintainer *model.Maintainer, record FoundationMaintainerRecord, result *DiscoveryResult, identity *LFXIdentityResult, now time.Time, mode string) error {

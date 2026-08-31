@@ -152,14 +152,19 @@ Graduated,Kubernetes,Alice Example,Acme,AliceExample
 	assert.Equal(t, "Kubernetes", summary.WouldCreate[0].Project)
 	assert.Equal(t, "AliceExample", summary.WouldCreate[0].GitHub)
 	assert.Empty(t, store.maintainers)
-	require.Len(t, store.observed, 2)
+	require.Len(t, store.observed, 4)
 	statuses := make(map[string]bool)
+	sources := make(map[string]int)
 	for _, observation := range store.observed {
-		assert.Equal(t, FoundationCSVSource, observation.Source)
-		statuses[observation.MatchStatus] = true
+		sources[observation.Source]++
+		if observation.Source == FoundationCSVSource {
+			statuses[observation.MatchStatus] = true
+		}
 	}
 	assert.True(t, statuses["matched"])
 	assert.True(t, statuses["unmatched"])
+	assert.Equal(t, 2, sources[FoundationCSVSource])
+	assert.Equal(t, 2, sources["dot-project"])
 }
 
 func TestAutoMaintainerAdderSkipsInvalidMaintainersFile(t *testing.T) {

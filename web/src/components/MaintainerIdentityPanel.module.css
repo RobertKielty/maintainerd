@@ -103,6 +103,58 @@
   text-decoration: underline;
 }
 
+.sourceLineLink {
+  display: block;
+  font-size: 12px;
+  color: #2563eb;
+  text-decoration: none;
+  word-break: break-all;
+  margin-top: 2px;
+}
+
+.sourceLineLink:hover {
+  text-decoration: underline;
+}
+
+.provenanceCell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.prLink {
+  font-size: 12px;
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.prLink:hover {
+  text-decoration: underline;
+}
+
+.badge_review_approved {
+  background: rgba(16, 185, 129, 0.18);
+  color: #0f5132;
+}
+
+.badge_review_unreviewed {
+  background: rgba(245, 158, 11, 0.18);
+  color: #8a4b00;
+}
+
+.badge_review_direct-push {
+  background: rgba(239, 68, 68, 0.14);
+  color: #991b1b;
+}
+
+.badge_review_unknown {
+  background: rgba(15, 23, 42, 0.08);
+  color: #334155;
+}
+
 .matchCell {
   display: flex;
   flex-wrap: wrap;

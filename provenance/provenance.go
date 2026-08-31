@@ -1,0 +1,320 @@
+// Package provenance resolves the human-review evidence behind a line in a
+// GitHub-hosted file: which commit last touched it (via blame), which pull
+// request that commit belongs to, and whether that PR carries an approving
+// review. This is the evidentiary signal behind a maintainer-file match -
+// presence in a file is weak on its own; a PR-reviewed addition is strong.
+package provenance
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"strings"
+	"sync"
+
+	"github.com/google/go-github/v55/github"
+)
+
+// Review states. "unknown" must never be treated as negative evidence - it
+// means the source could not be resolved (e.g. a gist), not that no review
+// happened.
+const (
+	ReviewStateApproved   = "approved"
+	ReviewStateUnreviewed = "unreviewed"
+	ReviewStateDirectPush = "direct-push"
+	ReviewStateUnknown    = "unknown"
+)
+
+// LineProvenance is the resolved evidence for one line in one file.
+type LineProvenance struct {
+	CommitSHA   string
+	PRNumber    int
+	PRURL       string
+	ReviewState string
+}
+
+// Resolver resolves line provenance against the GitHub REST and GraphQL
+// APIs, caching aggressively: one blame call covers every line in a file,
+// and one PR/review lookup covers every line a commit touched.
+type Resolver struct {
+	Client *github.Client
+
+	mu        sync.Mutex
+	blameByFK map[fileKey][]blameRange
+	prBySHA   map[string]prInfo
+}
+
+type fileKey struct {
+	owner, repo, ref, path string
+}
+
+type blameRange struct {
+	startingLine, endingLine int
+	commitSHA                string
+}
+
+type prInfo struct {
+	number      int
+	url         string
+	reviewState string
+}
+
+// NewResolver returns a Resolver backed by client. client must not be nil.
+func NewResolver(client *github.Client) *Resolver {
+	return &Resolver{
+		Client:    client,
+		blameByFK: make(map[fileKey][]blameRange),
+		prBySHA:   make(map[string]prInfo),
+	}
+}
+
+// Resolve returns the provenance for the given 1-based line of path, at ref
+// (a branch or commit-ish), in owner/repo. Errors are returned only for
+// transport/API failures; an unresolvable-but-reachable source (e.g. no PR
+// associated with the commit) is reported as ReviewStateDirectPush, not an
+// error.
+func (r *Resolver) Resolve(ctx context.Context, owner, repo, ref, path string, line int) (LineProvenance, error) {
+	if r == nil || r.Client == nil {
+		return LineProvenance{}, fmt.Errorf("provenance resolver is not configured")
+	}
+	if line <= 0 {
+		return LineProvenance{ReviewState: ReviewStateUnknown}, nil
+	}
+
+	ranges, err := r.blame(ctx, owner, repo, ref, path)
+	if err != nil {
+		return LineProvenance{}, err
+	}
+	sha := commitForLine(ranges, line)
+	if sha == "" {
+		return LineProvenance{ReviewState: ReviewStateUnknown}, nil
+	}
+
+	info, err := r.prForCommit(ctx, owner, repo, sha)
+	if err != nil {
+		return LineProvenance{}, err
+	}
+	return LineProvenance{
+		CommitSHA:   sha,
+		PRNumber:    info.number,
+		PRURL:       info.url,
+		ReviewState: info.reviewState,
+	}, nil
+}
+
+func commitForLine(ranges []blameRange, line int) string {
+	for _, rng := range ranges {
+		if line >= rng.startingLine && line <= rng.endingLine {
+			return rng.commitSHA
+		}
+	}
+	return ""
+}
+
+func (r *Resolver) blame(ctx context.Context, owner, repo, ref, path string) ([]blameRange, error) {
+	key := fileKey{owner: owner, repo: repo, ref: ref, path: path}
+
+	r.mu.Lock()
+	if ranges, ok := r.blameByFK[key]; ok {
+		r.mu.Unlock()
+		return ranges, nil
+	}
+	r.mu.Unlock()
+
+	ranges, err := r.fetchBlame(ctx, owner, repo, ref, path)
+	if err != nil {
+		return nil, err
+	}
+
+	r.mu.Lock()
+	r.blameByFK[key] = ranges
+	r.mu.Unlock()
+	return ranges, nil
+}
+
+func (r *Resolver) prForCommit(ctx context.Context, owner, repo, sha string) (prInfo, error) {
+	r.mu.Lock()
+	if info, ok := r.prBySHA[sha]; ok {
+		r.mu.Unlock()
+		return info, nil
+	}
+	r.mu.Unlock()
+
+	info, err := r.fetchPRForCommit(ctx, owner, repo, sha)
+	if err != nil {
+		return prInfo{}, err
+	}
+
+	r.mu.Lock()
+	r.prBySHA[sha] = info
+	r.mu.Unlock()
+	return info, nil
+}
+
+func (r *Resolver) fetchPRForCommit(ctx context.Context, owner, repo, sha string) (prInfo, error) {
+	prs, _, err := r.Client.PullRequests.ListPullRequestsWithCommit(ctx, owner, repo, sha, nil)
+	if err != nil {
+		return prInfo{}, fmt.Errorf("list pull requests for commit: %w", err)
+	}
+	if len(prs) == 0 {
+		return prInfo{reviewState: ReviewStateDirectPush}, nil
+	}
+	pr := prs[0]
+	info := prInfo{
+		number: pr.GetNumber(),
+		url:    pr.GetHTMLURL(),
+	}
+
+	reviews, _, err := r.Client.PullRequests.ListReviews(ctx, owner, repo, pr.GetNumber(), nil)
+	if err != nil {
+		// A failed review lookup is unresolvable, not negative evidence - it
+		// must not surface as an error that aborts resolution of the PR
+		// number/URL we already have.
+		info.reviewState = ReviewStateUnknown
+		return info, nil //nolint:nilerr
+	}
+	for _, review := range reviews {
+		if strings.EqualFold(review.GetState(), "APPROVED") {
+			info.reviewState = ReviewStateApproved
+			return info, nil
+		}
+	}
+	info.reviewState = ReviewStateUnreviewed
+	return info, nil
+}
+
+// graphQLBlameQuery fetches the blame ranges for one file in one request.
+// go-github v55 has no blame support (REST doesn't expose it), so this
+// issues a single GraphQL call reusing the client's authenticated
+// http.Client rather than adding a GraphQL client dependency for one query.
+const graphQLBlameQuery = `query($owner:String!,$repo:String!,$expr:String!) {
+  repository(owner:$owner, name:$repo) {
+    object(expression:$expr) {
+      ... on Commit {
+        blame(path: $path) {
+          ranges {
+            startingLine
+            endingLine
+            commit { oid }
+          }
+        }
+      }
+    }
+  }
+}`
+
+func (r *Resolver) fetchBlame(ctx context.Context, owner, repo, ref, path string) ([]blameRange, error) {
+	body, err := json.Marshal(map[string]any{
+		"query": strings.Replace(graphQLBlameQuery, "$path", `"`+jsonEscape(path)+`"`, 1),
+		"variables": map[string]string{
+			"owner": owner,
+			"repo":  repo,
+			"expr":  ref + ":" + path,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("marshal blame query: %w", err)
+	}
+
+	endpoint := graphQLEndpoint(r.Client)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build blame request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := r.Client.Client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("blame request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read blame response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("blame request returned status %d", resp.StatusCode)
+	}
+
+	var parsed struct {
+		Data struct {
+			Repository struct {
+				Object struct {
+					Blame struct {
+						Ranges []struct {
+							StartingLine int `json:"startingLine"`
+							EndingLine   int `json:"endingLine"`
+							Commit       struct {
+								OID string `json:"oid"`
+							} `json:"commit"`
+						} `json:"ranges"`
+					} `json:"blame"`
+				} `json:"object"`
+			} `json:"repository"`
+		} `json:"data"`
+		Errors []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	if err := json.Unmarshal(respBody, &parsed); err != nil {
+		return nil, fmt.Errorf("decode blame response: %w", err)
+	}
+	if len(parsed.Errors) > 0 {
+		return nil, fmt.Errorf("blame query error: %s", parsed.Errors[0].Message)
+	}
+
+	ranges := make([]blameRange, 0, len(parsed.Data.Repository.Object.Blame.Ranges))
+	for _, rng := range parsed.Data.Repository.Object.Blame.Ranges {
+		ranges = append(ranges, blameRange{
+			startingLine: rng.StartingLine,
+			endingLine:   rng.EndingLine,
+			commitSHA:    rng.Commit.OID,
+		})
+	}
+	return ranges, nil
+}
+
+func graphQLEndpoint(client *github.Client) string {
+	base := client.BaseURL
+	if base == nil {
+		return "https://api.github.com/graphql"
+	}
+	// GitHub Enterprise REST clients are rooted at .../api/v3/; GraphQL lives
+	// at .../api/graphql on the same host.
+	if strings.Contains(base.Host, "api.github.com") {
+		return "https://api.github.com/graphql"
+	}
+	trimmed := strings.TrimSuffix(strings.TrimSuffix(base.String(), "/"), "/api/v3")
+	return trimmed + "/api/graphql"
+}
+
+func jsonEscape(s string) string {
+	escaped, err := json.Marshal(s)
+	if err != nil {
+		return s
+	}
+	trimmed := strings.Trim(string(escaped), `"`)
+	return trimmed
+}
+
+// ParseGitHubBlobURL extracts owner/repo/ref/path from a github.com blob
+// URL such as https://github.com/cncf/foundation/blob/main/project-maintainers.csv.
+// It returns ok=false for anything it cannot resolve (gists, raw hosts,
+// non-blob paths) - those sources must record ReviewStateUnknown, never be
+// treated as unreviewed.
+func ParseGitHubBlobURL(rawURL string) (owner, repo, ref, path string, ok bool) {
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || !strings.EqualFold(parsed.Host, "github.com") {
+		return "", "", "", "", false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 5 || parts[2] != "blob" {
+		return "", "", "", "", false
+	}
+	return parts[0], parts[1], parts[3], strings.Join(parts[4:], "/"), true
+}

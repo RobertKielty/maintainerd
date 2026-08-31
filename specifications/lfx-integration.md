@@ -87,6 +87,33 @@ bug and this was fixed - see `lfx/enricher.go` `confidenceFor`):
 - `strong`: the searched email equals the returned user's email case-insensitively, **or** GitHub-handle search matched this user and the user's `Type` is `contact` (a claimed profile).
 - `weak`: everything else, including a GitHub-handle match whose `Type` is `lead` (a stale, never-claimed Salesforce row) with no identity confirmation. `Type` is a demotion signal, not a hard gate - a `lead` record can still carry confirmed identities and score `exact`. Do not use weak matches for automatic canonical field updates.
 
+### PR-Reviewed Provenance Confidence (dot-project / foundation-csv / legacy-ref)
+
+The LFX confidence tiers above are unrelated to the confidence tiers for the three file-based
+observation sources (`dot-project`, `foundation-csv`, `legacy-ref`). Those three are derived from
+whether a human reviewed and approved the pull request that introduced the line where the GitHub
+handle was found - not from an LFX identity match. The evidence is resolved by the `provenance`
+package (blame -> commit -> pull request -> review state) and stored on the observation's
+`SourceFilePath`, `SourceLine`, `SourceCommitSHA`, `SourceLineURL`, `SourcePRNumber`, `SourcePRURL`,
+and `SourceReviewState` fields, and the confidence itself is derived by `provenance.Confidence`:
+
+| Source | Review state | Confidence |
+|---|---|---|
+| `dot-project` (`project-maintainers` team membership) | approved | `exact` |
+| `dot-project` | unreviewed / direct-push | `strong` |
+| `dot-project` | unknown (unresolvable) | `strong` (one tier below `exact`) |
+| `foundation-csv` | approved | `strong` |
+| `foundation-csv` | unreviewed / direct-push | `medium` |
+| `foundation-csv` | unknown (unresolvable) | `medium` (one tier below `strong`) |
+| `foundation-csv`, no CSV lookup performed at all | - | `""` (asserts nothing) |
+| `legacy-ref` | approved | `medium` |
+| `legacy-ref` | unreviewed / direct-push | `weak` |
+| `legacy-ref` | unknown (unresolvable) | `weak` (one tier below `medium`) |
+
+`unknown` means the source could not be resolved (e.g. a gist-hosted legacy ref, or no GitHub
+resolver configured) - it must never be reported as `direct-push` or `unreviewed`, since neither of
+those would be true; an unresolvable source is not negative evidence.
+
 ## LFX Data Worth Recording
 
 From LFX `user-service`:

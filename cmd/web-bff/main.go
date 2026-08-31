@@ -2258,6 +2258,13 @@ type maintainerIdentityObservationResponse struct {
 	SourceGitHubID       string     `json:"sourceGithubId,omitempty"`
 	SourceLastModifiedAt *time.Time `json:"sourceLastModifiedAt,omitempty"`
 	IdentityCount        int        `json:"identityCount,omitempty"`
+	SourceFilePath       string     `json:"sourceFilePath,omitempty"`
+	SourceLine           int        `json:"sourceLine,omitempty"`
+	SourceCommitSHA      string     `json:"sourceCommitSha,omitempty"`
+	SourceLineURL        string     `json:"sourceLineUrl,omitempty"`
+	SourcePRNumber       int        `json:"sourcePrNumber,omitempty"`
+	SourcePRURL          string     `json:"sourcePrUrl,omitempty"`
+	SourceReviewState    string     `json:"sourceReviewState,omitempty"`
 }
 
 type maintainerServiceResponse struct {
@@ -2741,6 +2748,13 @@ func mapMaintainerObservations(obs []model.MaintainerIdentityObservation) []main
 			SourceGitHubID:       o.SourceGitHubID,
 			SourceLastModifiedAt: o.SourceLastModifiedAt,
 			IdentityCount:        o.IdentityCount,
+			SourceFilePath:       o.SourceFilePath,
+			SourceLine:           o.SourceLine,
+			SourceCommitSHA:      o.SourceCommitSHA,
+			SourceLineURL:        o.SourceLineURL,
+			SourcePRNumber:       o.SourcePRNumber,
+			SourcePRURL:          o.SourcePRURL,
+			SourceReviewState:    o.SourceReviewState,
 		}
 		out = append(out, r)
 	}

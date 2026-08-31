@@ -17,7 +17,11 @@ import (
 
 	"maintainerd/db"
 	"maintainerd/model"
+	"maintainerd/provenance"
+	"maintainerd/refparse"
 
+	"github.com/google/go-github/v55/github"
+	"golang.org/x/oauth2"
 	"gorm.io/gorm"
 )
 
@@ -40,14 +44,21 @@ func main() {
 	}
 	store := db.NewSQLStore(dbConn)
 
-	if err := sanitize(ctx, store); err != nil {
+	var resolver *provenance.Resolver
+	if githubToken := strings.TrimSpace(os.Getenv("GITHUB_API_TOKEN")); githubToken != "" {
+		ts := oauth2.StaticTokenSource(&oauth2.Token{AccessToken: githubToken})
+		tc := oauth2.NewClient(ctx, ts)
+		resolver = provenance.NewResolver(github.NewClient(tc))
+	}
+
+	if err := sanitize(ctx, store, resolver); err != nil {
 		log.Fatalf("sanitize failed: %v", err)
 	}
 
 	log.Println("sanitize completed successfully")
 }
 
-func sanitize(ctx context.Context, store *db.SQLStore) error {
+func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Resolver) error {
 	// Ensure cache table exists.
 	if err := store.DB().AutoMigrate(&model.MaintainerRefCache{}, &model.SanitizeRunStatus{}); err != nil {
 		return fmt.Errorf("auto-migrate cache: %w", err)
@@ -85,6 +96,10 @@ func sanitize(ctx context.Context, store *db.SQLStore) error {
 			continue
 		}
 
+		handleLocations := refparse.ExtractGitHubHandleLocations(body)
+		refOwner, refRepo, refBranch, refPath, refResolvable := provenance.ParseGitHubBlobURL(ref)
+		observedAt := time.Now()
+
 		for _, m := range p.Maintainers {
 			handle := strings.TrimSpace(strings.ToLower(m.GitHubAccount))
 			name := strings.TrimSpace(m.Name)
@@ -93,10 +108,16 @@ func sanitize(ctx context.Context, store *db.SQLStore) error {
 			}
 
 			present := false
+			matchedByHandle := false
 			if handle != "" && handle != "github_missing" && handlePresent(body, handle) {
 				present = true
+				matchedByHandle = true
 			} else if namePresent(body, name) {
 				present = true
+			}
+
+			if matchedByHandle {
+				writeLegacyRefObservation(ctx, store, resolver, p, m, handle, handleLocations, refOwner, refRepo, refBranch, refPath, refResolvable, observedAt)
 			}
 
 			currentStatus := projectStatuses[m.ID]
@@ -260,6 +281,59 @@ func namePresent(body, name string) bool {
 		return false
 	}
 	return re.FindStringIndex(body) != nil
+}
+
+// writeLegacyRefObservation records the evidence behind a legacy-ref handle
+// match: the line it was found on, and - when a resolver is configured and
+// the ref is a github.com blob URL - the commit, PR, and review state that
+// introduced it. An unresolvable ref (gist-hosted, no resolver configured)
+// records ReviewStateUnknown rather than being treated as unreviewed.
+func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver *provenance.Resolver, p model.Project, m model.Maintainer, handle string, handleLocations map[string][]int, owner, repo, branch, path string, refResolvable bool, observedAt time.Time) {
+	lines := handleLocations[handle]
+	if len(lines) == 0 {
+		return
+	}
+	line := lines[0]
+
+	var prov provenance.LineProvenance
+	reviewState := provenance.ReviewStateUnknown
+	lineURL := ""
+	if refResolvable {
+		lineURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s#L%d", owner, repo, branch, path, line)
+		if resolver != nil {
+			resolved, err := resolver.Resolve(ctx, owner, repo, branch, path, line)
+			if err != nil {
+				log.Printf("sanitize: provenance resolve failed for %s/%s %s#L%d: %v", owner, repo, path, line, err)
+			} else {
+				prov = resolved
+				reviewState = resolved.ReviewState
+			}
+		}
+	}
+
+	maintainerID := m.ID
+	projectID := p.ID
+	observation := &model.MaintainerIdentityObservation{
+		MaintainerID:      &maintainerID,
+		ProjectID:         &projectID,
+		Source:            provenance.SourceLegacyRef,
+		SourceRef:         "github:" + handle,
+		GitHubUser:        handle,
+		MatchStatus:       "matched",
+		MatchReason:       "present in legacy maintainer reference file",
+		Confidence:        provenance.Confidence(provenance.SourceLegacyRef, reviewState, true),
+		SourceFilePath:    path,
+		SourceLine:        line,
+		SourceCommitSHA:   prov.CommitSHA,
+		SourceLineURL:     lineURL,
+		SourcePRNumber:    prov.PRNumber,
+		SourcePRURL:       prov.PRURL,
+		SourceReviewState: reviewState,
+		ObservedAt:        observedAt,
+	}
+	if _, err := store.UpsertMaintainerIdentityObservation(observation); err != nil {
+		log.Printf("sanitize: failed to write legacy-ref observation for maintainer %d (%s) project %d: %v", m.ID, handle, p.ID, err)
+	}
 }
 
 func envOr(key, fallback string) string {

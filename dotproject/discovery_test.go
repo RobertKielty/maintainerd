@@ -26,6 +26,14 @@ func (f *fakeRepositoryClient) GetDefaultBranch(_ context.Context, owner, repo s
 	return branch, nil
 }
 
+func (f *fakeRepositoryClient) GetCommitSHA(_ context.Context, owner, repo, ref string) (string, error) {
+	key := owner + "/" + repo
+	if _, ok := f.defaultBranches[key]; !ok {
+		return "", ErrDotProjectRepoNotFound
+	}
+	return "deadbeef", nil
+}
+
 func (f *fakeRepositoryClient) GetFile(_ context.Context, owner, repo, ref, path string) (*FetchedFile, error) {
 	key := fmt.Sprintf("%s/%s@%s:%s", owner, repo, ref, path)
 	file, ok := f.files[key]
