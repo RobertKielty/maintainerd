@@ -17,6 +17,11 @@ export type IdentityObservation = {
   confidence?: string;
   projectId?: number;
   observedAt: string;
+  sourceUserId?: string;
+  sourceUserType?: string;
+  sourceGithubId?: string;
+  sourceLastModifiedAt?: string;
+  identityCount?: number;
 };
 
 type MaintainerIdentityPanelProps = {
@@ -28,6 +33,9 @@ const matchStatusLabel: Record<string, string> = {
   unmatched: "Unmatched",
   candidate: "Candidate",
   conflict: "Conflict",
+  chosen: "Chosen",
+  duplicate: "Duplicate",
+  error: "Error",
 };
 
 const confidenceLabel: Record<string, string> = {

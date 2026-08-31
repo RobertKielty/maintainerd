@@ -20,7 +20,7 @@
   justify-content: space-between;
   align-items: flex-start;
   gap: 16px;
-  margin-bottom: 20px;
+  margin-bottom: 12px;
 }
 
 .title {
@@ -45,6 +45,17 @@
   white-space: nowrap;
 }
 
+.notice {
+  margin: 0 0 16px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  color: var(--md-card-text, #0f172a);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .tableWrap {
   overflow-x: auto;
   border: 1px solid var(--md-border, rgba(15, 23, 42, 0.08));
@@ -63,7 +74,7 @@
 .table td {
   text-align: left;
   padding: 10px 12px;
-  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+  border-bottom: 1px solid var(--md-border, rgba(15, 23, 42, 0.18));
   vertical-align: top;
 }
 
@@ -79,35 +90,22 @@
   color: var(--md-card-text-strong, #0b1220);
 }
 
-.sourceLabel {
+.lfidLink {
   display: block;
   font-weight: 600;
+  color: #d62293;
+  text-decoration: none;
+}
+
+.lfidLink:hover {
+  text-decoration: underline;
 }
 
 .sourceRef {
   display: block;
-  font-size: 12px;
+  font-size: 11px;
   color: var(--md-card-muted, rgba(15, 23, 42, 0.6));
   word-break: break-all;
-}
-
-.projectLink {
-  display: block;
-  font-size: 12px;
-  color: #d62293;
-  font-weight: 600;
-  text-decoration: none;
-}
-
-.projectLink:hover {
-  text-decoration: underline;
-}
-
-.matchCell {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  align-items: center;
 }
 
 .matchReason {
@@ -119,6 +117,10 @@
 
 .dateCell {
   white-space: nowrap;
+}
+
+.muted {
+  color: var(--md-card-muted, rgba(15, 23, 42, 0.5));
 }
 
 .badge {
@@ -136,27 +138,6 @@
   color: #0b1220;
 }
 
-.badge_matched {
-  background: rgba(16, 185, 129, 0.18);
-  color: #0f5132;
-}
-
-.badge_unmatched {
-  background: rgba(239, 68, 68, 0.14);
-  color: #991b1b;
-}
-
-.badge_candidate {
-  background: rgba(245, 158, 11, 0.18);
-  color: #8a4b00;
-}
-
-.badge_conflict {
-  background: #7f1d1d;
-  color: #fee2e2;
-  box-shadow: inset 0 0 0 1px rgba(254, 202, 202, 0.2);
-}
-
 .badge_chosen {
   background: rgba(16, 185, 129, 0.18);
   color: #0f5132;
@@ -167,13 +148,23 @@
   color: #8a4b00;
 }
 
+.badge_matched {
+  background: rgba(16, 185, 129, 0.18);
+  color: #0f5132;
+}
+
 .badge_error {
   background: rgba(239, 68, 68, 0.14);
   color: #991b1b;
 }
 
-.badge_confidence {
-  background: rgba(15, 23, 42, 0.08);
+.badge_type_contact {
+  background: rgba(16, 185, 129, 0.14);
+  color: #0f5132;
+}
+
+.badge_type_lead {
+  background: rgba(148, 163, 184, 0.22);
   color: #334155;
 }
 

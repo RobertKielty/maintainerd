@@ -84,14 +84,17 @@ type UserSearch struct {
 }
 
 type User struct {
-	ID        string          `json:"ID"`
-	FirstName string          `json:"FirstName"`
-	LastName  string          `json:"LastName"`
-	Name      string          `json:"Name"`
-	Email     string          `json:"Email"`
-	Username  string          `json:"Username"`
-	Account   json.RawMessage `json:"Account"`
-	Raw       json.RawMessage `json:"-"`
+	ID               string          `json:"ID"`
+	FirstName        string          `json:"FirstName"`
+	LastName         string          `json:"LastName"`
+	Name             string          `json:"Name"`
+	Email            string          `json:"Email"`
+	Username         string          `json:"Username"`
+	Account          json.RawMessage `json:"Account"`
+	Type             string          `json:"Type"` // "lead" | "contact" - see LFX-USER-API-NOTES.MD finding 8
+	GithubID         string          `json:"GithubID"`
+	LastModifiedDate string          `json:"LastModifiedDate"`
+	Raw              json.RawMessage `json:"-"`
 }
 
 type Identity struct {

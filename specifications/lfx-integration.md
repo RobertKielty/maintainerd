@@ -41,7 +41,7 @@ Add a canonical LFX identifier to `Maintainer` so reports can directly distingui
 LFXUserID string `gorm:"size:128;index"`
 ```
 
-Do not treat the presence of an LFX ID as a maintainer registration gate by itself. It is reporting and enrichment data; project maintainer registration remains governed by dot-project and foundation CSV rules.
+Do not treat the presence of an LFX ID as a maintainer registration gate by itself. It is reporting and enrichment data; project maintainer registration remains governed by inclusion in the "project-maintainers" team in the maintainers.yaml file in a .project repo.
 
 Suggested new model:
 
@@ -80,11 +80,12 @@ This lets the maintainer route show a unified view:
 
 Canonical fields should not be overwritten blindly. The first implementation should only fill missing canonical fields automatically when the match is exact or strong, and record an observation otherwise.
 
-Confidence definitions:
+Confidence definitions (updated after `lfx/LFX-USER-API-NOTES.MD` finding 8 identified a live scoring
+bug and this was fixed - see `lfx/enricher.go` `confidenceFor`):
 
-- `exact`: LFX user search resolves to a single user and `GetUserIdentities` confirms a linked GitHub identity whose source is `github` and whose username matches the maintainer GitHub handle case-insensitively.
-- `strong`: LFX user search resolves to a single user through a strong identifier, but without verified GitHub identity confirmation. Examples: the searched email equals the returned user email case-insensitively, or GitHub-handle search returns exactly one user but the identity endpoint does not confirm a GitHub username.
-- `weak`: LFX user search returns a plausible single user through weaker supporting data only, such as name/company similarity. Do not use weak matches for automatic canonical field updates.
+- `exact`: `GetUserIdentities` confirms a linked GitHub identity whose source is `github` and whose username matches the maintainer GitHub handle case-insensitively. This holds regardless of the matched user's `Type`.
+- `strong`: the searched email equals the returned user's email case-insensitively, **or** GitHub-handle search matched this user and the user's `Type` is `contact` (a claimed profile).
+- `weak`: everything else, including a GitHub-handle match whose `Type` is `lead` (a stale, never-claimed Salesforce row) with no identity confirmation. `Type` is a demotion signal, not a hard gate - a `lead` record can still carry confirmed identities and score `exact`. Do not use weak matches for automatic canonical field updates.
 
 ## LFX Data Worth Recording
 
@@ -139,7 +140,11 @@ Minimal operations:
 - `SearchUsers(ctx, query)` using `GET /v2/users/search`
 - `GetUserIdentities(ctx, salesforceID)` using `GET /v1/users/{salesforceID}/identities`
 - `SearchProjects(ctx, nameOrSlug)` using `GET /v1/projects/search` or `GET /v1/projects`
-- `ListProjectMaintainers(ctx, projectID, filters)` using `GET /v1/projects/{projectID}/maintainers`
+- `ListProjectMaintainers(ctx, projectID, filters)` using `GET /v1/maintainers?$filter=ProjectID eq {projectID}`
+  (not `/v1/projects/{projectID}/maintainers` - that path does not exist; confirmed by a live 404
+  and by the downloaded `user-service` OpenAPI spec, which instead documents a top-level
+  `findMaintainers` operation at `/v1/maintainers`, filterable by `ProjectID`, `GithubID`, `Role`,
+  `IsUserBot`, and `Repository`. See `lfx/LFX-USER-API-NOTES.MD` finding 12.)
 - optional later: `LookupAccount(ctx, name, domain)` using `GET /v3/accounts/lookup`
 - optional later: `ListAccountProjectRoles(ctx, accountID, projectID)` using `GET /v3/accounts/{accountID}/project/{projectID}/roles`
 
@@ -155,7 +160,15 @@ Use exact identifiers before fuzzy human data.
 6. Project maintainer lookup by resolved LFX user ID and resolved LFX project ID.
 7. Name/company comparison only as supporting evidence, not as a primary identifier.
 
-When multiple LFX users match, record `MatchStatus=ambiguous` and do not update canonical fields.
+When multiple LFX users match the same GitHub handle or email - a known upstream LFX data-quality
+issue, since LFX has no 1:1 mapping between profile IDs and GitHub identities (229 duplicate-GithubID
+groups were found across CNCF projects in one external audit) - record one `MaintainerIdentityObservation`
+row per matched LFX profile, each with its own fetched identities and its own confidence. Rank the
+candidates (confidence, then `contact` before `lead`, then higher identity count, then more recently
+modified, then a stable ID tiebreak) and mark the top-ranked row `MatchStatus=chosen`; mark the rest
+`MatchStatus=duplicate`. Only the `chosen` row drives canonical field updates, under the existing
+fill-only-if-missing policy below. All rows are surfaced on the maintainer route so staff can see
+every LFX profile bound to a maintainer.
 
 When no LFX user matches, record `MatchStatus=unmatched` so future runs can back off instead of querying every hour forever.
 

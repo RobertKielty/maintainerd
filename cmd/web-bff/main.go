@@ -2241,18 +2241,23 @@ type maintainerProjectResponse struct {
 }
 
 type maintainerIdentityObservationResponse struct {
-	Source      string    `json:"source"`
-	SourceRef   string    `json:"sourceRef,omitempty"`
-	Name        string    `json:"name,omitempty"`
-	Email       string    `json:"email,omitempty"`
-	GitHubUser  string    `json:"githubUser,omitempty"`
-	LFID        string    `json:"lfid,omitempty"`
-	CompanyName string    `json:"companyName,omitempty"`
-	MatchStatus string    `json:"matchStatus,omitempty"`
-	MatchReason string    `json:"matchReason,omitempty"`
-	Confidence  string    `json:"confidence,omitempty"`
-	ProjectID   *uint     `json:"projectId,omitempty"`
-	ObservedAt  time.Time `json:"observedAt"`
+	Source               string     `json:"source"`
+	SourceRef            string     `json:"sourceRef,omitempty"`
+	Name                 string     `json:"name,omitempty"`
+	Email                string     `json:"email,omitempty"`
+	GitHubUser           string     `json:"githubUser,omitempty"`
+	LFID                 string     `json:"lfid,omitempty"`
+	CompanyName          string     `json:"companyName,omitempty"`
+	MatchStatus          string     `json:"matchStatus,omitempty"`
+	MatchReason          string     `json:"matchReason,omitempty"`
+	Confidence           string     `json:"confidence,omitempty"`
+	ProjectID            *uint      `json:"projectId,omitempty"`
+	ObservedAt           time.Time  `json:"observedAt"`
+	SourceUserID         string     `json:"sourceUserId,omitempty"`
+	SourceUserType       string     `json:"sourceUserType,omitempty"`
+	SourceGitHubID       string     `json:"sourceGithubId,omitempty"`
+	SourceLastModifiedAt *time.Time `json:"sourceLastModifiedAt,omitempty"`
+	IdentityCount        int        `json:"identityCount,omitempty"`
 }
 
 type maintainerServiceResponse struct {
@@ -2719,18 +2724,23 @@ func mapMaintainerObservations(obs []model.MaintainerIdentityObservation) []main
 	out := make([]maintainerIdentityObservationResponse, 0, len(obs))
 	for _, o := range obs {
 		r := maintainerIdentityObservationResponse{
-			Source:      o.Source,
-			SourceRef:   o.SourceRef,
-			Name:        o.Name,
-			Email:       o.Email,
-			GitHubUser:  o.GitHubUser,
-			LFID:        o.LFID,
-			CompanyName: o.CompanyName,
-			MatchStatus: o.MatchStatus,
-			MatchReason: o.MatchReason,
-			Confidence:  o.Confidence,
-			ProjectID:   o.ProjectID,
-			ObservedAt:  o.ObservedAt,
+			Source:               o.Source,
+			SourceRef:            o.SourceRef,
+			Name:                 o.Name,
+			Email:                o.Email,
+			GitHubUser:           o.GitHubUser,
+			LFID:                 o.LFID,
+			CompanyName:          o.CompanyName,
+			MatchStatus:          o.MatchStatus,
+			MatchReason:          o.MatchReason,
+			Confidence:           o.Confidence,
+			ProjectID:            o.ProjectID,
+			ObservedAt:           o.ObservedAt,
+			SourceUserID:         o.SourceUserID,
+			SourceUserType:       o.SourceUserType,
+			SourceGitHubID:       o.SourceGitHubID,
+			SourceLastModifiedAt: o.SourceLastModifiedAt,
+			IdentityCount:        o.IdentityCount,
 		}
 		out = append(out, r)
 	}
@@ -5322,6 +5332,18 @@ func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, gith
 			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
 		}
 	}
+	matchedByUsername := false
+	if len(users) == 0 && githubHandle != "" {
+		// Some LFX/PCC records have no GithubID field populated, but the LF
+		// Username (the openprofile.dev slug) matches the GitHub handle. A
+		// coincidental string match, not a verified linkage, so it must not
+		// inherit "strong" the way a GitHubID/email match does below.
+		users, err = r.client.SearchUsers(ctx, lfx.UserSearch{Username: githubHandle, PageSize: 10})
+		if err != nil {
+			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
+		}
+		matchedByUsername = len(users) > 0
+	}
 	if len(users) != 1 {
 		return dotproject.LFXIdentityResult{Confidence: "unmatched", Reason: "LFX user search did not return a single user"}, nil
 	}
@@ -5330,14 +5352,20 @@ func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, gith
 	if err != nil {
 		return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
 	}
+	confidence := "strong"
+	reason := "single LFX user match"
+	if matchedByUsername {
+		confidence = "weak"
+		reason = "single LFX user match by username only"
+	}
 	result := dotproject.LFXIdentityResult{
 		UserID:     strings.TrimSpace(user.ID),
 		LFID:       strings.TrimSpace(user.Username),
 		Name:       firstNonEmpty(strings.TrimSpace(user.Name), strings.TrimSpace(user.FirstName+" "+user.LastName)),
 		Email:      strings.TrimSpace(user.Email),
 		GitHubUser: githubHandle,
-		Confidence: "strong",
-		Reason:     "single LFX user match",
+		Confidence: confidence,
+		Reason:     reason,
 	}
 	for _, identity := range identities {
 		if strings.EqualFold(strings.TrimSpace(identity.Source), "github") && githubHandle != "" && strings.EqualFold(identity.Username, githubHandle) {

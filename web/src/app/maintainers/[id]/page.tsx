@@ -15,6 +15,7 @@ import MaintainerServicesPanel, {
 import MaintainerIdentityPanel, {
   IdentityObservation,
 } from "@/components/MaintainerIdentityPanel";
+import LfxProfilesPanel from "@/components/LfxProfilesPanel";
 import CompanyCreateModal from "@/components/CompanyCreateModal";
 import { getAuthBaseUrl, redirectToAuthLogin } from "@/utils/auth";
 import styles from "./page.module.css";
@@ -395,7 +396,11 @@ export default function MaintainerPage() {
       return null;
     }
     const best =
-      lfxObservations.find((observation) => observation.matchStatus === "matched" && observation.lfid) ||
+      lfxObservations.find(
+        (observation) =>
+          (observation.matchStatus === "matched" || observation.matchStatus === "chosen") &&
+          observation.lfid
+      ) ||
       lfxObservations.find((observation) => observation.lfid) ||
       lfxObservations[0];
     return { lfid: best.lfid, matchStatus: best.matchStatus };
@@ -519,6 +524,9 @@ export default function MaintainerPage() {
               }}
               services={maintainer.services}
             />
+          ) : null}
+          {role === "staff" && maintainer?.observations?.length ? (
+            <LfxProfilesPanel observations={maintainer.observations} />
           ) : null}
           {role === "staff" && maintainer?.observations?.length ? (
             <MaintainerIdentityPanel observations={maintainer.observations} />

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -230,7 +231,7 @@ func (e *Enricher) enrichCandidate(ctx context.Context, projectID *uint, candida
 	switch len(users) {
 	case 0:
 		summary.Unmatched++
-		return e.writeObservation(projectID, candidate, nil, nil, now, "unmatched", "no LFX user matched github handle or email", "")
+		return e.writeObservation(projectID, candidate, nil, nil, now, "unmatched", "no LFX user matched github handle, email, or username", "")
 	case 1:
 		summary.Matched++
 		user := users[0]
@@ -245,12 +246,89 @@ func (e *Enricher) enrichCandidate(ctx context.Context, projectID *uint, candida
 		return e.writeObservation(projectID, candidate, &user, identities, now, "matched", "single LFX user match", confidence)
 	default:
 		summary.Ambiguous++
-		raw, err := json.Marshal(users)
-		if err != nil {
+		return e.enrichMultipleMatches(ctx, projectID, candidate, users, githubUser, email, matched, now)
+	}
+}
+
+// scoredCandidate pairs an LFX user match with the identities and confidence
+// fetched for it, so rankCandidates can pick the best one without re-fetching.
+type scoredCandidate struct {
+	user        User
+	identities  []Identity
+	confidence  string
+	identityErr error
+}
+
+// enrichMultipleMatches writes one observation row per LFX profile matched
+// for a single GitHub handle/email, rather than collapsing them into a
+// single opaque blob. Each candidate's own identities are fetched so its
+// IdentityCount and confidence are independently correct; the best-ranked
+// candidate is marked "chosen" (and drives canonical field promotion via the
+// caller's fill-only-if-missing policy), the rest "duplicate". An
+// identity-fetch failure for one candidate is recorded as its own row and
+// must not abort the rest of the group.
+func (e *Enricher) enrichMultipleMatches(ctx context.Context, projectID *uint, candidate candidate, users []User, githubUser, email string, matched matchedBy, now time.Time) error {
+	scored := make([]scoredCandidate, 0, len(users))
+	for _, user := range users {
+		identities, err := e.Client.GetUserIdentities(ctx, user.ID)
+		sc := scoredCandidate{user: user, identities: identities, identityErr: err}
+		if err == nil {
+			sc.confidence = confidenceFor(user, identities, githubUser, email, matched)
+		}
+		scored = append(scored, sc)
+	}
+	rankCandidates(scored)
+
+	total := len(scored)
+	for i, sc := range scored {
+		if sc.identityErr != nil {
+			if err := e.writeObservation(projectID, candidate, &sc.user, nil, now, "error", sc.identityErr.Error(), ""); err != nil {
+				return fmt.Errorf("%w; failed to record LFX error observation for duplicate profile: %v", PlatformAccessError(sc.identityErr), err)
+			}
+			continue
+		}
+		status := "duplicate"
+		if i == 0 {
+			status = "chosen"
+		}
+		reason := fmt.Sprintf("%d of %d LFX profiles for this GitHub handle", i+1, total)
+		if err := e.writeObservation(projectID, candidate, &sc.user, sc.identities, now, status, reason, sc.confidence); err != nil {
 			return err
 		}
-		return e.writeRawObservation(projectID, candidate, now, "ambiguous", "multiple LFX users matched github handle or email", "weak", string(raw))
 	}
+	return nil
+}
+
+// rankCandidates orders scored candidates best-first: higher confidence,
+// then contact over lead, then more linked identities, then a more recently
+// modified LFX record, then SourceUserID as a stable final tiebreak so
+// ordering is never ambiguous. Candidates whose identity fetch failed sort
+// last without disturbing the relative order of the rest.
+func rankCandidates(scored []scoredCandidate) {
+	sort.SliceStable(scored, func(i, j int) bool {
+		a, b := scored[i], scored[j]
+		if (a.identityErr != nil) != (b.identityErr != nil) {
+			return a.identityErr == nil
+		}
+		if a.identityErr != nil && b.identityErr != nil {
+			return false
+		}
+		if ra, rb := confidenceRank(a.confidence), confidenceRank(b.confidence); ra != rb {
+			return ra > rb
+		}
+		if ac, bc := isContactType(a.user.Type), isContactType(b.user.Type); ac != bc {
+			return ac
+		}
+		if len(a.identities) != len(b.identities) {
+			return len(a.identities) > len(b.identities)
+		}
+		at, aerr := parseLFXTimestamp(a.user.LastModifiedDate)
+		bt, berr := parseLFXTimestamp(b.user.LastModifiedDate)
+		if aerr == nil && berr == nil && !at.Equal(bt) {
+			return at.After(bt)
+		}
+		return a.user.ID < b.user.ID
+	})
 }
 
 // matchedBy records which query actually produced a result, so confidence
@@ -262,6 +340,7 @@ const (
 	matchedByNone matchedBy = iota
 	matchedByGitHubID
 	matchedByEmail
+	matchedByUsername
 )
 
 func (e *Enricher) searchUsers(ctx context.Context, githubUser, email string) ([]User, matchedBy, error) {
@@ -281,6 +360,20 @@ func (e *Enricher) searchUsers(ctx context.Context, githubUser, email string) ([
 		}
 		if len(users) > 0 {
 			return users, matchedByEmail, nil
+		}
+	}
+	// Some LFX/PCC records have no GithubID field populated at all, but the
+	// person set their LF Username (the openprofile.dev slug) to match their
+	// GitHub handle. Try that as a last resort before giving up - it's a
+	// coincidental string match, not a verified linkage, so confidenceFor
+	// scores it "weak" unless a confirmed github identity rescues it.
+	if githubUser != "" {
+		users, err := e.Client.SearchUsers(ctx, UserSearch{Username: githubUser, PageSize: 10})
+		if err != nil {
+			return nil, matchedByNone, err
+		}
+		if len(users) > 0 {
+			return users, matchedByUsername, nil
 		}
 	}
 	return nil, matchedByNone, nil
@@ -363,7 +456,13 @@ func (e *Enricher) writeRawObservation(projectID *uint, candidate candidate, now
 				observation.Email = firstNonEmpty(user.Email, observation.Email)
 				observation.LFID = user.Username
 				observation.CompanyName = accountCompanyName(user.Account)
+				observation.SourceUserType = strings.TrimSpace(user.Type)
+				observation.SourceGitHubID = strings.TrimSpace(user.GithubID)
+				if modifiedAt, err := parseLFXTimestamp(user.LastModifiedDate); err == nil {
+					observation.SourceLastModifiedAt = &modifiedAt
+				}
 			}
+			observation.IdentityCount = len(payload.Identities)
 		}
 	}
 	_, err := e.Store.UpsertMaintainerIdentityObservation(observation)
@@ -385,10 +484,51 @@ func confidenceFor(user User, identities []Identity, githubUser, email string, m
 	// search when the GitHub-ID search returns nothing, so a purely
 	// email-matched user must not inherit "strong" confidence from an
 	// unrelated handle that was passed in alongside the email.
-	if githubUser != "" && matched == matchedByGitHubID {
+	//
+	// A bare GitHub-ID match is only promoted to "strong" when the LFX
+	// record is a "contact" (a claimed profile). A "lead" is a stale,
+	// never-claimed Salesforce row - see LFX-USER-API-NOTES.MD finding 8 -
+	// and demotes to "weak" unless the identity-confirmed path above
+	// already rescued it. This is a demotion signal, not a hard gate: a
+	// lead can still carry confirmed identities, which is exactly what
+	// the loop above already checks first.
+	if githubUser != "" && matched == matchedByGitHubID && strings.EqualFold(strings.TrimSpace(user.Type), "contact") {
 		return "strong"
 	}
 	return "weak"
+}
+
+// confidenceRank orders confidence tiers so the ranking helper can compare
+// them numerically; higher is better.
+func confidenceRank(confidence string) int {
+	switch confidence {
+	case "exact":
+		return 3
+	case "strong":
+		return 2
+	case "weak":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func isContactType(userType string) bool {
+	return strings.EqualFold(strings.TrimSpace(userType), "contact")
+}
+
+// parseLFXTimestamp parses the LastModifiedDate LFX returns from
+// /user-service/v2/users/search, which has been observed as RFC3339
+// (optionally with fractional seconds).
+func parseLFXTimestamp(value string) (time.Time, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, fmt.Errorf("empty timestamp")
+	}
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t, nil
+	}
+	return time.Parse(time.RFC3339Nano, value)
 }
 
 func preferredEmail(maintainer model.Maintainer) string {

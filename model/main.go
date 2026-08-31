@@ -233,6 +233,15 @@ type MaintainerIdentityObservation struct {
 	CompanyName string `gorm:"size:255"`
 	CompanyRef  string `gorm:"size:128"`
 
+	// SourceUserType, SourceGitHubID, SourceLastModifiedAt, and IdentityCount
+	// let a maintainer's route present every LFX profile bound to their GitHub
+	// handle side by side, since LFX has no 1:1 mapping between profile IDs
+	// and GitHub identities (see lfx/LFX-USER-API-NOTES.MD finding 8).
+	SourceUserType       string     `gorm:"size:32;index"` // lead | contact
+	SourceGitHubID       string     `gorm:"size:100"`
+	SourceLastModifiedAt *time.Time `gorm:"index"`
+	IdentityCount        int
+
 	MatchStatus string    `gorm:"size:32;index"`
 	MatchReason string    `gorm:"size:255"`
 	Confidence  string    `gorm:"size:32"`
