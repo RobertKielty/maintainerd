@@ -386,6 +386,18 @@ func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, gith
 			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
 		}
 	}
+	matchedByUsername := false
+	if len(users) == 0 && githubHandle != "" {
+		// Some LFX/PCC records have no GithubID field populated, but the LF
+		// Username (the openprofile.dev slug) matches the GitHub handle. A
+		// coincidental string match, not a verified linkage, so it must not
+		// inherit "strong" the way a GitHubID/email match does below.
+		users, err = r.client.SearchUsers(ctx, lfx.UserSearch{Username: githubHandle, PageSize: 10})
+		if err != nil {
+			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
+		}
+		matchedByUsername = len(users) > 0
+	}
 	if len(users) != 1 {
 		return dotproject.LFXIdentityResult{Confidence: "unmatched", Reason: "LFX user search did not return a single user"}, nil
 	}
@@ -394,14 +406,20 @@ func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, gith
 	if err != nil {
 		return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
 	}
+	confidence := "strong"
+	reason := "single LFX user match"
+	if matchedByUsername {
+		confidence = "weak"
+		reason = "single LFX user match by username only"
+	}
 	result := dotproject.LFXIdentityResult{
 		UserID:     strings.TrimSpace(user.ID),
 		LFID:       strings.TrimSpace(user.Username),
 		Name:       firstNonEmpty(strings.TrimSpace(user.Name), strings.TrimSpace(user.FirstName+" "+user.LastName)),
 		Email:      strings.TrimSpace(user.Email),
 		GitHubUser: githubHandle,
-		Confidence: "strong",
-		Reason:     "single LFX user match",
+		Confidence: confidence,
+		Reason:     reason,
 	}
 	for _, identity := range identities {
 		if strings.EqualFold(strings.TrimSpace(identity.Source), "github") && githubHandle != "" && strings.EqualFold(identity.Username, githubHandle) {
