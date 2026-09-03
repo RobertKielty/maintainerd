@@ -36,24 +36,24 @@ type postSyncMetrics struct {
 }
 
 type syncConfig struct {
-	CheckFoundationCSV bool
-	AutoAddMaintainers bool
-	Actor              string
-	FoundationOwner    string
-	FoundationRepo     string
-	FoundationRef      string
-	FoundationPath     string
-	WriteGist          bool
-	GistID             string
-	GistFilename       string
-	GistDescription    string
+	CheckFoundationCSV bool   `json:"check_foundation_csv"`
+	AutoAddMaintainers bool   `json:"auto_add_maintainers"`
+	Actor              string `json:"actor"`
+	FoundationOwner    string `json:"foundation_owner"`
+	FoundationRepo     string `json:"foundation_repo"`
+	FoundationRef      string `json:"foundation_ref"`
+	FoundationPath     string `json:"foundation_path"`
+	WriteGist          bool   `json:"write_gist"`
+	GistID             string `json:"gist_id"`
+	GistFilename       string `json:"gist_filename"`
+	GistDescription    string `json:"gist_description"`
 }
 
 const lfxTokenHelp = "LFX Platform access failed; update LFX_AUTH_TOKEN with a fresh token from " + lfx.TokenRefreshURL
 
 func main() {
 	cfg := parseFlags()
-	timeout := envDuration("DOT_PROJECT_SYNC_TIMEOUT", 10*time.Minute)
+	timeout := envDuration("DOT_PROJECT_SYNC_TIMEOUT", 50*time.Minute)
 	timeoutSource := "default"
 	if strings.TrimSpace(os.Getenv("DOT_PROJECT_SYNC_TIMEOUT")) != "" {
 		timeoutSource = "DOT_PROJECT_SYNC_TIMEOUT"
@@ -293,50 +293,41 @@ func buildAutoAdder(store *db.SQLStore, cfg syncConfig, foundation *dotproject.F
 
 func buildLFXEnricher(store *db.SQLStore, client lfx.UserSearcher) dotproject.MaintainerEnricher {
 	enrichAll := strings.EqualFold(strings.TrimSpace(os.Getenv("LFX_ENRICH_ALL_MAINTAINERS")), "true")
-	defaultMaxLookups := 50
+	defaultMaxLookups := 100
 	if enrichAll {
 		defaultMaxLookups = 0
 	}
-	maxLookups := envInt("LFX_MAX_LOOKUPS", defaultMaxLookups)
-	if maxLookups < 0 {
-		maxLookups = 0
-	}
+	maxLookups := max(envInt("LFX_MAX_LOOKUPS", defaultMaxLookups), 0)
 	lastProgressLog := time.Time{}
 	lastProgressProcessed := -1
-	return &lfx.Enricher{
-		Store:      store,
-		Client:     client,
-		EnrichAll:  enrichAll,
-		MaxLookups: maxLookups,
-		Progress: func(progress lfx.EnrichmentProgress) {
-			if progress.Total <= 0 {
-				return
-			}
-			now := time.Now()
-			shouldLog := progress.Processed == 0 ||
-				progress.Processed == progress.Total ||
-				progress.Processed-lastProgressProcessed >= 25 ||
-				lastProgressLog.IsZero() ||
-				now.Sub(lastProgressLog) >= 15*time.Second
-			if !shouldLog {
-				return
-			}
-			lastProgressLog = now
-			lastProgressProcessed = progress.Processed
-			log.Printf(
-				"lfx enrichment progress processed=%d total=%d current=%s attempted=%d matched=%d ambiguous=%d unmatched=%d errored=%d skipped_limit=%d",
-				progress.Processed,
-				progress.Total,
-				progress.Current,
-				progress.Summary.Attempted,
-				progress.Summary.Matched,
-				progress.Summary.Ambiguous,
-				progress.Summary.Unmatched,
-				progress.Summary.Errored,
-				progress.Summary.SkippedLimit,
-			)
-		},
-	}
+	return &lfx.Enricher{Store: store, Client: client, EnrichAll: enrichAll, MaxLookups: maxLookups, Progress: func(progress lfx.EnrichmentProgress) {
+		if progress.Total <= 0 {
+			return
+		}
+		now := time.Now()
+		shouldLog := progress.Processed == 0 ||
+			progress.Processed == progress.Total ||
+			progress.Processed-lastProgressProcessed >= 25 ||
+			lastProgressLog.IsZero() ||
+			now.Sub(lastProgressLog) >= 15*time.Second
+		if !shouldLog {
+			return
+		}
+		lastProgressLog = now
+		lastProgressProcessed = progress.Processed
+		log.Printf(
+			"lfx enrichment progress processed=%d total=%d current=%s attempted=%d matched=%d ambiguous=%d unmatched=%d errored=%d skipped_limit=%d",
+			progress.Processed,
+			progress.Total,
+			progress.Current,
+			progress.Summary.Attempted,
+			progress.Summary.Matched,
+			progress.Summary.Ambiguous,
+			progress.Summary.Unmatched,
+			progress.Summary.Errored,
+			progress.Summary.SkippedLimit,
+		)
+	}}
 }
 
 func buildRequiredLFXClient() (*lfx.Client, error) {
