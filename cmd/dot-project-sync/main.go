@@ -35,6 +35,8 @@ type postSyncMetrics struct {
 	CachedBodies             int64
 }
 
+// syncConfig is marshaled verbatim into audit-log rows and the startup log
+// line; it must never grow a token, password, or other credential field.
 type syncConfig struct {
 	CheckFoundationCSV bool   `json:"check_foundation_csv"`
 	AutoAddMaintainers bool   `json:"auto_add_maintainers"`
@@ -53,6 +55,7 @@ const lfxTokenHelp = "LFX Platform access failed; update LFX_AUTH_TOKEN with a f
 
 func main() {
 	cfg := parseFlags()
+	log.Printf("dot-project sync config=%s", configJSON(cfg))
 	timeout := envDuration("DOT_PROJECT_SYNC_TIMEOUT", 50*time.Minute)
 	timeoutSource := "default"
 	if strings.TrimSpace(os.Getenv("DOT_PROJECT_SYNC_TIMEOUT")) != "" {
@@ -590,16 +593,7 @@ func buildAuditEvent(summary dotproject.SyncSummary, metrics *postSyncMetrics, m
 		"auto_add_lfx_errored":          summary.AutoAdd.LFXErrored,
 		"auto_add_errored":              summary.AutoAdd.Errored,
 		"auto_add_audit_failures":       summary.AutoAdd.AuditFailures,
-		"check_foundation_csv":          cfg.CheckFoundationCSV,
-		"auto_add_maintainers":          cfg.AutoAddMaintainers,
-		"dot_project_sync_actor":        strings.TrimSpace(cfg.Actor),
-		"foundation_csv_owner":          strings.TrimSpace(cfg.FoundationOwner),
-		"foundation_csv_repo":           strings.TrimSpace(cfg.FoundationRepo),
-		"foundation_csv_ref":            strings.TrimSpace(cfg.FoundationRef),
-		"foundation_csv_path":           strings.TrimSpace(cfg.FoundationPath),
-		"write_gist":                    cfg.WriteGist,
-		"gist_id":                       strings.TrimSpace(cfg.GistID),
-		"gist_filename":                 strings.TrimSpace(cfg.GistFilename),
+		"config":                        cfg,
 		"gist_report_rows":              len(summary.GistReportRows),
 	}
 	if len(summary.ErrorSummaries) > 0 {
@@ -649,16 +643,7 @@ func buildAuditEvent(summary dotproject.SyncSummary, metrics *postSyncMetrics, m
 
 func buildStartAuditEvent(cfg syncConfig) model.AuditLog {
 	metadata := map[string]any{
-		"check_foundation_csv":   cfg.CheckFoundationCSV,
-		"auto_add_maintainers":   cfg.AutoAddMaintainers,
-		"dot_project_sync_actor": strings.TrimSpace(cfg.Actor),
-		"foundation_csv_owner":   strings.TrimSpace(cfg.FoundationOwner),
-		"foundation_csv_repo":    strings.TrimSpace(cfg.FoundationRepo),
-		"foundation_csv_ref":     strings.TrimSpace(cfg.FoundationRef),
-		"foundation_csv_path":    strings.TrimSpace(cfg.FoundationPath),
-		"write_gist":             cfg.WriteGist,
-		"gist_id":                strings.TrimSpace(cfg.GistID),
-		"gist_filename":          strings.TrimSpace(cfg.GistFilename),
+		"config": cfg,
 	}
 	body, err := json.Marshal(metadata)
 	if err != nil {
@@ -673,6 +658,14 @@ func buildStartAuditEvent(cfg syncConfig) model.AuditLog {
 		Message:  fmt.Sprintf("DOT_PROJECT_SYNC_RUN_STARTED: actor=%s auto_add_maintainers=%t check_foundation_csv=%t", actor, cfg.AutoAddMaintainers, cfg.CheckFoundationCSV),
 		Metadata: string(body),
 	}
+}
+
+func configJSON(cfg syncConfig) json.RawMessage {
+	body, err := json.Marshal(cfg)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return body
 }
 
 func firstNonEmpty(values ...string) string {
