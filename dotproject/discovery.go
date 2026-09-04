@@ -134,7 +134,16 @@ func (d *Discoverer) Discover(ctx context.Context, project model.Project) (*Disc
 		return nil, fmt.Errorf("get commit sha for %s/%s@%s: %w", org, DefaultRepoName, defaultBranch, err)
 	}
 
-	projectFile, err := d.fetchOptionalFile(ctx, org, defaultBranch, "project.yaml", commitSHA)
+	// Every read below must come from the one commit the whole discovery is
+	// attributed to: fetching at the moving branch name instead would let a
+	// push between calls hand back bodies and line numbers from a different
+	// commit than the recorded CommitSHA and provenance.
+	fetchRef := defaultBranch
+	if strings.TrimSpace(commitSHA) != "" {
+		fetchRef = commitSHA
+	}
+
+	projectFile, err := d.fetchOptionalFile(ctx, org, fetchRef, "project.yaml", commitSHA)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +153,7 @@ func (d *Discoverer) Discover(ctx context.Context, project model.Project) (*Disc
 			parseProjectYAML(result.ProjectFile)
 	}
 
-	maintainersFile, err := d.fetchMaintainersFile(ctx, org, defaultBranch, commitSHA)
+	maintainersFile, err := d.fetchMaintainersFile(ctx, org, fetchRef, commitSHA)
 	if err != nil {
 		return nil, err
 	}
@@ -157,19 +166,19 @@ func (d *Discoverer) Discover(ctx context.Context, project model.Project) (*Disc
 		result.MaintainersParseError = parseErr
 	}
 
-	securityFile, err := d.fetchOptionalFile(ctx, org, defaultBranch, "SECURITY.md", commitSHA)
+	securityFile, err := d.fetchOptionalFile(ctx, org, fetchRef, "SECURITY.md", commitSHA)
 	if err != nil {
 		return nil, err
 	}
 	result.SecurityFile = securityFile
 
-	contributingFile, err := d.fetchOptionalFile(ctx, org, defaultBranch, "CONTRIBUTING.md", commitSHA)
+	contributingFile, err := d.fetchOptionalFile(ctx, org, fetchRef, "CONTRIBUTING.md", commitSHA)
 	if err != nil {
 		return nil, err
 	}
 	result.ContributingFile = contributingFile
 
-	governanceFile, err := d.fetchOptionalFile(ctx, org, defaultBranch, "GOVERNANCE.md", commitSHA)
+	governanceFile, err := d.fetchOptionalFile(ctx, org, fetchRef, "GOVERNANCE.md", commitSHA)
 	if err != nil {
 		return nil, err
 	}

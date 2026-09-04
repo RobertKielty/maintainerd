@@ -98,6 +98,18 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 
 		handleLocations := refparse.ExtractGitHubHandleLocations(body)
 		refOwner, refRepo, refBranch, refPath, refResolvable := provenance.ParseGitHubBlobURL(ref)
+		// Pin blame lookups and permalinks to one snapshot of the branch:
+		// blame line numbers describe the file as of the ref they were
+		// resolved at, so a moving branch name would let permalinks and
+		// review evidence drift apart as the branch advances.
+		refSnapshot := refBranch
+		if refResolvable && resolver != nil {
+			if b, _, err := resolver.Client.Repositories.GetBranch(ctx, refOwner, refRepo, refBranch, false); err != nil {
+				log.Printf("sanitize: could not pin %s/%s@%s to a commit, falling back to the branch name: %v", refOwner, refRepo, refBranch, err)
+			} else if sha := strings.TrimSpace(b.GetCommit().GetSHA()); sha != "" {
+				refSnapshot = sha
+			}
+		}
 		observedAt := time.Now()
 
 		for _, m := range p.Maintainers {
@@ -117,7 +129,7 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 			}
 
 			if matchedByHandle {
-				writeLegacyRefObservation(ctx, store, resolver, p, m, handle, handleLocations, refOwner, refRepo, refBranch, refPath, refResolvable, observedAt)
+				writeLegacyRefObservation(ctx, store, resolver, p, m, handle, handleLocations, refOwner, refRepo, refSnapshot, refPath, refResolvable, observedAt)
 			}
 
 			currentStatus := projectStatuses[m.ID]
@@ -288,7 +300,7 @@ func namePresent(body, name string) bool {
 // the ref is a github.com blob URL - the commit, PR, and review state that
 // introduced it. An unresolvable ref (gist-hosted, no resolver configured)
 // records ReviewStateUnknown rather than being treated as unreviewed.
-func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver *provenance.Resolver, p model.Project, m model.Maintainer, handle string, handleLocations map[string][]int, owner, repo, branch, path string, refResolvable bool, observedAt time.Time) {
+func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver *provenance.Resolver, p model.Project, m model.Maintainer, handle string, handleLocations map[string][]int, owner, repo, ref, path string, refResolvable bool, observedAt time.Time) {
 	lines := handleLocations[handle]
 	if len(lines) == 0 {
 		return
@@ -299,9 +311,12 @@ func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver
 	reviewState := provenance.ReviewStateUnknown
 	lineURL := ""
 	if refResolvable {
-		lineURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s#L%d", owner, repo, branch, path, line)
+		// ref is the caller's pinned snapshot commit when one could be
+		// resolved (falling back to the branch name), so the permalink and
+		// the blame evidence describe the same file state.
+		lineURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s#L%d", owner, repo, ref, path, line)
 		if resolver != nil {
-			resolved, err := resolver.Resolve(ctx, owner, repo, branch, path, line)
+			resolved, err := resolver.Resolve(ctx, owner, repo, ref, path, line)
 			if err != nil {
 				log.Printf("sanitize: provenance resolve failed for %s/%s %s#L%d: %v", owner, repo, path, line, err)
 			} else {

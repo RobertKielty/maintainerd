@@ -338,7 +338,10 @@ func (a *AutoMaintainerAdder) writeFoundationObservation(ctx context.Context, pr
 		SourcePRURL:       prov.PRURL,
 		SourceReviewState: reviewState,
 	}
-	if a.Foundation != nil {
+	// prov.CommitSHA is the commit blamed for this line - the commit the PR
+	// and review evidence actually belong to. Only when no blame resolution
+	// happened does the CSV snapshot commit stand in as a weaker locator.
+	if observation.SourceCommitSHA == "" && a.Foundation != nil {
 		observation.SourceCommitSHA = a.Foundation.CommitSHA
 	}
 	_, err = a.Store.UpsertMaintainerIdentityObservation(observation)
@@ -396,7 +399,7 @@ func (a *AutoMaintainerAdder) writeDotProjectObservation(ctx context.Context, pr
 		ObservedAt:        now,
 		SourceFilePath:    strings.TrimSpace(file.Path),
 		SourceLine:        line,
-		SourceCommitSHA:   file.CommitSHA,
+		SourceCommitSHA:   dotProjectSourceCommitSHA(prov, file),
 		SourceLineURL:     dotProjectLineURL(file, line),
 		SourcePRNumber:    prov.PRNumber,
 		SourcePRURL:       prov.PRURL,
@@ -406,11 +409,29 @@ func (a *AutoMaintainerAdder) writeDotProjectObservation(ctx context.Context, pr
 	return err
 }
 
+// dotProjectSourceCommitSHA prefers the blamed commit (the one the PR/review
+// evidence belongs to) over the branch snapshot the file was fetched at.
+func dotProjectSourceCommitSHA(prov provenance.LineProvenance, file FileDiscovery) string {
+	if sha := strings.TrimSpace(prov.CommitSHA); sha != "" {
+		return sha
+	}
+	return strings.TrimSpace(file.CommitSHA)
+}
+
+// dotProjectLineURL pins the permalink to the snapshot commit the line number
+// was computed against; a branch-based URL can drift to a different line as
+// the branch advances.
 func dotProjectLineURL(file FileDiscovery, line int) string {
-	if strings.TrimSpace(file.BlobURL) == "" || line <= 0 {
+	blobURL := strings.TrimSpace(file.BlobURL)
+	if blobURL == "" || line <= 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s#L%d", strings.TrimSpace(file.BlobURL), line)
+	if sha := strings.TrimSpace(file.CommitSHA); sha != "" {
+		if owner, repo, _, path, ok := provenance.ParseGitHubBlobURL(blobURL); ok {
+			return fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s#L%d", owner, repo, sha, path, line)
+		}
+	}
+	return fmt.Sprintf("%s#L%d", blobURL, line)
 }
 
 // resolveDotProjectProvenance resolves the commit/PR/review evidence behind
