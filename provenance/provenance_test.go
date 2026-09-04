@@ -82,7 +82,8 @@ type fakeGitHubServer struct {
 	prCalls       int
 	reviewCalls   int
 	reviewsJSON   string
-	graphQLStatus int // non-zero: fail the blame query with this HTTP status
+	graphQLStatus int    // non-zero: fail the blame query with this HTTP status
+	prHeadSHA     string // non-empty: the merged PR's final head SHA
 
 	// compareStatusByHead maps a review head SHA to the status the compare
 	// endpoint reports for base deadbeef...head (default "identical").
@@ -120,11 +121,15 @@ func (f *fakeGitHubServer) handler() http.HandlerFunc {
 		case "/repos/example-org/example-repo/commits/deadbeef/pulls":
 			f.prCalls++
 			w.Header().Set("Content-Type", "application/json")
+			head := ""
+			if f.prHeadSHA != "" {
+				head = `,"head":{"sha":"` + f.prHeadSHA + `"}`
+			}
 			// An unmerged PR listed first must be skipped: only a merged PR can
 			// have introduced the commit to the blamed branch.
 			_, _ = w.Write([]byte(`[
 				{"number":41,"html_url":"https://github.com/example-org/example-repo/pull/41"},
-				{"number":42,"html_url":"https://github.com/example-org/example-repo/pull/42","merged_at":"2026-01-02T03:04:05Z"}
+				{"number":42,"html_url":"https://github.com/example-org/example-repo/pull/42","merged_at":"2026-01-02T03:04:05Z"` + head + `}
 			]`))
 		case "/repos/example-org/example-repo/pulls/42/reviews":
 			f.reviewCalls++
@@ -348,6 +353,32 @@ func TestResolveCountsApprovalOnLaterHeadContainingBlamedCommit(t *testing.T) {
 	}
 	if prov.ReviewState != ReviewStateApproved {
 		t.Errorf("ReviewState = %q, want %q (a reviewed head containing the blamed commit vouches for the line)", prov.ReviewState, ReviewStateApproved)
+	}
+}
+
+func TestResolveCountsFinalHeadApprovalOnSquashMergedPR(t *testing.T) {
+	// A squash merge rewrites the PR's commits: the blamed SHA (deadbeef, the
+	// squash commit on the target branch) is never an ancestor of the
+	// PR-branch head the reviewer approved, so the compare reports
+	// "diverged". An approval of the PR's final head still covered
+	// everything the merged PR introduced and must count.
+	fake := &fakeGitHubServer{
+		prHeadSHA: "prheadff",
+		reviewsJSON: `[
+			{"state":"APPROVED","commit_id":"prheadff","user":{"login":"fixture-human","type":"User"}}
+		]`,
+		compareStatusByHead: map[string]string{"prheadff": "diverged"},
+	}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+
+	resolver := newTestResolver(t, srv)
+	prov, err := resolver.Resolve(context.Background(), "example-org", "example-repo", "main", "MAINTAINERS.md", 2)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if prov.ReviewState != ReviewStateApproved {
+		t.Errorf("ReviewState = %q, want %q (an approval of the PR's final head vouches for a squash-merged line)", prov.ReviewState, ReviewStateApproved)
 	}
 }
 

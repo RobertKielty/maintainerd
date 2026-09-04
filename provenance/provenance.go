@@ -226,6 +226,17 @@ func (r *Resolver) fetchPRForCommit(ctx context.Context, owner, repo, sha string
 				info.reviewState = ReviewStateApproved
 				return info, nil
 			}
+			// A squash or rebase merge rewrites the PR's commits into new
+			// SHAs on the target branch, so the blamed commit is never an
+			// ancestor of the PR-branch head the reviewer approved -
+			// CompareCommits reports "diverged" and a genuinely approved PR
+			// would be persisted as unreviewed. An approval of the PR's
+			// final head covered everything this merged PR introduced,
+			// including the blamed line, whatever merge strategy rewrote it.
+			if reviewHead == strings.TrimSpace(pr.GetHead().GetSHA()) {
+				info.reviewState = ReviewStateApproved
+				return info, nil
+			}
 			cmp, _, err := r.Client.Repositories.CompareCommits(ctx, owner, repo, sha, reviewHead, nil)
 			if err != nil {
 				// Unresolvable, not negative evidence - same policy as a
