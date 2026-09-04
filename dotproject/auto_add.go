@@ -208,8 +208,13 @@ func (a *AutoMaintainerAdder) ProcessProject(ctx context.Context, project model.
 			}
 		}
 
-		if err := a.writeFoundationObservation(ctx, project.ID, maintainerID, normalized, record, now, "matched", "present in cncf/foundation project-maintainers.csv", a.CheckFoundationCSV, nil); err != nil {
-			summary.AuditFailures++
+		// Only record a foundation observation when the CSV was actually
+		// consulted; with the gate off, `record` is synthesized from the
+		// handle and a "matched" row would assert evidence never queried.
+		if a.CheckFoundationCSV {
+			if err := a.writeFoundationObservation(ctx, project.ID, maintainerID, normalized, record, now, "matched", "present in cncf/foundation project-maintainers.csv", true, nil); err != nil {
+				summary.AuditFailures++
+			}
 		}
 
 		if hasExisting {

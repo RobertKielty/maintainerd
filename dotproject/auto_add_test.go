@@ -358,3 +358,31 @@ Graduated,Kubernetes,Alice Example,Acme,AliceExample
 		assert.Equal(t, created.ID, *observation.MaintainerID, "observation from source %q", observation.Source)
 	}
 }
+
+// With the Foundation CSV gate off no lookup ever happens, so writing a
+// "matched" foundation-csv row would fabricate evidence that was never
+// queried. Only the dot-project observation may be recorded.
+func TestAutoMaintainerAdderSkipsFoundationObservationWhenCSVGateOff(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeAutoAddStore()
+	adder := &AutoMaintainerAdder{
+		Store:              store,
+		CheckFoundationCSV: false,
+		AutoAddMaintainers: false,
+	}
+
+	_, err := adder.ProcessProject(context.Background(), model.Project{Model: gorm.Model{ID: 1}, Name: "Kubernetes"}, &DiscoveryResult{
+		MaintainersFile: FileDiscovery{Exists: true, Body: `maintainers:
+  - teams:
+      - name: project-maintainers
+        members: [AliceExample]
+`},
+	})
+	require.NoError(t, err)
+
+	require.NotEmpty(t, store.observed)
+	for _, observation := range store.observed {
+		assert.NotEqual(t, FoundationCSVSource, observation.Source, "no foundation-csv observation may be written when the CSV was never consulted")
+	}
+}
