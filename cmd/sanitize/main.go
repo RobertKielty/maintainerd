@@ -76,11 +76,28 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 			continue
 		}
 
+		refOwner, refRepo, refBranch, refPath, refResolvable := provenance.ParseGitHubBlobURL(ref)
+		// Pin blame lookups, permalinks, AND the fetched body to one snapshot
+		// of the branch: blame line numbers describe the file as of the ref
+		// they were resolved at, so fetching the body from the moving branch
+		// name would let line numbers and review evidence drift apart if the
+		// branch advances between requests.
+		refSnapshot := refBranch
+		fetchURL := ref
+		if refResolvable && resolver != nil {
+			if b, _, err := resolver.Client.Repositories.GetBranch(ctx, refOwner, refRepo, refBranch, false); err != nil {
+				log.Printf("sanitize: could not pin %s/%s@%s to a commit, falling back to the branch name: %v", refOwner, refRepo, refBranch, err)
+			} else if sha := strings.TrimSpace(b.GetCommit().GetSHA()); sha != "" {
+				refSnapshot = sha
+				fetchURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", refOwner, refRepo, refSnapshot, refPath)
+			}
+		}
+
 		cache, cacheErr := store.GetMaintainerRefCache(p.ID)
 		if cacheErr != nil {
 			log.Printf("sanitize: could not load cache for project %d (%s): %v", p.ID, p.Name, cacheErr)
 		}
-		body, meta, notModified, err := fetchMaintainerRef(ctx, client, ref, cache)
+		body, meta, notModified, err := fetchMaintainerRef(ctx, client, fetchURL, cache)
 		if err != nil {
 			log.Printf("sanitize: skip project %d (%s), fetch error: %v", p.ID, p.Name, err)
 			continue
@@ -97,19 +114,6 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 		}
 
 		handleLocations := refparse.ExtractGitHubHandleLocations(body)
-		refOwner, refRepo, refBranch, refPath, refResolvable := provenance.ParseGitHubBlobURL(ref)
-		// Pin blame lookups and permalinks to one snapshot of the branch:
-		// blame line numbers describe the file as of the ref they were
-		// resolved at, so a moving branch name would let permalinks and
-		// review evidence drift apart as the branch advances.
-		refSnapshot := refBranch
-		if refResolvable && resolver != nil {
-			if b, _, err := resolver.Client.Repositories.GetBranch(ctx, refOwner, refRepo, refBranch, false); err != nil {
-				log.Printf("sanitize: could not pin %s/%s@%s to a commit, falling back to the branch name: %v", refOwner, refRepo, refBranch, err)
-			} else if sha := strings.TrimSpace(b.GetCommit().GetSHA()); sha != "" {
-				refSnapshot = sha
-			}
-		}
 		observedAt := time.Now()
 
 		for _, m := range p.Maintainers {
