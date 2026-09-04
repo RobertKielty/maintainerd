@@ -246,7 +246,7 @@ func (e *Enricher) enrichCandidate(ctx context.Context, projectID *uint, candida
 		return e.writeObservation(projectID, candidate, &user, identities, now, "matched", "single LFX user match", confidence)
 	default:
 		summary.Ambiguous++
-		return e.enrichMultipleMatches(ctx, projectID, candidate, users, githubUser, email, matched, now)
+		return e.enrichMultipleMatches(ctx, projectID, candidate, users, githubUser, email, matched, now, summary)
 	}
 }
 
@@ -267,7 +267,7 @@ type scoredCandidate struct {
 // caller's fill-only-if-missing policy), the rest "duplicate". An
 // identity-fetch failure for one candidate is recorded as its own row and
 // must not abort the rest of the group.
-func (e *Enricher) enrichMultipleMatches(ctx context.Context, projectID *uint, candidate candidate, users []User, githubUser, email string, matched matchedBy, now time.Time) error {
+func (e *Enricher) enrichMultipleMatches(ctx context.Context, projectID *uint, candidate candidate, users []User, githubUser, email string, matched matchedBy, now time.Time, summary *dotproject.EnrichmentSummary) error {
 	scored := make([]scoredCandidate, 0, len(users))
 	for _, user := range users {
 		identities, err := e.Client.GetUserIdentities(ctx, user.ID)
@@ -282,6 +282,10 @@ func (e *Enricher) enrichMultipleMatches(ctx context.Context, projectID *uint, c
 	total := len(scored)
 	for i, sc := range scored {
 		if sc.identityErr != nil {
+			// The failure is recorded as this profile's own row and must not
+			// abort the group, but it still has to count as an error or the
+			// run reports lfx_errored=0 while error rows accumulate.
+			summary.Errored++
 			if err := e.writeObservation(projectID, candidate, &sc.user, nil, now, "error", sc.identityErr.Error(), ""); err != nil {
 				return fmt.Errorf("%w; failed to record LFX error observation for duplicate profile: %v", PlatformAccessError(sc.identityErr), err)
 			}
