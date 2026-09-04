@@ -211,7 +211,32 @@ func (r *Resolver) fetchPRForCommit(ctx context.Context, owner, repo, sha string
 			// raise an observation to that tier without any human having
 			// looked. A review with no user at all (deleted account) is
 			// unverifiable and must not be counted as human either.
-			if review.GetUser() != nil && strings.EqualFold(review.GetState(), "APPROVED") && !strings.EqualFold(review.GetUser().GetType(), "Bot") {
+			if review.GetUser() == nil || !strings.EqualFold(review.GetState(), "APPROVED") || strings.EqualFold(review.GetUser().GetType(), "Bot") {
+				continue
+			}
+			// The approval only proves review of the blamed line if the head
+			// the reviewer approved contains the blamed commit: an approval
+			// can predate a later push that introduced the line, and without
+			// stale-review dismissal that stale approval still merges the PR.
+			reviewHead := strings.TrimSpace(review.GetCommitID())
+			if reviewHead == "" {
+				continue
+			}
+			if reviewHead == sha {
+				info.reviewState = ReviewStateApproved
+				return info, nil
+			}
+			cmp, _, err := r.Client.Repositories.CompareCommits(ctx, owner, repo, sha, reviewHead, nil)
+			if err != nil {
+				// Unresolvable, not negative evidence - same policy as a
+				// failed review listing.
+				info.reviewState = ReviewStateUnknown
+				return info, nil //nolint:nilerr
+			}
+			// "ahead" or "identical" means the reviewed head contains the
+			// blamed commit; "behind"/"diverged" means the approval never saw
+			// the line and must not count.
+			if status := cmp.GetStatus(); status == "ahead" || status == "identical" {
 				info.reviewState = ReviewStateApproved
 				return info, nil
 			}

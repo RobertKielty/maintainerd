@@ -83,6 +83,10 @@ type fakeGitHubServer struct {
 	reviewCalls   int
 	reviewsJSON   string
 	graphQLStatus int // non-zero: fail the blame query with this HTTP status
+
+	// compareStatusByHead maps a review head SHA to the status the compare
+	// endpoint reports for base deadbeef...head (default "identical").
+	compareStatusByHead map[string]string
 }
 
 func (f *fakeGitHubServer) handler() http.HandlerFunc {
@@ -127,10 +131,19 @@ func (f *fakeGitHubServer) handler() http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json")
 			reviews := f.reviewsJSON
 			if reviews == "" {
-				reviews = `[{"state":"APPROVED","user":{"login":"example-human","type":"User"}}]`
+				reviews = `[{"state":"APPROVED","commit_id":"deadbeef","user":{"login":"example-human","type":"User"}}]`
 			}
 			_, _ = w.Write([]byte(reviews))
 		default:
+			if rest, ok := strings.CutPrefix(r.URL.Path, "/repos/example-org/example-repo/compare/deadbeef..."); ok {
+				status := f.compareStatusByHead[rest]
+				if status == "" {
+					status = "identical"
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"status":"` + status + `"}`))
+				return
+			}
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{}`))
 		}
@@ -236,8 +249,8 @@ func TestResolveIgnoresBotApprovals(t *testing.T) {
 func TestResolveCountsHumanApprovalAlongsideBotApproval(t *testing.T) {
 	fake := &fakeGitHubServer{
 		reviewsJSON: `[
-			{"state":"APPROVED","user":{"login":"approve-bot[bot]","type":"Bot"}},
-			{"state":"APPROVED","user":{"login":"fixture-human","type":"User"}}
+			{"state":"APPROVED","commit_id":"deadbeef","user":{"login":"approve-bot[bot]","type":"Bot"}},
+			{"state":"APPROVED","commit_id":"deadbeef","user":{"login":"fixture-human","type":"User"}}
 		]`,
 	}
 	srv := httptest.NewServer(fake.handler())
@@ -292,5 +305,48 @@ func TestResolveCachesFailedBlameLookups(t *testing.T) {
 
 	if fake.graphQLCalls != 1 {
 		t.Errorf("graphQLCalls = %d, want 1 (a failed blame lookup must be cached, not retried per maintainer in the same file)", fake.graphQLCalls)
+	}
+}
+
+func TestResolveIgnoresApprovalPredatingBlamedCommit(t *testing.T) {
+	fake := &fakeGitHubServer{
+		// The human approved an earlier head; the blamed commit was pushed
+		// afterwards, so the compare of blamed...reviewed-head reports
+		// "behind" and the approval must not vouch for the line.
+		reviewsJSON: `[
+			{"state":"APPROVED","commit_id":"0ldhead0","user":{"login":"fixture-human","type":"User"}}
+		]`,
+		compareStatusByHead: map[string]string{"0ldhead0": "behind"},
+	}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+
+	resolver := newTestResolver(t, srv)
+	prov, err := resolver.Resolve(context.Background(), "example-org", "example-repo", "main", "MAINTAINERS.md", 2)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if prov.ReviewState != ReviewStateUnreviewed {
+		t.Errorf("ReviewState = %q, want %q (an approval that predates the blamed commit never saw the line)", prov.ReviewState, ReviewStateUnreviewed)
+	}
+}
+
+func TestResolveCountsApprovalOnLaterHeadContainingBlamedCommit(t *testing.T) {
+	fake := &fakeGitHubServer{
+		reviewsJSON: `[
+			{"state":"APPROVED","commit_id":"newhead0","user":{"login":"fixture-human","type":"User"}}
+		]`,
+		compareStatusByHead: map[string]string{"newhead0": "ahead"},
+	}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+
+	resolver := newTestResolver(t, srv)
+	prov, err := resolver.Resolve(context.Background(), "example-org", "example-repo", "main", "MAINTAINERS.md", 2)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if prov.ReviewState != ReviewStateApproved {
+		t.Errorf("ReviewState = %q, want %q (a reviewed head containing the blamed commit vouches for the line)", prov.ReviewState, ReviewStateApproved)
 	}
 }
