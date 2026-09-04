@@ -78,6 +78,19 @@ func (f *fakeAutoAddStore) UpsertMaintainerIdentityObservation(observation *mode
 	return observation, nil
 }
 
+func (f *fakeAutoAddStore) AdoptMaintainerIdentityObservations(maintainerID, projectID uint, sourceRef string) (int64, error) {
+	var adopted int64
+	for i := range f.observed {
+		observation := &f.observed[i]
+		if observation.MaintainerID == nil && observation.ProjectID != nil && *observation.ProjectID == projectID && observation.SourceRef == sourceRef {
+			id := maintainerID
+			observation.MaintainerID = &id
+			adopted++
+		}
+	}
+	return adopted, nil
+}
+
 func (f *fakeAutoAddStore) GetLatestMaintainerIdentityObservation(source string, maintainerID uint) (*model.MaintainerIdentityObservation, error) {
 	for i := len(f.observed) - 1; i >= 0; i-- {
 		observation := f.observed[i]
@@ -304,4 +317,44 @@ Graduated,Kubernetes,Alice Example,Acme,AliceExample
 	require.Len(t, store.audits, 1)
 	assert.Equal(t, "ADD_DOT_PROJECT_MAINTAINER", store.audits[0].Action)
 	assert.Contains(t, store.audits[0].Message, "aliceexample was added")
+}
+
+// A maintainer created by auto-add is created *after* its dot-project and
+// foundation observations are written, so those rows start with a NULL
+// maintainer ID. They must be adopted in the same run, or the evidence that
+// justified creating the maintainer is orphaned forever (the observation
+// upsert key treats NULL and a concrete maintainer ID as different rows).
+func TestAutoMaintainerAdderWriteModeAdoptsObservationsForCreatedMaintainer(t *testing.T) {
+	t.Parallel()
+
+	index, err := ParseFoundationMaintainersCSV(strings.NewReader(`,Project,Maintainer Name,Company,Github Name
+Graduated,Kubernetes,Alice Example,Acme,AliceExample
+`))
+	require.NoError(t, err)
+
+	store := newFakeAutoAddStore()
+	adder := &AutoMaintainerAdder{
+		Store:              store,
+		Foundation:         index,
+		CheckFoundationCSV: true,
+		AutoAddMaintainers: true,
+	}
+
+	summary, err := adder.ProcessProject(context.Background(), model.Project{Model: gorm.Model{ID: 1}, Name: "Kubernetes"}, &DiscoveryResult{
+		MaintainersFile: FileDiscovery{Exists: true, Body: `maintainers:
+  - teams:
+      - name: project-maintainers
+        members: [AliceExample]
+`},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.CreatedMaintainers)
+
+	created, ok := store.maintainers["aliceexample"]
+	require.True(t, ok)
+	require.NotEmpty(t, store.observed)
+	for _, observation := range store.observed {
+		require.NotNil(t, observation.MaintainerID, "observation from source %q must be attached to the created maintainer", observation.Source)
+		assert.Equal(t, created.ID, *observation.MaintainerID, "observation from source %q", observation.Source)
+	}
 }

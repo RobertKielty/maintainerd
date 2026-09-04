@@ -18,6 +18,7 @@ type AutoAddStore interface {
 	GetMaintainersByProject(projectID uint) ([]model.Maintainer, error)
 	UpsertMaintainerWithIdentity(projectID uint, name, email, githubHandle, company, lfxUserID string) (*model.Maintainer, bool, bool, error)
 	UpsertMaintainerIdentityObservation(observation *model.MaintainerIdentityObservation) (*model.MaintainerIdentityObservation, error)
+	AdoptMaintainerIdentityObservations(maintainerID, projectID uint, sourceRef string) (int64, error)
 	GetLatestMaintainerIdentityObservation(source string, maintainerID uint) (*model.MaintainerIdentityObservation, error)
 	GetLatestMaintainerIdentityObservationByRef(source string, projectID uint, sourceRef string) (*model.MaintainerIdentityObservation, error)
 	LogAuditEvent(logger *zap.SugaredLogger, event model.AuditLog) error
@@ -274,6 +275,14 @@ func (a *AutoMaintainerAdder) ProcessProject(ctx context.Context, project model.
 			summary.CreatedMaintainers++
 		} else if didLink {
 			summary.LinkedMaintainers++
+		}
+		if maintainer != nil {
+			// The dot-project and foundation observations for this handle
+			// were written earlier in the iteration, before the maintainer
+			// existed, so their maintainer_id is NULL. Attach them now.
+			if _, err := a.Store.AdoptMaintainerIdentityObservations(maintainer.ID, project.ID, "github:"+normalized); err != nil {
+				summary.AuditFailures++
+			}
 		}
 		if created || didLink {
 			if err := a.logAutoAdd(project, maintainer, record, result, &identity, now, actionFor(created)); err != nil {

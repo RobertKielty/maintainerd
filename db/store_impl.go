@@ -914,25 +914,39 @@ func (s *SQLStore) UpsertMaintainerIdentityObservation(observation *model.Mainta
 		observation.ObservedAt = time.Now().UTC()
 	}
 
+	matchQuery := func(maintainerClause string, maintainerArgs ...interface{}) *gorm.DB {
+		query := s.db.Where("source = ?", observation.Source).Where(maintainerClause, maintainerArgs...)
+		if observation.ProjectID == nil {
+			query = query.Where("project_id IS NULL")
+		} else {
+			query = query.Where("project_id = ?", *observation.ProjectID)
+		}
+		if observation.SourceUserID != "" {
+			query = query.Where("source_user_id = ?", observation.SourceUserID)
+		} else {
+			query = query.Where("source_user_id = '' AND source_ref = ?", observation.SourceRef)
+		}
+		return query
+	}
+
 	var existing model.MaintainerIdentityObservation
-	query := s.db.Where("source = ?", observation.Source)
 	if observation.MaintainerID == nil {
-		query = query.Where("maintainer_id IS NULL")
+		if err := matchQuery("maintainer_id IS NULL").Find(&existing).Error; err != nil {
+			return nil, err
+		}
 	} else {
-		query = query.Where("maintainer_id = ?", *observation.MaintainerID)
-	}
-	if observation.ProjectID == nil {
-		query = query.Where("project_id IS NULL")
-	} else {
-		query = query.Where("project_id = ?", *observation.ProjectID)
-	}
-	if observation.SourceUserID != "" {
-		query = query.Where("source_user_id = ?", observation.SourceUserID)
-	} else {
-		query = query.Where("source_user_id = '' AND source_ref = ?", observation.SourceRef)
-	}
-	if err := query.Find(&existing).Error; err != nil {
-		return nil, err
+		if err := matchQuery("maintainer_id = ?", *observation.MaintainerID).Find(&existing).Error; err != nil {
+			return nil, err
+		}
+		if existing.ID == 0 {
+			// Adopt a row written before the maintainer existed (the
+			// observation is recorded earlier in the sync loop than the
+			// maintainer is created), instead of leaving it orphaned with a
+			// NULL maintainer_id and inserting a duplicate.
+			if err := matchQuery("maintainer_id IS NULL").Find(&existing).Error; err != nil {
+				return nil, err
+			}
+		}
 	}
 	if existing.ID == 0 {
 		if err := s.db.Create(observation).Error; err != nil {
@@ -941,6 +955,7 @@ func (s *SQLStore) UpsertMaintainerIdentityObservation(observation *model.Mainta
 		return observation, nil
 	}
 
+	existing.MaintainerID = observation.MaintainerID
 	existing.SourceRef = observation.SourceRef
 	existing.SourceUserID = observation.SourceUserID
 	existing.Name = observation.Name
@@ -969,6 +984,24 @@ func (s *SQLStore) UpsertMaintainerIdentityObservation(observation *model.Mainta
 		return nil, err
 	}
 	return &existing, nil
+}
+
+// AdoptMaintainerIdentityObservations attaches observation rows recorded
+// before a maintainer existed (maintainer_id NULL) to the maintainer that was
+// subsequently created for the same project and source ref, so the evidence
+// that justified creating the maintainer is not orphaned.
+func (s *SQLStore) AdoptMaintainerIdentityObservations(maintainerID, projectID uint, sourceRef string) (int64, error) {
+	sourceRef = strings.TrimSpace(sourceRef)
+	if maintainerID == 0 {
+		return 0, fmt.Errorf("maintainer id is required")
+	}
+	if sourceRef == "" {
+		return 0, fmt.Errorf("source ref is required")
+	}
+	result := s.db.Model(&model.MaintainerIdentityObservation{}).
+		Where("maintainer_id IS NULL AND project_id = ? AND source_ref = ?", projectID, sourceRef).
+		Update("maintainer_id", maintainerID)
+	return result.RowsAffected, result.Error
 }
 
 func (s *SQLStore) GetLatestMaintainerIdentityObservation(source string, maintainerID uint) (*model.MaintainerIdentityObservation, error) {

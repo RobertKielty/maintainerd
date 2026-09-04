@@ -653,3 +653,73 @@ func TestUpsertMaintainerIdentityObservationUpdatesProfileAndProvenanceFields(t 
 	assert.Equal(t, "https://github.com/example-org/.project/pull/42", updated.SourcePRURL)
 	assert.Equal(t, "approved", updated.SourceReviewState)
 }
+
+// An observation recorded before its maintainer existed carries a NULL
+// maintainer_id. A later upsert for the same source/project/ref that does
+// know the maintainer must adopt that row, not insert a duplicate next to it.
+func TestUpsertMaintainerIdentityObservationAdoptsOrphanRow(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewSQLStore(db)
+
+	projectID := uint(7)
+	orphan, err := store.UpsertMaintainerIdentityObservation(&model.MaintainerIdentityObservation{
+		ProjectID:   &projectID,
+		Source:      "dot-project",
+		SourceRef:   "github:example-handle",
+		MatchStatus: "matched",
+		ObservedAt:  time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, orphan.MaintainerID)
+
+	maintainerID := uint(31)
+	adopted, err := store.UpsertMaintainerIdentityObservation(&model.MaintainerIdentityObservation{
+		MaintainerID: &maintainerID,
+		ProjectID:    &projectID,
+		Source:       "dot-project",
+		SourceRef:    "github:example-handle",
+		MatchStatus:  "matched",
+		ObservedAt:   time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, orphan.ID, adopted.ID, "upsert must adopt the orphan row, not create a duplicate")
+	require.NotNil(t, adopted.MaintainerID)
+	assert.Equal(t, maintainerID, *adopted.MaintainerID)
+
+	var count int64
+	require.NoError(t, db.Model(&model.MaintainerIdentityObservation{}).Count(&count).Error)
+	assert.Equal(t, int64(1), count)
+}
+
+func TestAdoptMaintainerIdentityObservations(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewSQLStore(db)
+
+	projectID := uint(7)
+	for _, source := range []string{"dot-project", "foundation-csv"} {
+		_, err := store.UpsertMaintainerIdentityObservation(&model.MaintainerIdentityObservation{
+			ProjectID:   &projectID,
+			Source:      source,
+			SourceRef:   "github:example-handle",
+			MatchStatus: "matched",
+			ObservedAt:  time.Now().UTC(),
+		})
+		require.NoError(t, err)
+	}
+	_, err := store.UpsertMaintainerIdentityObservation(&model.MaintainerIdentityObservation{
+		ProjectID:   &projectID,
+		Source:      "dot-project",
+		SourceRef:   "github:other-handle",
+		MatchStatus: "matched",
+		ObservedAt:  time.Now().UTC(),
+	})
+	require.NoError(t, err)
+
+	adopted, err := store.AdoptMaintainerIdentityObservations(31, projectID, "github:example-handle")
+	require.NoError(t, err)
+	assert.Equal(t, int64(2), adopted, "both sources for the handle must be adopted")
+
+	var remaining int64
+	require.NoError(t, db.Model(&model.MaintainerIdentityObservation{}).Where("maintainer_id IS NULL").Count(&remaining).Error)
+	assert.Equal(t, int64(1), remaining, "the unrelated handle's row must stay unadopted")
+}
