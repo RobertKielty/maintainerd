@@ -305,16 +305,19 @@ func namePresent(body, name string) bool {
 // introduced it. An unresolvable ref (gist-hosted, no resolver configured)
 // records ReviewStateUnknown rather than being treated as unreviewed.
 func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver *provenance.Resolver, p model.Project, m model.Maintainer, handle string, handleLocations map[string][]int, owner, repo, ref, path string, refResolvable bool, observedAt time.Time) {
-	lines := handleLocations[handle]
-	if len(lines) == 0 {
-		return
+	// handlePresent matches more spellings than the location extractor
+	// recognizes (e.g. a bare word in prose), so a match can have no known
+	// line. Record the observation anyway - the evidence that the handle is
+	// in the file stands - just without line-level provenance.
+	line := 0
+	if lines := handleLocations[handle]; len(lines) > 0 {
+		line = lines[0]
 	}
-	line := lines[0]
 
 	var prov provenance.LineProvenance
 	reviewState := provenance.ReviewStateUnknown
 	lineURL := ""
-	if refResolvable {
+	if refResolvable && line > 0 {
 		// ref is the caller's pinned snapshot commit when one could be
 		// resolved (falling back to the branch name), so the permalink and
 		// the blame evidence describe the same file state.
