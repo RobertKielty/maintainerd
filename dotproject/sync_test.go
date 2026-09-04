@@ -467,6 +467,8 @@ func TestSyncAllStopsCleanlyWhenRunContextExpires(t *testing.T) {
 	assert.Equal(t, 1, summary.Synced)
 	assert.Equal(t, 0, summary.Errored)
 	assert.Len(t, summary.WarningSummaries, 1)
+	assert.NotContains(t, store.persisted, uint(2),
+		"a project interrupted by the run deadline must not be persisted as errored with a fresh sync timestamp - that would misreport it and push it to the back of the anti-starvation order")
 }
 
 func TestSyncAllTreatsRequestTimeoutAsProjectError(t *testing.T) {

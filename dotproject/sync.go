@@ -297,6 +297,15 @@ func (s *Syncer) syncProject(ctx context.Context, project model.Project) (string
 
 	result, err := s.Discoverer.Discover(ctx, project)
 	if err != nil {
+		// An exhausted run deadline is a clean stop, not a broken project:
+		// persisting AdoptionStatusError with a fresh DotProjectLastSyncedAt
+		// here would mark an unprocessed project as errored and push it to
+		// the freshest end of the anti-starvation order, so it would also be
+		// retried last next run. Leave it untouched for the caller's
+		// stopped-early branch.
+		if ctx.Err() != nil {
+			return AdoptionStatusError, EnrichmentSummary{}, AutoAddSummary{}, nil, err
+		}
 		status := AdoptionStatusError
 		state := &model.DotProjectSyncState{
 			ProjectID:       project.ID,
