@@ -413,19 +413,29 @@ func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, gith
 	if err != nil {
 		return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
 	}
-	confidence := "strong"
-	reason := "single LFX user match"
+	// Start weak and grant strong only for corroborated matches, mirroring
+	// lfx.confidenceFor: the email fallback can match a secondary address
+	// while returning a profile whose primary email differs, and that
+	// uncorroborated profile must not read as strong (it feeds auto-add).
+	confidence := "weak"
+	var reason string
 	switch {
 	case matchedByUsername:
-		confidence = "weak"
 		reason = "single LFX user match by username only"
-	case matchedByGitHubID && !strings.EqualFold(strings.TrimSpace(user.Type), "contact"):
+	case matchedByGitHubID && strings.EqualFold(strings.TrimSpace(user.Type), "contact"):
+		confidence = "strong"
+		reason = "single LFX user match by GitHub ID on a claimed (contact) profile"
+	case matchedByGitHubID:
 		// A bare GitHub-ID match on a "lead" (a stale, never-claimed
 		// Salesforce row - see lfx/LFX-USER-API-NOTES.MD finding 8) must not
 		// read as strong; the identity loop below can still upgrade it to
 		// exact, mirroring lfx.confidenceFor.
-		confidence = "weak"
 		reason = "single LFX user match by GitHub ID on an unclaimed (lead) profile"
+	case email != "" && strings.EqualFold(strings.TrimSpace(user.Email), email):
+		confidence = "strong"
+		reason = "single LFX user match by corroborated email"
+	default:
+		reason = "single LFX user match by email without a corroborating primary email"
 	}
 	result := dotproject.LFXIdentityResult{
 		UserID:     strings.TrimSpace(user.ID),

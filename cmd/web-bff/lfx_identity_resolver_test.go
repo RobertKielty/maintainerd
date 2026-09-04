@@ -71,7 +71,7 @@ func TestLFXIdentityResolverGitHubIDMatchStaysStrong(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, "strong", result.Confidence, "a real GithubID match must keep its existing strong confidence, unaffected by the new username fallback")
-	assert.Equal(t, "single LFX user match", result.Reason)
+	assert.Equal(t, "single LFX user match by GitHub ID on a claimed (contact) profile", result.Reason)
 }
 
 // fakeUsernameOnlyClientWithGitHubID simulates a record actually found via
@@ -111,4 +111,62 @@ func TestLFXIdentityResolverGitHubIDMatchOnLeadDemotesToWeak(t *testing.T) {
 
 	assert.Equal(t, "weak", result.Confidence, "a bare GithubID match on a lead (unclaimed) profile is stale Salesforce data and must not read as strong")
 	assert.Equal(t, "single LFX user match by GitHub ID on an unclaimed (lead) profile", result.Reason)
+}
+
+// fakeEmailFallbackClient simulates the email fallback matching a secondary
+// address: the GitHub-ID search misses, the email search hits, but the
+// returned profile's primary email differs from the queried one.
+type fakeEmailFallbackClient struct {
+	emailMatch lfx.User
+}
+
+func (f *fakeEmailFallbackClient) SearchUsers(_ context.Context, query lfx.UserSearch) ([]lfx.User, error) {
+	if query.Email != "" {
+		return []lfx.User{f.emailMatch}, nil
+	}
+	return nil, nil
+}
+
+func (f *fakeEmailFallbackClient) GetUserIdentities(context.Context, string) ([]lfx.Identity, error) {
+	return nil, nil
+}
+
+func TestLFXIdentityResolverEmailFallbackWithoutCorroborationIsWeak(t *testing.T) {
+	t.Parallel()
+
+	resolver := lfxIdentityResolver{
+		client: &fakeEmailFallbackClient{
+			emailMatch: lfx.User{
+				ID:       "sfid-fixture-5",
+				Username: "fixture-other",
+				Email:    "primary@example.org",
+				Type:     "contact",
+			},
+		},
+	}
+
+	result, err := resolver.ResolveMaintainerIdentity(context.Background(), "fixture-handle", "secondary@example.org")
+	require.NoError(t, err)
+	assert.Equal(t, "weak", result.Confidence, "an email match whose returned primary email differs from the query is uncorroborated and must not feed auto-add as strong")
+	assert.Equal(t, "single LFX user match by email without a corroborating primary email", result.Reason)
+}
+
+func TestLFXIdentityResolverEmailFallbackWithMatchingPrimaryEmailIsStrong(t *testing.T) {
+	t.Parallel()
+
+	resolver := lfxIdentityResolver{
+		client: &fakeEmailFallbackClient{
+			emailMatch: lfx.User{
+				ID:       "sfid-fixture-6",
+				Username: "fixture-other",
+				Email:    "MAINTAINER@example.org",
+				Type:     "contact",
+			},
+		},
+	}
+
+	result, err := resolver.ResolveMaintainerIdentity(context.Background(), "fixture-handle", "maintainer@example.org")
+	require.NoError(t, err)
+	assert.Equal(t, "strong", result.Confidence)
+	assert.Equal(t, "single LFX user match by corroborated email", result.Reason)
 }
