@@ -954,6 +954,17 @@ func (s *SQLStore) UpsertMaintainerIdentityObservation(observation *model.Mainta
 	existing.Confidence = observation.Confidence
 	existing.RawPayload = observation.RawPayload
 	existing.ObservedAt = observation.ObservedAt
+	existing.SourceUserType = observation.SourceUserType
+	existing.SourceGitHubID = observation.SourceGitHubID
+	existing.SourceLastModifiedAt = observation.SourceLastModifiedAt
+	existing.IdentityCount = observation.IdentityCount
+	existing.SourceFilePath = observation.SourceFilePath
+	existing.SourceLine = observation.SourceLine
+	existing.SourceCommitSHA = observation.SourceCommitSHA
+	existing.SourceLineURL = observation.SourceLineURL
+	existing.SourcePRNumber = observation.SourcePRNumber
+	existing.SourcePRURL = observation.SourcePRURL
+	existing.SourceReviewState = observation.SourceReviewState
 	if err := s.db.Save(&existing).Error; err != nil {
 		return nil, err
 	}

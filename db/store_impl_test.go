@@ -592,3 +592,64 @@ func TestUpsertRemoteUserTeam(t *testing.T) {
 func strPtr(value string) *string {
 	return &value
 }
+
+// The update branch of the upsert must carry every column a caller can set;
+// dropping fields there silently freezes existing production rows at their
+// pre-migration values while fresh rows (which go through Create) look fine.
+func TestUpsertMaintainerIdentityObservationUpdatesProfileAndProvenanceFields(t *testing.T) {
+	db := setupTestDB(t)
+	store := NewSQLStore(db)
+
+	maintainerID := uint(1)
+	projectID := uint(1)
+	created, err := store.UpsertMaintainerIdentityObservation(&model.MaintainerIdentityObservation{
+		MaintainerID: &maintainerID,
+		ProjectID:    &projectID,
+		Source:       "lfx",
+		SourceRef:    "github:example-handle",
+		SourceUserID: "user-1",
+		MatchStatus:  "matched",
+		Confidence:   "weak",
+		ObservedAt:   time.Now().UTC(),
+	})
+	require.NoError(t, err)
+
+	lastModified := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	updated, err := store.UpsertMaintainerIdentityObservation(&model.MaintainerIdentityObservation{
+		MaintainerID:         &maintainerID,
+		ProjectID:            &projectID,
+		Source:               "lfx",
+		SourceRef:            "github:example-handle",
+		SourceUserID:         "user-1",
+		MatchStatus:          "chosen",
+		Confidence:           "strong",
+		ObservedAt:           time.Now().UTC(),
+		SourceUserType:       "contact",
+		SourceGitHubID:       "example-handle",
+		SourceLastModifiedAt: &lastModified,
+		IdentityCount:        2,
+		SourceFilePath:       "maintainers.yaml",
+		SourceLine:           12,
+		SourceCommitSHA:      "abc123",
+		SourceLineURL:        "https://github.com/example-org/.project/blob/abc123/maintainers.yaml#L12",
+		SourcePRNumber:       42,
+		SourcePRURL:          "https://github.com/example-org/.project/pull/42",
+		SourceReviewState:    "approved",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, created.ID, updated.ID, "second upsert must update the existing row, not create a new one")
+	assert.Equal(t, "chosen", updated.MatchStatus)
+	assert.Equal(t, "contact", updated.SourceUserType)
+	assert.Equal(t, "example-handle", updated.SourceGitHubID)
+	require.NotNil(t, updated.SourceLastModifiedAt)
+	assert.True(t, updated.SourceLastModifiedAt.Equal(lastModified))
+	assert.Equal(t, 2, updated.IdentityCount)
+	assert.Equal(t, "maintainers.yaml", updated.SourceFilePath)
+	assert.Equal(t, 12, updated.SourceLine)
+	assert.Equal(t, "abc123", updated.SourceCommitSHA)
+	assert.Equal(t, "https://github.com/example-org/.project/blob/abc123/maintainers.yaml#L12", updated.SourceLineURL)
+	assert.Equal(t, 42, updated.SourcePRNumber)
+	assert.Equal(t, "https://github.com/example-org/.project/pull/42", updated.SourcePRURL)
+	assert.Equal(t, "approved", updated.SourceReviewState)
+}
