@@ -132,14 +132,12 @@ func main() {
 		log.Fatalf("dot-project sync failed: %v", err)
 	}
 	// Post-run bookkeeping must not reuse the run's context: after a clean
-	// stopped-early return it is already exhausted, and the gist publish or
-	// metrics collection would convert the partial success into a failed run.
-	postCtx := ctx
-	if ctx.Err() != nil {
-		var cancelPost context.CancelFunc
-		postCtx, cancelPost = context.WithTimeout(context.Background(), 2*time.Minute)
-		defer cancelPost()
-	}
+	// stopped-early return it is already exhausted, and even a run that
+	// finished just inside the deadline leaves only milliseconds - either
+	// way the gist publish or metrics collection would convert a successful
+	// sync into a failed run.
+	postCtx, cancelPost := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelPost()
 	if cfg.WriteGist {
 		gist, err := publishDotProjectGist(postCtx, client, cfg, summary.GistReportRows)
 		if err != nil {
