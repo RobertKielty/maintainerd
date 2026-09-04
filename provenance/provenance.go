@@ -45,11 +45,17 @@ type Resolver struct {
 
 	mu        sync.Mutex
 	blameByFK map[fileKey][]blameRange
-	prBySHA   map[string]prInfo
+	prByCK    map[commitKey]prInfo
 }
 
 type fileKey struct {
 	owner, repo, ref, path string
+}
+
+// commitKey scopes the PR cache to a repository: the same commit SHA exists
+// in an upstream repo and its forks, but the associated PRs differ.
+type commitKey struct {
+	owner, repo, sha string
 }
 
 type blameRange struct {
@@ -68,7 +74,7 @@ func NewResolver(client *github.Client) *Resolver {
 	return &Resolver{
 		Client:    client,
 		blameByFK: make(map[fileKey][]blameRange),
-		prBySHA:   make(map[string]prInfo),
+		prByCK:    make(map[commitKey]prInfo),
 	}
 }
 
@@ -137,8 +143,10 @@ func (r *Resolver) blame(ctx context.Context, owner, repo, ref, path string) ([]
 }
 
 func (r *Resolver) prForCommit(ctx context.Context, owner, repo, sha string) (prInfo, error) {
+	key := commitKey{owner: owner, repo: repo, sha: sha}
+
 	r.mu.Lock()
-	if info, ok := r.prBySHA[sha]; ok {
+	if info, ok := r.prByCK[key]; ok {
 		r.mu.Unlock()
 		return info, nil
 	}
@@ -150,7 +158,7 @@ func (r *Resolver) prForCommit(ctx context.Context, owner, repo, sha string) (pr
 	}
 
 	r.mu.Lock()
-	r.prBySHA[sha] = info
+	r.prByCK[key] = info
 	r.mu.Unlock()
 	return info, nil
 }
@@ -160,28 +168,46 @@ func (r *Resolver) fetchPRForCommit(ctx context.Context, owner, repo, sha string
 	if err != nil {
 		return prInfo{}, fmt.Errorf("list pull requests for commit: %w", err)
 	}
-	if len(prs) == 0 {
+	// Only a merged PR can have introduced the commit to the blamed branch;
+	// a commit pushed directly can still be *associated* with an open or
+	// closed-unmerged PR, whose review state must not be inherited.
+	var pr *github.PullRequest
+	for _, candidate := range prs {
+		if candidate.MergedAt != nil {
+			pr = candidate
+			break
+		}
+	}
+	if pr == nil {
 		return prInfo{reviewState: ReviewStateDirectPush}, nil
 	}
-	pr := prs[0]
 	info := prInfo{
 		number: pr.GetNumber(),
 		url:    pr.GetHTMLURL(),
 	}
 
-	reviews, _, err := r.Client.PullRequests.ListReviews(ctx, owner, repo, pr.GetNumber(), nil)
-	if err != nil {
-		// A failed review lookup is unresolvable, not negative evidence - it
-		// must not surface as an error that aborts resolution of the PR
-		// number/URL we already have.
-		info.reviewState = ReviewStateUnknown
-		return info, nil //nolint:nilerr
-	}
-	for _, review := range reviews {
-		if strings.EqualFold(review.GetState(), "APPROVED") {
-			info.reviewState = ReviewStateApproved
-			return info, nil
+	// An approving review can sit on any page; stopping at the first page
+	// would persist a reviewed PR as "unreviewed" and lower confidence.
+	opts := &github.ListOptions{PerPage: 100}
+	for {
+		reviews, resp, err := r.Client.PullRequests.ListReviews(ctx, owner, repo, pr.GetNumber(), opts)
+		if err != nil {
+			// A failed review lookup is unresolvable, not negative evidence - it
+			// must not surface as an error that aborts resolution of the PR
+			// number/URL we already have.
+			info.reviewState = ReviewStateUnknown
+			return info, nil //nolint:nilerr
 		}
+		for _, review := range reviews {
+			if strings.EqualFold(review.GetState(), "APPROVED") {
+				info.reviewState = ReviewStateApproved
+				return info, nil
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
 	}
 	info.reviewState = ReviewStateUnreviewed
 	return info, nil

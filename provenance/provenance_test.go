@@ -92,7 +92,12 @@ func (f *fakeGitHubServer) handler() http.HandlerFunc {
 		case "/repos/example-org/example-repo/commits/deadbeef/pulls":
 			f.prCalls++
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`[{"number":42,"html_url":"https://github.com/example-org/example-repo/pull/42"}]`))
+			// An unmerged PR listed first must be skipped: only a merged PR can
+			// have introduced the commit to the blamed branch.
+			_, _ = w.Write([]byte(`[
+				{"number":41,"html_url":"https://github.com/example-org/example-repo/pull/41"},
+				{"number":42,"html_url":"https://github.com/example-org/example-repo/pull/42","merged_at":"2026-01-02T03:04:05Z"}
+			]`))
 		case "/repos/example-org/example-repo/pulls/42/reviews":
 			f.reviewCalls++
 			w.Header().Set("Content-Type", "application/json")
