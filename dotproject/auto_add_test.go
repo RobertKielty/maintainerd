@@ -386,3 +386,18 @@ func TestAutoMaintainerAdderSkipsFoundationObservationWhenCSVGateOff(t *testing.
 		assert.NotEqual(t, FoundationCSVSource, observation.Source, "no foundation-csv observation may be written when the CSV was never consulted")
 	}
 }
+
+func TestFoundationCSVPathFollowsConfiguredSource(t *testing.T) {
+	t.Parallel()
+
+	custom := &AutoMaintainerAdder{Foundation: &FoundationMaintainerIndex{
+		SourceURL: "https://github.com/example-org/foundation/blob/abc123/data/region/maintainers.csv",
+	}}
+	assert.Equal(t, "data/region/maintainers.csv", custom.foundationCSVPath(),
+		"SourceFilePath must follow the configured CSV path, not a hard-coded default")
+
+	unparseable := &AutoMaintainerAdder{Foundation: &FoundationMaintainerIndex{SourceURL: "not-a-blob-url"}}
+	assert.Equal(t, "project-maintainers.csv", unparseable.foundationCSVPath())
+
+	assert.Equal(t, "project-maintainers.csv", (&AutoMaintainerAdder{}).foundationCSVPath())
+}

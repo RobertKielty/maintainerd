@@ -344,7 +344,7 @@ func (a *AutoMaintainerAdder) writeFoundationObservation(ctx context.Context, pr
 		Confidence:        confidence,
 		RawPayload:        string(raw),
 		ObservedAt:        now,
-		SourceFilePath:    "project-maintainers.csv",
+		SourceFilePath:    a.foundationCSVPath(),
 		SourceLine:        record.LineNumber,
 		SourceCommitSHA:   prov.CommitSHA,
 		SourceLineURL:     a.foundationLineURL(record),
@@ -367,6 +367,19 @@ func (a *AutoMaintainerAdder) writeFoundationObservation(ctx context.Context, pr
 // resolver configured, or an API error) reports ReviewStateUnknown rather
 // than treating the line as unreviewed - an unresolvable source must never
 // read as negative evidence.
+// foundationCSVPath reports the path of the CSV file actually consulted,
+// parsed from the index's source URL, so the stored SourceFilePath agrees
+// with SourceLineURL and the blame lookup when a non-default CSV path is
+// configured. The well-known default only stands in when no URL is parseable.
+func (a *AutoMaintainerAdder) foundationCSVPath() string {
+	if a.Foundation != nil {
+		if _, _, _, path, ok := provenance.ParseGitHubBlobURL(a.Foundation.SourceURL); ok && strings.TrimSpace(path) != "" {
+			return path
+		}
+	}
+	return "project-maintainers.csv"
+}
+
 func (a *AutoMaintainerAdder) resolveFoundationProvenance(ctx context.Context, record FoundationMaintainerRecord) (provenance.LineProvenance, string) {
 	if a.Provenance == nil || a.Foundation == nil {
 		return provenance.LineProvenance{}, provenance.ReviewStateUnknown
