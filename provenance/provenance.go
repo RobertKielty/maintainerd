@@ -45,7 +45,7 @@ type Resolver struct {
 
 	mu        sync.Mutex
 	blameByFK map[fileKey]blameResult
-	prByCK    map[commitKey]prInfo
+	prByCK    map[commitKey]prResult
 }
 
 // blameResult caches failures alongside successes: a rate-limited or broken
@@ -78,12 +78,21 @@ type prInfo struct {
 	reviewState string
 }
 
+// prResult caches failures alongside successes for the same reason
+// blameResult does: a rate-limited PR listing would otherwise be retried
+// once per maintainer line sharing the blamed commit, amplifying the outage
+// despite the one-lookup-per-commit invariant.
+type prResult struct {
+	info prInfo
+	err  error
+}
+
 // NewResolver returns a Resolver backed by client. client must not be nil.
 func NewResolver(client *github.Client) *Resolver {
 	return &Resolver{
 		Client:    client,
 		blameByFK: make(map[fileKey]blameResult),
-		prByCK:    make(map[commitKey]prInfo),
+		prByCK:    make(map[commitKey]prResult),
 	}
 }
 
@@ -152,21 +161,18 @@ func (r *Resolver) prForCommit(ctx context.Context, owner, repo, sha string) (pr
 	key := commitKey{owner: owner, repo: repo, sha: sha}
 
 	r.mu.Lock()
-	if info, ok := r.prByCK[key]; ok {
+	if cached, ok := r.prByCK[key]; ok {
 		r.mu.Unlock()
-		return info, nil
+		return cached.info, cached.err
 	}
 	r.mu.Unlock()
 
 	info, err := r.fetchPRForCommit(ctx, owner, repo, sha)
-	if err != nil {
-		return prInfo{}, err
-	}
 
 	r.mu.Lock()
-	r.prByCK[key] = info
+	r.prByCK[key] = prResult{info: info, err: err}
 	r.mu.Unlock()
-	return info, nil
+	return info, err
 }
 
 func (r *Resolver) fetchPRForCommit(ctx context.Context, owner, repo, sha string) (prInfo, error) {

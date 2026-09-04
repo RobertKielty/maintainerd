@@ -83,6 +83,7 @@ type fakeGitHubServer struct {
 	reviewCalls   int
 	reviewsJSON   string
 	graphQLStatus int    // non-zero: fail the blame query with this HTTP status
+	prStatus      int    // non-zero: fail the commit->PR listing with this HTTP status
 	prHeadSHA     string // non-empty: the merged PR's final head SHA
 
 	// compareStatusByHead maps a review head SHA to the status the compare
@@ -120,6 +121,11 @@ func (f *fakeGitHubServer) handler() http.HandlerFunc {
 			]}}}}}`))
 		case "/repos/example-org/example-repo/commits/deadbeef/pulls":
 			f.prCalls++
+			if f.prStatus != 0 {
+				w.WriteHeader(f.prStatus)
+				_, _ = w.Write([]byte(`{}`))
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			head := ""
 			if f.prHeadSHA != "" {
@@ -379,6 +385,26 @@ func TestResolveCountsFinalHeadApprovalOnSquashMergedPR(t *testing.T) {
 	}
 	if prov.ReviewState != ReviewStateApproved {
 		t.Errorf("ReviewState = %q, want %q (an approval of the PR's final head vouches for a squash-merged line)", prov.ReviewState, ReviewStateApproved)
+	}
+}
+
+func TestResolveCachesFailedPRLookups(t *testing.T) {
+	fake := &fakeGitHubServer{prStatus: http.StatusForbidden}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+
+	resolver := newTestResolver(t, srv)
+	ctx := context.Background()
+
+	// Three lines share the blamed commit; a failing PR listing must be
+	// attempted once, not once per line, or an outage is amplified.
+	for _, line := range []int{2, 10, 25} {
+		if _, err := resolver.Resolve(ctx, "example-org", "example-repo", "main", "MAINTAINERS.md", line); err == nil {
+			t.Fatalf("Resolve line %d: expected error from failed PR listing, got nil", line)
+		}
+	}
+	if fake.prCalls != 1 {
+		t.Errorf("prCalls = %d, want 1 (a failed PR lookup must be cached like a successful one)", fake.prCalls)
 	}
 }
 
