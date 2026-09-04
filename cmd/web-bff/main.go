@@ -2258,14 +2258,17 @@ type maintainerIdentityObservationResponse struct {
 	SourceUserType       string     `json:"sourceUserType,omitempty"`
 	SourceGitHubID       string     `json:"sourceGithubId,omitempty"`
 	SourceLastModifiedAt *time.Time `json:"sourceLastModifiedAt,omitempty"`
-	IdentityCount        int        `json:"identityCount,omitempty"`
-	SourceFilePath       string     `json:"sourceFilePath,omitempty"`
-	SourceLine           int        `json:"sourceLine,omitempty"`
-	SourceCommitSHA      string     `json:"sourceCommitSha,omitempty"`
-	SourceLineURL        string     `json:"sourceLineUrl,omitempty"`
-	SourcePRNumber       int        `json:"sourcePrNumber,omitempty"`
-	SourcePRURL          string     `json:"sourcePrUrl,omitempty"`
-	SourceReviewState    string     `json:"sourceReviewState,omitempty"`
+	// identityCount deliberately has no omitempty: 0 linked identities is
+	// the signal that distinguishes a bare lead profile from a corroborated
+	// one, and omitting it renders as unknown instead.
+	IdentityCount     int    `json:"identityCount"`
+	SourceFilePath    string `json:"sourceFilePath,omitempty"`
+	SourceLine        int    `json:"sourceLine,omitempty"`
+	SourceCommitSHA   string `json:"sourceCommitSha,omitempty"`
+	SourceLineURL     string `json:"sourceLineUrl,omitempty"`
+	SourcePRNumber    int    `json:"sourcePrNumber,omitempty"`
+	SourcePRURL       string `json:"sourcePrUrl,omitempty"`
+	SourceReviewState string `json:"sourceReviewState,omitempty"`
 }
 
 type maintainerServiceResponse struct {

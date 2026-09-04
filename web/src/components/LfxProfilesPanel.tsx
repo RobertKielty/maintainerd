@@ -131,7 +131,7 @@ export default function LfxProfilesPanel({ observations }: LfxProfilesPanelProps
                     </td>
                     <td>{obs.companyName || "—"}</td>
                     <td>{obs.email || "—"}</td>
-                    <td>{obs.identityCount ?? "—"}</td>
+                    <td>{obs.matchStatus === "error" ? "—" : obs.identityCount ?? "—"}</td>
                     <td className={styles.dateCell}>
                       {formatDateTime(obs.sourceLastModifiedAt)}
                     </td>
