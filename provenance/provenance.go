@@ -239,7 +239,10 @@ func (r *Resolver) fetchBlame(ctx context.Context, owner, repo, ref, path string
 		"variables": map[string]string{
 			"owner": owner,
 			"repo":  repo,
-			"expr":  ref + ":" + path,
+			// The expression must resolve to a Commit for the "... on Commit"
+			// fragment to match; "ref:path" resolves to a Blob, which GitHub
+			// returns as null here. The path goes to blame(path:) only.
+			"expr": ref,
 		},
 	})
 	if err != nil {

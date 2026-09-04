@@ -2,9 +2,12 @@ package provenance
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/google/go-github/v55/github"
@@ -85,6 +88,20 @@ func (f *fakeGitHubServer) handler() http.HandlerFunc {
 		switch r.URL.Path {
 		case "/api/graphql":
 			f.graphQLCalls++
+			// The object expression must be a bare commit-ish: "ref:path"
+			// resolves to a Blob on the real API, so the Commit fragment
+			// (and therefore blame) silently returns nothing.
+			body, _ := io.ReadAll(r.Body)
+			var q struct {
+				Variables struct {
+					Expr string `json:"expr"`
+				} `json:"variables"`
+			}
+			if err := json.Unmarshal(body, &q); err == nil && strings.Contains(q.Variables.Expr, ":") {
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = w.Write([]byte(`{"data":{"repository":{"object":null}}}`))
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"data":{"repository":{"object":{"blame":{"ranges":[
 				{"startingLine":1,"endingLine":50,"commit":{"oid":"deadbeef"}}
