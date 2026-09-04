@@ -77,27 +77,18 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 		}
 
 		refOwner, refRepo, refBranch, refPath, refResolvable := provenance.ParseGitHubBlobURL(ref)
-		// Pin blame lookups, permalinks, AND the fetched body to one snapshot
-		// of the branch: blame line numbers describe the file as of the ref
-		// they were resolved at, so fetching the body from the moving branch
-		// name would let line numbers and review evidence drift apart if the
-		// branch advances between requests.
-		refSnapshot := refBranch
-		fetchURL := ref
-		if refResolvable && resolver != nil {
-			if b, _, err := resolver.Client.Repositories.GetBranch(ctx, refOwner, refRepo, refBranch, false); err != nil {
-				log.Printf("sanitize: could not pin %s/%s@%s to a commit, falling back to the branch name: %v", refOwner, refRepo, refBranch, err)
-			} else if sha := strings.TrimSpace(b.GetCommit().GetSHA()); sha != "" {
-				refSnapshot = sha
-				fetchURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", refOwner, refRepo, refSnapshot, refPath)
-			}
-		}
 
 		cache, cacheErr := store.GetMaintainerRefCache(p.ID)
 		if cacheErr != nil {
 			log.Printf("sanitize: could not load cache for project %d (%s): %v", p.ID, p.Name, cacheErr)
 		}
-		body, meta, notModified, err := fetchMaintainerRef(ctx, client, fetchURL, cache)
+		// The conditional fetch runs against the branch URL so its ETag stays
+		// comparable run to run. This job runs every 5 minutes; on a 304 the
+		// file is byte-identical to what the last run already resolved, so
+		// GetBranch pinning and per-line blame/PR/review resolution are
+		// skipped entirely and stored provenance is reused instead of burning
+		// GitHub API budget re-deriving the same answer.
+		body, meta, notModified, err := fetchMaintainerRef(ctx, client, ref, cache)
 		if err != nil {
 			log.Printf("sanitize: skip project %d (%s), fetch error: %v", p.ID, p.Name, err)
 			continue
@@ -105,6 +96,26 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 		if body == "" {
 			log.Printf("sanitize: skip project %d (%s), empty body", p.ID, p.Name)
 			continue
+		}
+
+		// Pin blame lookups, permalinks, AND the analyzed body to one snapshot
+		// of the branch: blame line numbers describe the file as of the ref
+		// they were resolved at, so working from the moving branch name would
+		// let line numbers and review evidence drift apart if the branch
+		// advances between requests.
+		refSnapshot := refBranch
+		if !notModified && refResolvable && resolver != nil {
+			if b, _, err := resolver.Client.Repositories.GetBranch(ctx, refOwner, refRepo, refBranch, false); err != nil {
+				log.Printf("sanitize: could not pin %s/%s@%s to a commit, falling back to the branch name: %v", refOwner, refRepo, refBranch, err)
+			} else if sha := strings.TrimSpace(b.GetCommit().GetSHA()); sha != "" {
+				refSnapshot = sha
+				pinnedURL := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", refOwner, refRepo, refSnapshot, refPath)
+				if pinnedBody, _, _, err := fetchMaintainerRef(ctx, client, pinnedURL, nil); err != nil {
+					log.Printf("sanitize: could not fetch pinned snapshot %s, analyzing the branch body instead: %v", pinnedURL, err)
+				} else if pinnedBody != "" {
+					body = pinnedBody
+				}
+			}
 		}
 
 		projectStatuses, err := store.ListMaintainerProjectStatuses(p.ID)
@@ -133,7 +144,7 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 			}
 
 			if matchedByHandle {
-				writeLegacyRefObservation(ctx, store, resolver, p, m, handle, handleLocations, refOwner, refRepo, refSnapshot, refPath, refResolvable, observedAt)
+				writeLegacyRefObservation(ctx, store, resolver, p, m, handle, handleLocations, refOwner, refRepo, refSnapshot, refPath, refResolvable, notModified, observedAt)
 			}
 
 			currentStatus := projectStatuses[m.ID]
@@ -304,7 +315,7 @@ func namePresent(body, name string) bool {
 // the ref is a github.com blob URL - the commit, PR, and review state that
 // introduced it. An unresolvable ref (gist-hosted, no resolver configured)
 // records ReviewStateUnknown rather than being treated as unreviewed.
-func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver *provenance.Resolver, p model.Project, m model.Maintainer, handle string, handleLocations map[string][]int, owner, repo, ref, path string, refResolvable bool, observedAt time.Time) {
+func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver *provenance.Resolver, p model.Project, m model.Maintainer, handle string, handleLocations map[string][]int, owner, repo, ref, path string, refResolvable bool, reuseProvenance bool, observedAt time.Time) {
 	// handlePresent matches more spellings than the location extractor
 	// recognizes (e.g. a bare word in prose), so a match can have no known
 	// line. Record the observation anyway - the evidence that the handle is
@@ -317,7 +328,28 @@ func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver
 	var prov provenance.LineProvenance
 	reviewState := provenance.ReviewStateUnknown
 	lineURL := ""
-	if refResolvable && line > 0 {
+	if reuseProvenance {
+		// The file is unchanged since the last run (HTTP 304), so the
+		// line-level evidence recorded then still describes it; only the
+		// observation timestamp needs refreshing. Rows whose earlier
+		// resolution came back unknown (rate-limited, transient failure)
+		// fall through and are retried below.
+		existing, err := store.GetLatestMaintainerIdentityObservationByRef(provenance.SourceLegacyRef, p.ID, "github:"+handle)
+		if err != nil {
+			log.Printf("sanitize: could not load stored legacy-ref observation for maintainer %d (%s) project %d: %v", m.ID, handle, p.ID, err)
+		} else if existing != nil && existing.SourceReviewState != "" && existing.SourceReviewState != provenance.ReviewStateUnknown {
+			prov = provenance.LineProvenance{
+				CommitSHA: existing.SourceCommitSHA,
+				PRNumber:  existing.SourcePRNumber,
+				PRURL:     existing.SourcePRURL,
+			}
+			reviewState = existing.SourceReviewState
+			line = existing.SourceLine
+			lineURL = existing.SourceLineURL
+			path = existing.SourceFilePath
+		}
+	}
+	if reviewState == provenance.ReviewStateUnknown && refResolvable && line > 0 {
 		// ref is the caller's pinned snapshot commit when one could be
 		// resolved (falling back to the branch name), so the permalink and
 		// the blame evidence describe the same file state.
