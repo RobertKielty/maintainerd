@@ -90,3 +90,25 @@ func (f *fakeUsernameOnlyClientWithGitHubID) SearchUsers(_ context.Context, quer
 func (f *fakeUsernameOnlyClientWithGitHubID) GetUserIdentities(context.Context, string) ([]lfx.Identity, error) {
 	return nil, nil
 }
+
+func TestLFXIdentityResolverGitHubIDMatchOnLeadDemotesToWeak(t *testing.T) {
+	t.Parallel()
+
+	resolver := lfxIdentityResolver{
+		client: &fakeUsernameOnlyClientWithGitHubID{
+			githubIDMatch: lfx.User{
+				ID:        "sfid-fixture-7",
+				Username:  "fixture-handle",
+				FirstName: "Stale",
+				LastName:  "Fixture",
+				Type:      "lead",
+			},
+		},
+	}
+
+	result, err := resolver.ResolveMaintainerIdentity(context.Background(), "fixture-handle", "")
+	require.NoError(t, err)
+
+	assert.Equal(t, "weak", result.Confidence, "a bare GithubID match on a lead (unclaimed) profile is stale Salesforce data and must not read as strong")
+	assert.Equal(t, "single LFX user match by GitHub ID on an unclaimed (lead) profile", result.Reason)
+}

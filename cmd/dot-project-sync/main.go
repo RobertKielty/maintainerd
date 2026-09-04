@@ -370,11 +370,13 @@ func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, gith
 	}
 	var users []lfx.User
 	var err error
+	matchedByGitHubID := false
 	if githubHandle != "" {
 		users, err = r.client.SearchUsers(ctx, lfx.UserSearch{GitHubID: githubHandle, PageSize: 10})
 		if err != nil {
 			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
 		}
+		matchedByGitHubID = len(users) > 0
 	}
 	if len(users) == 0 && email != "" {
 		users, err = r.client.SearchUsers(ctx, lfx.UserSearch{Email: email, PageSize: 10})
@@ -404,9 +406,17 @@ func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, gith
 	}
 	confidence := "strong"
 	reason := "single LFX user match"
-	if matchedByUsername {
+	switch {
+	case matchedByUsername:
 		confidence = "weak"
 		reason = "single LFX user match by username only"
+	case matchedByGitHubID && !strings.EqualFold(strings.TrimSpace(user.Type), "contact"):
+		// A bare GitHub-ID match on a "lead" (a stale, never-claimed
+		// Salesforce row - see lfx/LFX-USER-API-NOTES.MD finding 8) must not
+		// read as strong; the identity loop below can still upgrade it to
+		// exact, mirroring lfx.confidenceFor.
+		confidence = "weak"
+		reason = "single LFX user match by GitHub ID on an unclaimed (lead) profile"
 	}
 	result := dotproject.LFXIdentityResult{
 		UserID:     strings.TrimSpace(user.ID),
