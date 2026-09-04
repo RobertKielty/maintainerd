@@ -16,6 +16,7 @@ import (
 	"maintainerd/dotproject"
 	"maintainerd/lfx"
 	"maintainerd/model"
+	"maintainerd/provenance"
 
 	"github.com/google/go-github/v55/github"
 	"go.uber.org/zap"
@@ -110,7 +111,7 @@ func main() {
 		Discoverer: &dotproject.Discoverer{
 			Client: &dotproject.GitHubRepositoryClient{Client: client},
 		},
-		AutoAdder: buildAutoAdder(store, cfg, foundationIndex, lfxIdentityResolver{client: lfxClient}),
+		AutoAdder: buildAutoAdder(store, cfg, foundationIndex, lfxIdentityResolver{client: lfxClient}, client),
 		Enricher:  buildLFXEnricher(store, lfxClient),
 		MaintainersFileVisitor: func(project model.Project, file dotproject.FileDiscovery) {
 			log.Printf("%s has a %s file", projectLabel(project), dotProjectFileURL(file))
@@ -282,11 +283,12 @@ func foundationCSVBlobURL(owner, repo, ref, path string) string {
 	return fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s?plain=1", owner, repo, ref, path)
 }
 
-func buildAutoAdder(store *db.SQLStore, cfg syncConfig, foundation *dotproject.FoundationMaintainerIndex, lfxResolver dotproject.LFXIdentityResolver) dotproject.MaintainerAutoAdder {
+func buildAutoAdder(store *db.SQLStore, cfg syncConfig, foundation *dotproject.FoundationMaintainerIndex, lfxResolver dotproject.LFXIdentityResolver, githubClient *github.Client) dotproject.MaintainerAutoAdder {
 	return &dotproject.AutoMaintainerAdder{
 		Store:              store,
 		Foundation:         foundation,
 		LFX:                lfxResolver,
+		Provenance:         provenance.NewResolver(githubClient),
 		Actor:              cfg.Actor,
 		CheckFoundationCSV: cfg.CheckFoundationCSV,
 		AutoAddMaintainers: cfg.AutoAddMaintainers,

@@ -27,6 +27,7 @@ import (
 	"maintainerd/model"
 	"maintainerd/onboarding"
 	"maintainerd/plugins/fossa"
+	"maintainerd/provenance"
 	"maintainerd/refparse"
 
 	"github.com/google/go-github/v55/github"
@@ -5187,15 +5188,17 @@ func (s *server) runLFXEnrichment(runID string, options lfxEnrichmentRunOptions,
 				Progress:   s.lfxProgressUpdater(runID),
 			}
 		}
+		githubClient := s.githubClientForToken(ctx, s.githubToken)
 		syncer := &dotproject.Syncer{
 			Store: s.store,
 			Discoverer: &dotproject.Discoverer{
-				Client: &dotproject.GitHubRepositoryClient{Client: s.githubClientForToken(ctx, s.githubToken)},
+				Client: &dotproject.GitHubRepositoryClient{Client: githubClient},
 			},
 			AutoAdder: &dotproject.AutoMaintainerAdder{
 				Store:              s.store,
 				Foundation:         foundationIndex,
 				LFX:                lfxIdentityResolver{client: client},
+				Provenance:         provenance.NewResolver(githubClient),
 				Actor:              requestedBy,
 				CheckFoundationCSV: options.CheckFoundationCSV,
 				AutoAddMaintainers: options.AutoAddMaintainers,

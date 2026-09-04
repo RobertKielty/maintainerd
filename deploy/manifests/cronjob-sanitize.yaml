@@ -36,5 +36,14 @@ spec:
             envFrom:
             - secretRef:
                 name: maintainerd-db-env
+            # The provenance resolver (blame/PR/review lookups behind
+            # legacy-ref observations) is optional in code but dead without a
+            # GitHub credential; source it from the shared server secret.
+            env:
+            - name: GITHUB_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: maintainerd-server-env
+                  key: GITHUB_API_TOKEN
             resources: {}
             terminationMessagePolicy: File
