@@ -110,12 +110,14 @@ Each entry is tagged **[LFX]** (a platform-side quirk/bug to be aware of, not ou
    out, and `Account.ID` (the stable Salesforce org identifier that would fix free-text company
    drift) is discarded entirely. *(spec + observed)*
 
-7. **[maintainer-d] `User.GithubID` exists in the payload and we ignore it.** Inherited via `allOf`
-   from `#/definitions/contact-details` (alongside `TwitterID`, `LinkedInID`, `Phone`,
-   `MobilePhone`) — easy to miss reading `#/definitions/user` alone. Observed populated on a real
-   record. `lfx.User` (`lfx/client.go:54-63`) does not model it, so a handle-corroboration signal
-   already present in the payload we fetch is thrown away, and `confidenceFor` reaches for a second
-   round-trip (`GetUserIdentities`) instead. *(spec + observed)*
+7. **[maintainer-d] `User.GithubID` is inherited via `allOf` and easy to miss.** It comes from
+   `#/definitions/contact-details` (alongside `TwitterID`, `LinkedInID`, `Phone`, `MobilePhone`)
+   rather than `#/definitions/user` itself. Observed populated on a real record. `lfx.User` now
+   models it and the enricher persists it as `SourceGitHubID`. The remaining gap is narrower than
+   originally noted: `confidenceFor` does not consult the field directly — handle corroboration
+   still comes from the `GetUserIdentities` round-trip (linked `github` identity) plus the
+   matched-by-GitHub-ID search path, so the in-payload signal could in principle short-circuit
+   that second call but currently does not. *(spec + observed)*
 
 8. **[maintainer-d] `User.Type` is `lead` | `contact`, and this is the "old profile" explanation —
    now reproduced across real maintainer handles, and traced to a live confidence-scoring bug.**

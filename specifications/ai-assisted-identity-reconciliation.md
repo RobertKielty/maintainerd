@@ -25,8 +25,13 @@ extends it rather than duplicating it):
 - **`lfx/` already has a working LFX data client today** — `lfx/client.go`'s `SearchUsers` and
   `GetUserIdentities` call the real `user-service` v2/v1 endpoints (confirmed live; see
   `lfx/LFX-USER-API-NOTES.MD`), and `lfx/enricher.go` uses them for candidate matching. This is not
-  net-new work; it is the seed of `get_openprofile` (see below), with named gaps (unmodeled
-  `Type`/`GithubID`/`Emails` fields, a `lead`-vs-`contact` confidence bug) rather than an absence.
+  net-new work; it is the seed of `get_openprofile` (see below). Since this was written, the
+  `improve-lfx-client` branch closed most of the named gaps: `lfx.User` now models `Type` and
+  `GithubID` (persisted as `SourceUserType`/`SourceGitHubID`), the `lead`-vs-`contact` confidence
+  bug is fixed (a bare GitHub-ID match on a `lead` profile demotes to weak), and multi-profile
+  matches record one row per profile as `chosen`/`duplicate`. Remaining gaps: `Emails` (the
+  secondary-email array) is still unmodeled, and confidence scoring does not consult the
+  in-payload `GithubID` directly (it still round-trips via `GetUserIdentities`).
   `cmd/lfx-client/` is a separate, narrower tool that only scrapes LFX's OpenAPI specs to local
   files - it is not the data client.
 - **`dotproject/auto_add.go` (`AutoMaintainerAdder`)** already reads observations and
