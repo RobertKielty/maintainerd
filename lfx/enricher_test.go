@@ -516,4 +516,5 @@ func TestEnrichCandidatePropagatesFatalIdentityFetchFailure(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "the failing profile's error row must still be recorded before the fatal error propagates")
+	assert.Equal(t, 0, summary.Errored, "a propagated fatal failure is counted by EnrichProject; counting it here too would report one failed profile as two LFX errors")
 }

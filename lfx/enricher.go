@@ -238,7 +238,11 @@ func (e *Enricher) enrichCandidate(ctx context.Context, projectID *uint, candida
 		user := users[0]
 		identities, err := e.Client.GetUserIdentities(ctx, user.ID)
 		if err != nil {
-			if writeErr := e.writeObservation(projectID, candidate, nil, nil, now, "error", err.Error(), ""); writeErr != nil {
+			// The search already identified the profile, so record it on the
+			// error row: without SourceUserID the UI's per-profile grouping
+			// cannot tie the failure to the profile, leaving an older
+			// successful row looking current.
+			if writeErr := e.writeObservation(projectID, candidate, &user, nil, now, "error", err.Error(), ""); writeErr != nil {
 				return fmt.Errorf("%w; failed to record LFX error observation: %v", PlatformAccessError(err), writeErr)
 			}
 			return PlatformAccessError(err)
@@ -282,7 +286,10 @@ func (e *Enricher) enrichMultipleMatches(ctx context.Context, projectID *uint, c
 			classified := PlatformAccessError(err)
 			var fatal dotproject.FatalSyncError
 			if errors.As(classified, &fatal) {
-				summary.Errored++
+				// No summary.Errored++ here: EnrichProject counts every
+				// propagated error, so a local increment would report one
+				// failed profile as two LFX errors. The local count is only
+				// for tolerated failures that return nil.
 				if werr := e.writeObservation(projectID, candidate, &user, nil, now, "error", err.Error(), ""); werr != nil {
 					return fmt.Errorf("%w; failed to record LFX error observation for duplicate profile: %v", classified, werr)
 				}
