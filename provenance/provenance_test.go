@@ -121,7 +121,7 @@ func (f *fakeGitHubServer) handler() http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json")
 			reviews := f.reviewsJSON
 			if reviews == "" {
-				reviews = `[{"state":"APPROVED"}]`
+				reviews = `[{"state":"APPROVED","user":{"login":"example-human","type":"User"}}]`
 			}
 			_, _ = w.Write([]byte(reviews))
 		default:
@@ -244,5 +244,28 @@ func TestResolveCountsHumanApprovalAlongsideBotApproval(t *testing.T) {
 	}
 	if prov.ReviewState != ReviewStateApproved {
 		t.Errorf("ReviewState = %q, want %q", prov.ReviewState, ReviewStateApproved)
+	}
+}
+
+func TestResolveIgnoresApprovalWithMissingUser(t *testing.T) {
+	fake := &fakeGitHubServer{
+		// A deleted account leaves a review with a null user; an
+		// unverifiable reviewer identity must not raise provenance to
+		// approved.
+		reviewsJSON: `[
+			{"state":"APPROVED","user":null},
+			{"state":"COMMENTED","user":{"login":"fixture-human","type":"User"}}
+		]`,
+	}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+
+	resolver := newTestResolver(t, srv)
+	prov, err := resolver.Resolve(context.Background(), "example-org", "example-repo", "main", "MAINTAINERS.md", 2)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if prov.ReviewState != ReviewStateUnreviewed {
+		t.Errorf("ReviewState = %q, want %q (an approval with no user is unverifiable and must not count as human review)", prov.ReviewState, ReviewStateUnreviewed)
 	}
 }

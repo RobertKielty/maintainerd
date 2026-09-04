@@ -199,11 +199,13 @@ func (r *Resolver) fetchPRForCommit(ctx context.Context, owner, repo, sha string
 			return info, nil //nolint:nilerr
 		}
 		for _, review := range reviews {
-			// Only a human approval counts: the review state feeds the
-			// documented human-gatekeeper confidence tier, and GitHub Apps /
-			// bot accounts (CI approvers, merge bots) would otherwise raise
-			// an observation to that tier without any human having looked.
-			if strings.EqualFold(review.GetState(), "APPROVED") && !strings.EqualFold(review.GetUser().GetType(), "Bot") {
+			// Only a verifiable human approval counts: the review state feeds
+			// the documented human-gatekeeper confidence tier, and GitHub
+			// Apps / bot accounts (CI approvers, merge bots) would otherwise
+			// raise an observation to that tier without any human having
+			// looked. A review with no user at all (deleted account) is
+			// unverifiable and must not be counted as human either.
+			if review.GetUser() != nil && strings.EqualFold(review.GetState(), "APPROVED") && !strings.EqualFold(review.GetUser().GetType(), "Bot") {
 				info.reviewState = ReviewStateApproved
 				return info, nil
 			}
