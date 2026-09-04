@@ -41,7 +41,7 @@ Add a canonical LFX identifier to `Maintainer` so reports can directly distingui
 LFXUserID string `gorm:"size:128;index"`
 ```
 
-Do not treat the presence of an LFX ID as a maintainer registration gate by itself. It is reporting and enrichment data; project maintainer registration remains governed by inclusion in the "project-maintainers" team in the maintainers.yaml file in a .project repo.
+Do not treat the presence of an LFX ID as a maintainer registration gate by itself. It is reporting and enrichment data; the authoritative membership source for project maintainer registration is inclusion in the "project-maintainers" team in the maintainers.yaml file in a .project repo. Note that the default auto-add policy additionally requires corroboration by cncf/foundation project-maintainers.csv membership (`--check-foundation-csv`, default `true`; an entry with no CSV match is skipped, not auto-added).
 
 Suggested new model:
 
