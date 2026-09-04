@@ -335,8 +335,9 @@ func (s *Syncer) syncProject(ctx context.Context, project model.Project) (string
 				enrichment.Errored++
 			}
 			// Fatality is decided at the source (lfx.PlatformAccessError wraps
-			// only 401/403 and 429 in FatalSyncError); a timeout or 5xx on one
-			// project must not abort the rest of the run.
+			// only 401 and 429 in FatalSyncError; 403 is deliberately nonfatal
+			// because a per-resource ACL denial mid-run must not abort the
+			// rest); a timeout or 5xx on one project must not abort the run.
 			return status, enrichment, AutoAddSummary{}, gistReportRow, err
 		}
 	}
