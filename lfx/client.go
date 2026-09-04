@@ -63,7 +63,10 @@ func PlatformAccessError(err error) error {
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Errorf("LFX Platform request timed out (context deadline exceeded); not a token problem, this is a slow response or the run's overall time budget was exhausted: %w", err)
 	default:
-		return fmt.Errorf("LFX Platform access failed; update LFX_AUTH_TOKEN with a fresh token from %s: %w", TokenRefreshURL, err)
+		// DNS failures, TLS errors, connection resets, and cancellations all
+		// land here; none of them are cured by a fresh token, so the token
+		// guidance stays reserved for the explicit 401/403 branch above.
+		return fmt.Errorf("LFX Platform request failed (transport error, not necessarily a token problem): %w", err)
 	}
 }
 
