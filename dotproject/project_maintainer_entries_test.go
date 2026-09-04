@@ -80,3 +80,18 @@ func TestParseProjectMaintainerEntriesNearMissTeamName(t *testing.T) {
 	assert.Equal(t, ParseStatusInvalidShape, status)
 	assert.Equal(t, "no project-maintainers team found; saw maintainer-like team name(s) that did not match exactly: Project Maintainers", parseErr)
 }
+
+func TestParseProjectMaintainerEntriesRejectsNonScalarMember(t *testing.T) {
+	// A mapping member has no scalar value; silently skipping it would
+	// report a parsed roster missing that maintainer, so the whole file is
+	// rejected as malformed even when other members are valid strings.
+	_, status, parseErr := ParseProjectMaintainerEntries(`maintainers:
+  - teams:
+      - name: project-maintainers
+        members:
+          - alice-example
+          - {github: bob-example}
+`)
+	assert.Equal(t, ParseStatusInvalidShape, status)
+	assert.Equal(t, "project-maintainers member at line 6 is not a plain string", parseErr)
+}

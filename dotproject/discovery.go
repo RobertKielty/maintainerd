@@ -355,6 +355,14 @@ func ParseProjectMaintainerEntries(body string) ([]MaintainerEntry, ParseStatus,
 				continue
 			}
 			for _, member := range membersNode.Content {
+				// A non-scalar member (e.g. `- {github: alice}`) has an
+				// empty Value; skipping it silently would report a parsed
+				// roster missing that maintainer, so the whole file must be
+				// rejected as malformed instead.
+				if member.Kind != yaml.ScalarNode {
+					return nil, ParseStatusInvalidShape, fmt.Sprintf(
+						"project-maintainers member at line %d is not a plain string", member.Line)
+				}
 				normalized := normalizeHandle(member.Value)
 				if normalized == "" {
 					continue
