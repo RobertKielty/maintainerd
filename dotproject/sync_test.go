@@ -3,6 +3,7 @@ package dotproject
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -387,4 +388,79 @@ func TestSyncAllSkipsArchivedAndMaintainerD(t *testing.T) {
 
 func uintPtr(v uint) *uint {
 	return &v
+}
+
+// cancelingDiscoveryRunner cancels the run context while "discovering" one
+// specific project, simulating the run's time budget expiring mid-project.
+type cancelingDiscoveryRunner struct {
+	inner    *fakeDiscoveryRunner
+	cancelOn uint
+	cancel   context.CancelFunc
+}
+
+func (c *cancelingDiscoveryRunner) Discover(ctx context.Context, project model.Project) (*DiscoveryResult, error) {
+	if project.ID == c.cancelOn {
+		c.cancel()
+		return nil, ctx.Err()
+	}
+	return c.inner.Discover(ctx, project)
+}
+
+func TestSyncAllStopsCleanlyWhenRunContextExpires(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+			{Model: gorm.Model{ID: 3}, Name: "Project Three", GitHubOrg: "org-three"},
+		},
+	}
+	syncer := &Syncer{
+		Store: store,
+		Discoverer: &cancelingDiscoveryRunner{
+			inner:    &fakeDiscoveryRunner{results: map[uint]*DiscoveryResult{1: {RepoExists: true}}},
+			cancelOn: 2,
+			cancel:   cancel,
+		},
+	}
+
+	summary, err := syncer.SyncAll(ctx)
+	require.NoError(t, err)
+	assert.True(t, summary.StoppedEarly)
+	assert.Equal(t, 1, summary.RemainingProjects)
+	assert.Equal(t, 1, summary.Synced)
+	assert.Equal(t, 0, summary.Errored)
+	assert.Len(t, summary.WarningSummaries, 1)
+}
+
+func TestSyncAllTreatsRequestTimeoutAsProjectError(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+			{Model: gorm.Model{ID: 3}, Name: "Project Three", GitHubOrg: "org-three"},
+		},
+	}
+	syncer := &Syncer{
+		Store: store,
+		Discoverer: &fakeDiscoveryRunner{
+			results: map[uint]*DiscoveryResult{1: {RepoExists: true}, 3: {RepoExists: true}},
+			// A single slow request surfaces as an error that matches
+			// errors.Is(err, context.DeadlineExceeded) via
+			// http.Client.Timeout; while the run context is healthy this
+			// must stay a per-project error, not end the run.
+			errors: map[uint]error{2: fmt.Errorf("Get \"https://api.github.example\": %w", context.DeadlineExceeded)},
+		},
+	}
+
+	summary, err := syncer.SyncAll(context.Background())
+	require.NoError(t, err)
+	assert.False(t, summary.StoppedEarly)
+	assert.Equal(t, 0, summary.RemainingProjects)
+	assert.Equal(t, 1, summary.Errored)
+	assert.Equal(t, 2, summary.Synced)
 }

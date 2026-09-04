@@ -152,8 +152,13 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 			// must catch the deadline wherever it surfaced - GitHub
 			// discovery returns it as a plain error, not a FatalSyncError,
 			// and counting the rest of the run as errors would misreport an
-			// exhausted time budget as dozens of broken projects.
-			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			// exhausted time budget as dozens of broken projects. The gate
+			// is the run context itself, not the error's shape: a single
+			// slow request also reports errors.Is(err,
+			// context.DeadlineExceeded) via http.Client.Timeout, and that
+			// must stay an ordinary project error while the run has budget
+			// left.
+			if ctx.Err() != nil {
 				// The interrupted project may have already persisted work
 				// (enrichment rows, auto-added maintainers) before the clock
 				// ran out; fold its partial counters into the summary so the
