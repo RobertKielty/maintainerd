@@ -81,6 +81,7 @@ type fakeGitHubServer struct {
 	graphQLCalls int
 	prCalls      int
 	reviewCalls  int
+	reviewsJSON  string
 }
 
 func (f *fakeGitHubServer) handler() http.HandlerFunc {
@@ -118,7 +119,11 @@ func (f *fakeGitHubServer) handler() http.HandlerFunc {
 		case "/repos/example-org/example-repo/pulls/42/reviews":
 			f.reviewCalls++
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = w.Write([]byte(`[{"state":"APPROVED"}]`))
+			reviews := f.reviewsJSON
+			if reviews == "" {
+				reviews = `[{"state":"APPROVED"}]`
+			}
+			_, _ = w.Write([]byte(reviews))
 		default:
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{}`))
@@ -197,5 +202,47 @@ func TestResolveNilClientErrors(t *testing.T) {
 	empty := NewResolver(nil)
 	if _, err := empty.Resolve(context.Background(), "o", "r", "main", "f.md", 1); err == nil {
 		t.Fatal("expected error for resolver with nil client, got nil")
+	}
+}
+
+func TestResolveIgnoresBotApprovals(t *testing.T) {
+	fake := &fakeGitHubServer{
+		// A bot approval must not satisfy the human-gatekeeper tier; with
+		// only bot approvals and human comments the PR counts as unreviewed.
+		reviewsJSON: `[
+			{"state":"APPROVED","user":{"login":"approve-bot[bot]","type":"Bot"}},
+			{"state":"COMMENTED","user":{"login":"fixture-human","type":"User"}}
+		]`,
+	}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+
+	resolver := newTestResolver(t, srv)
+	prov, err := resolver.Resolve(context.Background(), "example-org", "example-repo", "main", "MAINTAINERS.md", 2)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if prov.ReviewState != ReviewStateUnreviewed {
+		t.Errorf("ReviewState = %q, want %q (bot approvals must not count as human review)", prov.ReviewState, ReviewStateUnreviewed)
+	}
+}
+
+func TestResolveCountsHumanApprovalAlongsideBotApproval(t *testing.T) {
+	fake := &fakeGitHubServer{
+		reviewsJSON: `[
+			{"state":"APPROVED","user":{"login":"approve-bot[bot]","type":"Bot"}},
+			{"state":"APPROVED","user":{"login":"fixture-human","type":"User"}}
+		]`,
+	}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+
+	resolver := newTestResolver(t, srv)
+	prov, err := resolver.Resolve(context.Background(), "example-org", "example-repo", "main", "MAINTAINERS.md", 2)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if prov.ReviewState != ReviewStateApproved {
+		t.Errorf("ReviewState = %q, want %q", prov.ReviewState, ReviewStateApproved)
 	}
 }

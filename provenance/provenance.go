@@ -199,7 +199,11 @@ func (r *Resolver) fetchPRForCommit(ctx context.Context, owner, repo, sha string
 			return info, nil //nolint:nilerr
 		}
 		for _, review := range reviews {
-			if strings.EqualFold(review.GetState(), "APPROVED") {
+			// Only a human approval counts: the review state feeds the
+			// documented human-gatekeeper confidence tier, and GitHub Apps /
+			// bot accounts (CI approvers, merge bots) would otherwise raise
+			// an observation to that tier without any human having looked.
+			if strings.EqualFold(review.GetState(), "APPROVED") && !strings.EqualFold(review.GetUser().GetType(), "Bot") {
 				info.reviewState = ReviewStateApproved
 				return info, nil
 			}
