@@ -458,3 +458,23 @@ func TestRankCandidatesIsDeterministicOnFullTie(t *testing.T) {
 	assert.Equal(t, "sfid-aaa", scored[0].user.ID, "a full tie must fall back to a stable SourceUserID ordering")
 	assert.Equal(t, "sfid-zzz", scored[1].user.ID)
 }
+
+// Mixed valid/invalid LastModifiedDate values used to fall back to ID
+// comparison only for the mixed pairs, making the less-func non-transitive -
+// and a non-transitive comparator lets sort place the wrong profile first.
+// Invalid timestamps must sort after every valid one, deterministically.
+func TestRankCandidatesTreatsInvalidTimestampAsOldest(t *testing.T) {
+	t.Parallel()
+
+	scored := []scoredCandidate{
+		{user: User{ID: "sfid-invalid", Type: "contact", LastModifiedDate: "not-a-timestamp"}, confidence: "strong"},
+		{user: User{ID: "sfid-old", Type: "contact", LastModifiedDate: "2024-01-01T00:00:00Z"}, confidence: "strong"},
+		{user: User{ID: "sfid-new", Type: "contact", LastModifiedDate: "2026-01-01T00:00:00Z"}, confidence: "strong"},
+	}
+
+	rankCandidates(scored)
+
+	assert.Equal(t, "sfid-new", scored[0].user.ID)
+	assert.Equal(t, "sfid-old", scored[1].user.ID)
+	assert.Equal(t, "sfid-invalid", scored[2].user.ID, "an unparseable timestamp must rank below every valid one")
+}

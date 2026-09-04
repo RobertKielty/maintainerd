@@ -326,9 +326,13 @@ func rankCandidates(scored []scoredCandidate) {
 		if len(a.identities) != len(b.identities) {
 			return len(a.identities) > len(b.identities)
 		}
-		at, aerr := parseLFXTimestamp(a.user.LastModifiedDate)
-		bt, berr := parseLFXTimestamp(b.user.LastModifiedDate)
-		if aerr == nil && berr == nil && !at.Equal(bt) {
+		// An unparseable timestamp maps to the zero time so the comparison
+		// stays a total order: falling back to ID only for mixed
+		// valid/invalid pairs made the less-func non-transitive, and a
+		// non-transitive comparator lets sort pick the wrong "chosen" row.
+		at := lfxTimestampOrZero(a.user.LastModifiedDate)
+		bt := lfxTimestampOrZero(b.user.LastModifiedDate)
+		if !at.Equal(bt) {
 			return at.After(bt)
 		}
 		return a.user.ID < b.user.ID
@@ -524,6 +528,17 @@ func isContactType(userType string) bool {
 // parseLFXTimestamp parses the LastModifiedDate LFX returns from
 // /user-service/v2/users/search, which has been observed as RFC3339
 // (optionally with fractional seconds).
+// lfxTimestampOrZero collapses an unparseable LastModifiedDate to the zero
+// time, which sorts after every valid timestamp under "newer first". This
+// keeps rankCandidates' less-func a total order.
+func lfxTimestampOrZero(value string) time.Time {
+	t, err := parseLFXTimestamp(value)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
 func parseLFXTimestamp(value string) (time.Time, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
