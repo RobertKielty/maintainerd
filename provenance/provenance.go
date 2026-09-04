@@ -364,8 +364,10 @@ func jsonEscape(s string) string {
 	if err != nil {
 		return s
 	}
-	trimmed := strings.Trim(string(escaped), `"`)
-	return trimmed
+	// Slice off exactly the outer JSON delimiters: strings.Trim would also
+	// eat an escaped quote at the end of a path ending in `"`, producing a
+	// malformed GraphQL string.
+	return string(escaped[1 : len(escaped)-1])
 }
 
 // ParseGitHubBlobURL extracts owner/repo/ref/path from a github.com blob

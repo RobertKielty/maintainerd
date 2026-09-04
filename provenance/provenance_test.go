@@ -350,3 +350,11 @@ func TestResolveCountsApprovalOnLaterHeadContainingBlamedCommit(t *testing.T) {
 		t.Errorf("ReviewState = %q, want %q (a reviewed head containing the blamed commit vouches for the line)", prov.ReviewState, ReviewStateApproved)
 	}
 }
+
+func TestJSONEscapePreservesTrailingQuote(t *testing.T) {
+	got := jsonEscape(`dir/weird".md`)
+	want := `dir/weird\".md`
+	if got != want {
+		t.Errorf("jsonEscape = %q, want %q (a path ending in a quote must keep its escaped quote)", got, want)
+	}
+}
