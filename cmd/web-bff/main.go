@@ -4857,6 +4857,8 @@ type lfxEnrichmentRun struct {
 	TotalProjects      int                    `json:"totalProjects"`
 	ProjectsProcessed  int                    `json:"projectsProcessed"`
 	CurrentProject     string                 `json:"currentProject,omitempty"`
+	StoppedEarly       bool                   `json:"stoppedEarly,omitempty"`
+	RemainingProjects  int                    `json:"remainingProjects,omitempty"`
 	Attempted          int                    `json:"attempted"`
 	Matched            int                    `json:"matched"`
 	Ambiguous          int                    `json:"ambiguous"`
@@ -5219,14 +5221,23 @@ func (s *server) runLFXEnrichment(runID string, options lfxEnrichmentRunOptions,
 		MaxLookups: options.MaxLookups,
 		Progress:   s.lfxProgressUpdater(runID),
 	}
-	if err == nil && options.EnrichAll && summary.Enrichment.Attempted == 0 && summary.Enrichment.SkippedLimit == 0 {
+	if err == nil && !summary.StoppedEarly && options.EnrichAll && summary.Enrichment.Attempted == 0 && summary.Enrichment.SkippedLimit == 0 {
 		summary.Enrichment, err = enricher.EnrichProject(ctx, model.Project{}, nil)
+	}
+	// Post-run bookkeeping must not reuse the run's context: after a clean
+	// stopped-early return it is already exhausted, and publishing the gist
+	// with it would convert the partial success into a failed run.
+	postCtx := ctx
+	if ctx.Err() != nil {
+		var cancelPost context.CancelFunc
+		postCtx, cancelPost = context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancelPost()
 	}
 	gistID := strings.TrimSpace(gistOptions.ID)
 	gistURL := ""
 	gistRows := 0
 	if err == nil && gistOptions.Write {
-		gist, rows, publishErr := s.publishLFXDotProjectGist(ctx, gistOptions)
+		gist, rows, publishErr := s.publishLFXDotProjectGist(postCtx, gistOptions)
 		gistRows = rows
 		if publishErr != nil {
 			err = publishErr
@@ -5244,6 +5255,8 @@ func (s *server) runLFXEnrichment(runID string, options lfxEnrichmentRunOptions,
 		run.GistID = gistID
 		run.GistURL = gistURL
 		run.GistRows = gistRows
+		run.StoppedEarly = summary.StoppedEarly
+		run.RemainingProjects = summary.RemainingProjects
 		if err != nil {
 			run.Status = lfxRunFailed
 			run.Error = err.Error()

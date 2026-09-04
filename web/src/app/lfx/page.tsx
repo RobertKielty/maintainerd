@@ -34,6 +34,8 @@ type LFXRun = {
   totalProjects: number;
   projectsProcessed: number;
   currentProject?: string;
+  stoppedEarly?: boolean;
+  remainingProjects?: number;
   attempted: number;
   matched: number;
   ambiguous: number;
@@ -472,6 +474,11 @@ export default function LFXPage() {
                         {activeRun.currentProject ? (
                           <div className={styles.current}>Project: {activeRun.currentProject}</div>
                         ) : null}
+                        {activeRun.stoppedEarly ? (
+                          <div className={styles.current}>
+                            Stopped early — run time budget exhausted; {(activeRun.remainingProjects ?? 0).toLocaleString()} project(s) not attempted
+                          </div>
+                        ) : null}
                       </>
                     ) : null}
                     <div className={styles.progressTrack}>
@@ -550,7 +557,7 @@ export default function LFXPage() {
                             #{run.id}
                           </button>
                         </td>
-                        <td>{statusLabel(run.status)}</td>
+                        <td>{statusLabel(run.status)}{run.stoppedEarly ? " (partial)" : ""}</td>
                         <td>{run.requestedBy}</td>
                         <td>{run.processed.toLocaleString()} / {run.total.toLocaleString()}</td>
                         <td>{run.matched.toLocaleString()}</td>
