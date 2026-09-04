@@ -124,6 +124,9 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 
 	summary := SyncSummary{Loaded: len(projects)}
 	totalProjects := len(projects)
+	// processed feeds the final progress callback: on a deadline break it
+	// must reflect how far the loop actually got, not jump to 100%.
+	processed := totalProjects
 	for i, project := range projects {
 		s.reportSyncProgress(SyncProgress{
 			TotalProjects:     totalProjects,
@@ -142,24 +145,29 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 		summary.Total++
 		status, enrichment, autoAdd, gistReportRow, err := s.syncProject(ctx, project)
 		if err != nil {
+			// A run-level deadline being exhausted mid-project is expected
+			// under load, not a broken integration: stop cleanly and let the
+			// caller report a partial success, rather than failing the whole
+			// run and losing everything already persisted this pass. This
+			// must catch the deadline wherever it surfaced - GitHub
+			// discovery returns it as a plain error, not a FatalSyncError,
+			// and counting the rest of the run as errors would misreport an
+			// exhausted time budget as dozens of broken projects.
+			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				summary.StoppedEarly = true
+				processed = i
+				summary.RemainingProjects = totalProjects - i - 1
+				summary.recordWarning(projectLabel(project), fmt.Sprintf(
+					"sync run ran out of time (context deadline exceeded); %d project(s) after this one were not attempted this run",
+					summary.RemainingProjects))
+				break
+			}
 			var fatal FatalSyncError
 			if errors.As(err, &fatal) {
-				// A run-level deadline being exhausted mid-project is expected
-				// under load, not a broken integration: stop cleanly and let
-				// the caller report a partial success, rather than failing
-				// the whole run and losing everything already persisted this
-				// pass. A genuine LFX auth failure (no deadline involved)
-				// still aborts the run - retrying it for every remaining
-				// project would just burn the GitHub API rate limit for
-				// certain failures.
-				if errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-					summary.StoppedEarly = true
-					summary.RemainingProjects = totalProjects - i - 1
-					summary.recordWarning(projectLabel(project), fmt.Sprintf(
-						"sync run ran out of time (context deadline exceeded); %d project(s) after this one were not attempted this run",
-						summary.RemainingProjects))
-					break
-				}
+				// A genuine LFX auth failure (no deadline involved) still
+				// aborts the run - retrying it for every remaining project
+				// would just burn the GitHub API rate limit for certain
+				// failures.
 				return summary, err
 			}
 			summary.Errored++
@@ -188,7 +196,7 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 	}
 	s.reportSyncProgress(SyncProgress{
 		TotalProjects:     totalProjects,
-		ProjectsProcessed: totalProjects,
+		ProjectsProcessed: processed,
 		CurrentProject:    "",
 	})
 	return summary, nil
