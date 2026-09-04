@@ -219,7 +219,9 @@ func TestPlatformAccessErrorClassifiesFatality(t *testing.T) {
 		fatal bool
 	}{
 		{name: "401 is fatal", err: &HTTPStatusError{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"}, fatal: true},
-		{name: "403 is fatal", err: &HTTPStatusError{StatusCode: http.StatusForbidden, Status: "403 Forbidden"}, fatal: true},
+		// A 403 can be resource-specific (ACL scope), and issue #150's
+		// verified behavior is that a mid-run 403 does not kill the run.
+		{name: "403 is not fatal", err: &HTTPStatusError{StatusCode: http.StatusForbidden, Status: "403 Forbidden"}, fatal: false},
 		{name: "429 is fatal", err: &HTTPStatusError{StatusCode: http.StatusTooManyRequests, Status: "429 Too Many Requests"}, fatal: true},
 		{name: "500 is not fatal", err: &HTTPStatusError{StatusCode: http.StatusInternalServerError, Status: "500 Internal Server Error"}, fatal: false},
 		{name: "timeout is not fatal", err: fmt.Errorf("request: %w", context.DeadlineExceeded), fatal: false},

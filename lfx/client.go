@@ -55,12 +55,17 @@ func PlatformAccessError(err error) error {
 	}
 	var httpErr *HTTPStatusError
 	switch {
-	case errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden):
-		// Auth and rate-limit failures are marked fatal to a sync run:
-		// every remaining project would hit the same wall, so retrying
-		// per-project just burns quota. Timeouts, 5xx and transport errors
-		// below stay ordinary per-project errors.
-		return dotproject.FatalSyncError{Err: fmt.Errorf("LFX Platform access failed (HTTP %d, invalid or expired token); update LFX_AUTH_TOKEN with a fresh token from %s: %w", httpErr.StatusCode, TokenRefreshURL, err)}
+	case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized:
+		// A dead token (401) and a rate limit (429) are marked fatal to a
+		// sync run: every remaining project would hit the same wall, so
+		// retrying per-project just burns quota. A 403 stays an ordinary
+		// per-project error - it can be resource-specific (ACL scope), and
+		// issue #150's verified behavior is that a mid-run LFX-path 403 does
+		// not kill the run. Timeouts, 5xx and transport errors below are
+		// ordinary per-project errors too.
+		return dotproject.FatalSyncError{Err: fmt.Errorf("LFX Platform access failed (HTTP 401, invalid or expired token); update LFX_AUTH_TOKEN with a fresh token from %s: %w", TokenRefreshURL, err)}
+	case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("LFX Platform denied this request (HTTP 403); the token may lack access to this resource (X-ACL scope) or be expired - check LFX_AUTH_TOKEN and LFX_ACL, refresh at %s: %w", TokenRefreshURL, err)
 	case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusTooManyRequests:
 		return dotproject.FatalSyncError{Err: fmt.Errorf("LFX Platform rate limited this request (HTTP 429); not a token problem, back off LFX_REQUEST_DELAY: %w", err)}
 	case errors.As(err, &httpErr):
