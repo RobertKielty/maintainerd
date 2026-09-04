@@ -123,35 +123,57 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 		// GetBranch call - but a 304 row that still needs resolving (no
 		// reusable observation yet, e.g. a pre-existing ref cache on rollout)
 		// does pin, and the 304 guarantees the cached body matches the tip.
+		// The conditional-fetch validators (ETag/Last-Modified) describe the
+		// branch response; if the analysis body is later swapped for a pinned
+		// snapshot, the cache must still store the branch body those
+		// validators were issued for, or a future 304 would reuse bytes its
+		// validator never described.
+		branchBody := body
+		refResolvedBranch := refBranch
 		refSnapshot := refBranch
+		refSnapshotPath := refPath
 		pinAttempted := false
-		pinSnapshot := func() string {
+		pinSnapshot := func() (string, string) {
 			if pinAttempted || !refResolvable || resolver == nil {
-				return refSnapshot
+				return refSnapshot, refSnapshotPath
 			}
 			pinAttempted = true
-			b, _, err := resolver.Client.Repositories.GetBranch(ctx, refOwner, refRepo, refBranch, false)
+			segments := strings.Split(refPath, "/")
+			branch, path := refBranch, refPath
+			b, _, err := resolver.Client.Repositories.GetBranch(ctx, refOwner, refRepo, branch, false)
+			// A blob URL cannot delimit a branch containing "/" from the file
+			// path (".../blob/release/v2/MAINTAINERS.md" parses as branch
+			// "release", path "v2/MAINTAINERS.md"), so when the first split is
+			// not a real branch, consume path segments into progressively
+			// longer branch candidates until one resolves.
+			for i := 0; err != nil && i < len(segments)-1; i++ {
+				branch = refBranch + "/" + strings.Join(segments[:i+1], "/")
+				path = strings.Join(segments[i+1:], "/")
+				b, _, err = resolver.Client.Repositories.GetBranch(ctx, refOwner, refRepo, branch, false)
+			}
 			if err != nil {
 				log.Printf("sanitize: could not pin %s/%s@%s to a commit, falling back to the branch name: %v", refOwner, refRepo, refBranch, err)
-				return refSnapshot
+				return refSnapshot, refSnapshotPath
 			}
+			refResolvedBranch = branch
+			refSnapshotPath = path
 			if sha := strings.TrimSpace(b.GetCommit().GetSHA()); sha != "" {
 				refSnapshot = sha
 			}
-			return refSnapshot
+			return refSnapshot, refSnapshotPath
 		}
 		if !notModified && refResolvable && resolver != nil {
-			if sha := pinSnapshot(); sha != refBranch {
-				pinnedURL := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", refOwner, refRepo, sha, refPath)
+			if sha, pinnedPath := pinSnapshot(); sha != refResolvedBranch {
+				pinnedURL := fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s", refOwner, refRepo, sha, pinnedPath)
 				if pinnedBody, _, _, err := fetchMaintainerRef(ctx, client, pinnedURL, nil); err == nil && pinnedBody != "" {
 					body = pinnedBody
 				} else {
 					// The SHA is only trustworthy alongside the body fetched
 					// at that SHA; without it, blame and permalinks would
 					// describe different content than the branch body being
-					// analyzed, so fall back to the branch name for both.
+					// analyzed, so fall back to the resolved branch name for both.
 					log.Printf("sanitize: could not fetch pinned snapshot %s, analyzing the branch body at the branch name instead: %v", pinnedURL, err)
-					refSnapshot = refBranch
+					refSnapshot = refResolvedBranch
 				}
 			}
 		}
@@ -214,8 +236,8 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 		if !notModified {
 			cache.ETag = meta.ETag
 			cache.LastModified = meta.LastModified
-			cache.BodyHash = hashBody(body)
-			cache.Body = body
+			cache.BodyHash = hashBody(branchBody)
+			cache.Body = branchBody
 		}
 		cache.LastChecked = &now
 		if err := store.UpsertMaintainerRefCache(cache); err != nil {
@@ -353,7 +375,7 @@ func namePresent(body, name string) bool {
 // the ref is a github.com blob URL - the commit, PR, and review state that
 // introduced it. An unresolvable ref (gist-hosted, no resolver configured)
 // records ReviewStateUnknown rather than being treated as unreviewed.
-func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver *provenance.Resolver, p model.Project, m model.Maintainer, handle string, handleLocations map[string][]int, owner, repo string, pinRef func() string, path string, refResolvable bool, reuseProvenance bool, observedAt time.Time) {
+func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver *provenance.Resolver, p model.Project, m model.Maintainer, handle string, handleLocations map[string][]int, owner, repo string, pinRef func() (string, string), path string, refResolvable bool, reuseProvenance bool, observedAt time.Time) {
 	// handlePresent matches more spellings than the location extractor
 	// recognizes (e.g. a bare word in prose), so a match can have no known
 	// line. Record the observation anyway - the evidence that the handle is
@@ -392,8 +414,10 @@ func writeLegacyRefObservation(ctx context.Context, store *db.SQLStore, resolver
 		// (memoized; falls back to the branch name), so the permalink and the
 		// blame evidence describe the same file state - including on the 304
 		// path, where a row without reusable provenance still pins before
-		// persisting a permanent SourceLineURL.
-		ref := pinRef()
+		// persisting a permanent SourceLineURL. It also yields the file path,
+		// which pinning may have corrected when the branch name contains "/".
+		ref, pinnedPath := pinRef()
+		path = pinnedPath
 		lineURL = fmt.Sprintf("https://github.com/%s/%s/blob/%s/%s#L%d", owner, repo, ref, path, line)
 		if resolver != nil {
 			resolved, err := resolver.Resolve(ctx, owner, repo, ref, path, line)
