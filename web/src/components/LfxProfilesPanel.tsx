@@ -56,8 +56,13 @@ function TypeBadge({ userType }: { userType?: string }) {
 }
 
 export default function LfxProfilesPanel({ observations }: LfxProfilesPanelProps) {
+  // Requiring sourceUserId keeps search-level failure rows (an "error"
+  // observation with no profile behind it) from rendering as blank profiles.
   const profiles = (observations || []).filter(
-    (observation) => observation.source === "lfx" && observation.matchStatus !== "unmatched"
+    (observation) =>
+      observation.source === "lfx" &&
+      observation.matchStatus !== "unmatched" &&
+      Boolean(observation.sourceUserId)
   );
   if (profiles.length === 0) {
     return null;
