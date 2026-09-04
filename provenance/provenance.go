@@ -44,8 +44,17 @@ type Resolver struct {
 	Client *github.Client
 
 	mu        sync.Mutex
-	blameByFK map[fileKey][]blameRange
+	blameByFK map[fileKey]blameResult
 	prByCK    map[commitKey]prInfo
+}
+
+// blameResult caches failures alongside successes: a rate-limited or broken
+// blame lookup would otherwise be retried once per maintainer in the same
+// file, amplifying exactly the quota incident this path is most exposed to.
+// One failure costs at most one request per file per resolver lifetime.
+type blameResult struct {
+	ranges []blameRange
+	err    error
 }
 
 type fileKey struct {
@@ -73,7 +82,7 @@ type prInfo struct {
 func NewResolver(client *github.Client) *Resolver {
 	return &Resolver{
 		Client:    client,
-		blameByFK: make(map[fileKey][]blameRange),
+		blameByFK: make(map[fileKey]blameResult),
 		prByCK:    make(map[commitKey]prInfo),
 	}
 }
@@ -125,21 +134,18 @@ func (r *Resolver) blame(ctx context.Context, owner, repo, ref, path string) ([]
 	key := fileKey{owner: owner, repo: repo, ref: ref, path: path}
 
 	r.mu.Lock()
-	if ranges, ok := r.blameByFK[key]; ok {
+	if cached, ok := r.blameByFK[key]; ok {
 		r.mu.Unlock()
-		return ranges, nil
+		return cached.ranges, cached.err
 	}
 	r.mu.Unlock()
 
 	ranges, err := r.fetchBlame(ctx, owner, repo, ref, path)
-	if err != nil {
-		return nil, err
-	}
 
 	r.mu.Lock()
-	r.blameByFK[key] = ranges
+	r.blameByFK[key] = blameResult{ranges: ranges, err: err}
 	r.mu.Unlock()
-	return ranges, nil
+	return ranges, err
 }
 
 func (r *Resolver) prForCommit(ctx context.Context, owner, repo, sha string) (prInfo, error) {

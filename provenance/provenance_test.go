@@ -78,10 +78,11 @@ func TestParseGitHubBlobURL(t *testing.T) {
 // blame query and the REST commit->PR and PR->reviews lookups. It counts
 // requests per endpoint so cache behavior can be asserted.
 type fakeGitHubServer struct {
-	graphQLCalls int
-	prCalls      int
-	reviewCalls  int
-	reviewsJSON  string
+	graphQLCalls  int
+	prCalls       int
+	reviewCalls   int
+	reviewsJSON   string
+	graphQLStatus int // non-zero: fail the blame query with this HTTP status
 }
 
 func (f *fakeGitHubServer) handler() http.HandlerFunc {
@@ -89,6 +90,11 @@ func (f *fakeGitHubServer) handler() http.HandlerFunc {
 		switch r.URL.Path {
 		case "/api/graphql":
 			f.graphQLCalls++
+			if f.graphQLStatus != 0 {
+				w.WriteHeader(f.graphQLStatus)
+				_, _ = w.Write([]byte(`{}`))
+				return
+			}
 			// The object expression must be a bare commit-ish: "ref:path"
 			// resolves to a Blob on the real API, so the Commit fragment
 			// (and therefore blame) silently returns nothing.
@@ -267,5 +273,24 @@ func TestResolveIgnoresApprovalWithMissingUser(t *testing.T) {
 	}
 	if prov.ReviewState != ReviewStateUnreviewed {
 		t.Errorf("ReviewState = %q, want %q (an approval with no user is unverifiable and must not count as human review)", prov.ReviewState, ReviewStateUnreviewed)
+	}
+}
+
+func TestResolveCachesFailedBlameLookups(t *testing.T) {
+	fake := &fakeGitHubServer{graphQLStatus: http.StatusForbidden}
+	srv := httptest.NewServer(fake.handler())
+	defer srv.Close()
+
+	resolver := newTestResolver(t, srv)
+	ctx := context.Background()
+
+	for _, line := range []int{2, 10, 25} {
+		if _, err := resolver.Resolve(ctx, "example-org", "example-repo", "main", "MAINTAINERS.md", line); err == nil {
+			t.Fatalf("Resolve line %d: expected an error from the failed blame lookup", line)
+		}
+	}
+
+	if fake.graphQLCalls != 1 {
+		t.Errorf("graphQLCalls = %d, want 1 (a failed blame lookup must be cached, not retried per maintainer in the same file)", fake.graphQLCalls)
 	}
 }
