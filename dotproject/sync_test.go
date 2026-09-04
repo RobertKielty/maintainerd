@@ -339,7 +339,7 @@ func TestSyncAllStopsOnFatalEnrichmentError(t *testing.T) {
 	syncer := &Syncer{
 		Store:      store,
 		Discoverer: discoverer,
-		Enricher:   fakeMaintainerEnricher{err: errors.New("LFX Platform access failed; update token")},
+		Enricher:   fakeMaintainerEnricher{err: FatalSyncError{Err: errors.New("LFX Platform access failed; update token")}},
 	}
 
 	summary, err := syncer.SyncAll(context.Background())
@@ -350,6 +350,40 @@ func TestSyncAllStopsOnFatalEnrichmentError(t *testing.T) {
 	assert.Equal(t, 0, summary.Synced)
 	require.Contains(t, discoverer.seen, uint(1))
 	assert.NotContains(t, discoverer.seen, uint(2))
+}
+
+func TestSyncAllTreatsEnricherTimeoutAsProjectError(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+		},
+	}
+	discoverer := &fakeDiscoveryRunner{
+		results: map[uint]*DiscoveryResult{
+			1: {RepoExists: true},
+			2: {RepoExists: true},
+		},
+	}
+	syncer := &Syncer{
+		Store:      store,
+		Discoverer: discoverer,
+		// A single slow LFX request (per-request timeout, run context still
+		// healthy) is not wrapped in FatalSyncError, so the run must record
+		// the project as errored and keep going.
+		Enricher: fakeMaintainerEnricher{err: fmt.Errorf("LFX Platform request timed out: %w", context.DeadlineExceeded)},
+	}
+
+	summary, err := syncer.SyncAll(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.Loaded)
+	assert.Equal(t, 2, summary.Total)
+	assert.Equal(t, 2, summary.Errored)
+	assert.False(t, summary.StoppedEarly)
+	require.Contains(t, discoverer.seen, uint(1))
+	require.Contains(t, discoverer.seen, uint(2))
 }
 
 func TestSyncAllSkipsArchivedAndMaintainerD(t *testing.T) {

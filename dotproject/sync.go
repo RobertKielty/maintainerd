@@ -334,7 +334,10 @@ func (s *Syncer) syncProject(ctx context.Context, project model.Project) (string
 			if enrichment.Errored == 0 {
 				enrichment.Errored++
 			}
-			return status, enrichment, AutoAddSummary{}, gistReportRow, FatalSyncError{Err: err}
+			// Fatality is decided at the source (lfx.PlatformAccessError wraps
+			// only 401/403 and 429 in FatalSyncError); a timeout or 5xx on one
+			// project must not abort the rest of the run.
+			return status, enrichment, AutoAddSummary{}, gistReportRow, err
 		}
 	}
 	autoAdd := AutoAddSummary{}
@@ -344,7 +347,7 @@ func (s *Syncer) syncProject(ctx context.Context, project model.Project) (string
 			if autoAdd.Errored == 0 {
 				autoAdd.Errored++
 			}
-			return status, enrichment, autoAdd, gistReportRow, FatalSyncError{Err: err}
+			return status, enrichment, autoAdd, gistReportRow, err
 		}
 	}
 	return status, enrichment, autoAdd, gistReportRow, nil

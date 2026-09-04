@@ -2,6 +2,9 @@ package lfx
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"maintainerd/dotproject"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -205,4 +208,33 @@ func TestGetEnforcesResponseSizeCap(t *testing.T) {
 	err := client.get(context.Background(), "/user-service/v2/users/search", nil, &target)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "decode")
+}
+
+func TestPlatformAccessErrorClassifiesFatality(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name  string
+		err   error
+		fatal bool
+	}{
+		{name: "401 is fatal", err: &HTTPStatusError{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"}, fatal: true},
+		{name: "403 is fatal", err: &HTTPStatusError{StatusCode: http.StatusForbidden, Status: "403 Forbidden"}, fatal: true},
+		{name: "429 is fatal", err: &HTTPStatusError{StatusCode: http.StatusTooManyRequests, Status: "429 Too Many Requests"}, fatal: true},
+		{name: "500 is not fatal", err: &HTTPStatusError{StatusCode: http.StatusInternalServerError, Status: "500 Internal Server Error"}, fatal: false},
+		{name: "timeout is not fatal", err: fmt.Errorf("request: %w", context.DeadlineExceeded), fatal: false},
+		{name: "transport error is not fatal", err: errors.New("connection reset by peer"), fatal: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			classified := PlatformAccessError(tc.err)
+			require.Error(t, classified)
+			var fatal dotproject.FatalSyncError
+			assert.Equal(t, tc.fatal, errors.As(classified, &fatal),
+				"fatality classification for %q", tc.name)
+			// The original error must stay reachable through the wrap chain.
+			assert.ErrorContains(t, classified, "LFX Platform")
+		})
+	}
 }

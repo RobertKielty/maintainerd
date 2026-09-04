@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maintainerd/dotproject"
 	"net/http"
 	"net/url"
 	"strings"
@@ -55,9 +56,13 @@ func PlatformAccessError(err error) error {
 	var httpErr *HTTPStatusError
 	switch {
 	case errors.As(err, &httpErr) && (httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden):
-		return fmt.Errorf("LFX Platform access failed (HTTP %d, invalid or expired token); update LFX_AUTH_TOKEN with a fresh token from %s: %w", httpErr.StatusCode, TokenRefreshURL, err)
+		// Auth and rate-limit failures are marked fatal to a sync run:
+		// every remaining project would hit the same wall, so retrying
+		// per-project just burns quota. Timeouts, 5xx and transport errors
+		// below stay ordinary per-project errors.
+		return dotproject.FatalSyncError{Err: fmt.Errorf("LFX Platform access failed (HTTP %d, invalid or expired token); update LFX_AUTH_TOKEN with a fresh token from %s: %w", httpErr.StatusCode, TokenRefreshURL, err)}
 	case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusTooManyRequests:
-		return fmt.Errorf("LFX Platform rate limited this request (HTTP 429); not a token problem, back off LFX_REQUEST_DELAY: %w", err)
+		return dotproject.FatalSyncError{Err: fmt.Errorf("LFX Platform rate limited this request (HTTP 429); not a token problem, back off LFX_REQUEST_DELAY: %w", err)}
 	case errors.As(err, &httpErr):
 		return fmt.Errorf("LFX Platform returned HTTP %d; not necessarily a token problem: %w", httpErr.StatusCode, err)
 	case errors.Is(err, context.DeadlineExceeded):
