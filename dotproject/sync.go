@@ -67,6 +67,8 @@ type SyncSummary struct {
 	GistReportRows      []GistReportRow
 	WarningSummaries    []string
 	ErrorSummaries      []string
+	StoppedEarly        bool
+	RemainingProjects   int
 }
 
 type Syncer struct {
@@ -76,6 +78,23 @@ type Syncer struct {
 	AutoAdder              MaintainerAutoAdder
 	MaintainersFileVisitor func(project model.Project, file FileDiscovery)
 	Now                    func() time.Time
+	Progress               func(SyncProgress)
+}
+
+// SyncProgress reports which project a SyncAll run is currently visiting, so
+// a caller can render a projects-processed progress bar alongside the
+// per-project candidate-level EnrichmentProgress.
+type SyncProgress struct {
+	TotalProjects     int
+	ProjectsProcessed int
+	CurrentProject    string
+}
+
+func (s *Syncer) reportSyncProgress(progress SyncProgress) {
+	if s == nil || s.Progress == nil {
+		return
+	}
+	s.Progress(progress)
 }
 
 type FatalSyncError struct {
@@ -104,7 +123,16 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 	}
 
 	summary := SyncSummary{Loaded: len(projects)}
-	for _, project := range projects {
+	totalProjects := len(projects)
+	// processed feeds the final progress callback: on a deadline break it
+	// must reflect how far the loop actually got, not jump to 100%.
+	processed := totalProjects
+	for i, project := range projects {
+		s.reportSyncProgress(SyncProgress{
+			TotalProjects:     totalProjects,
+			ProjectsProcessed: i,
+			CurrentProject:    projectLabel(project),
+		})
 		if !shouldSyncProject(project) {
 			summary.Skipped++
 			if isArchivedProject(project) {
@@ -117,8 +145,43 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 		summary.Total++
 		status, enrichment, autoAdd, gistReportRow, err := s.syncProject(ctx, project)
 		if err != nil {
+			// A run-level deadline being exhausted mid-project is expected
+			// under load, not a broken integration: stop cleanly and let the
+			// caller report a partial success, rather than failing the whole
+			// run and losing everything already persisted this pass. This
+			// must catch the deadline wherever it surfaced - GitHub
+			// discovery returns it as a plain error, not a FatalSyncError,
+			// and counting the rest of the run as errors would misreport an
+			// exhausted time budget as dozens of broken projects. The gate
+			// is the run context itself, not the error's shape: a single
+			// slow request also reports errors.Is(err,
+			// context.DeadlineExceeded) via http.Client.Timeout, and that
+			// must stay an ordinary project error while the run has budget
+			// left.
+			if ctx.Err() != nil {
+				// The interrupted project may have already persisted work
+				// (enrichment rows, auto-added maintainers) before the clock
+				// ran out; fold its partial counters into the summary so the
+				// audit metrics reflect what actually happened.
+				summary.Enrichment.add(enrichment)
+				summary.AutoAdd.add(autoAdd)
+				if gistReportRow != nil {
+					summary.GistReportRows = append(summary.GistReportRows, *gistReportRow)
+				}
+				summary.StoppedEarly = true
+				processed = i
+				summary.RemainingProjects = totalProjects - i - 1
+				summary.recordWarning(projectLabel(project), fmt.Sprintf(
+					"sync run ran out of time (context deadline exceeded); %d project(s) after this one were not attempted this run",
+					summary.RemainingProjects))
+				break
+			}
 			var fatal FatalSyncError
 			if errors.As(err, &fatal) {
+				// A genuine LFX auth failure (no deadline involved) still
+				// aborts the run - retrying it for every remaining project
+				// would just burn the GitHub API rate limit for certain
+				// failures.
 				return summary, err
 			}
 			summary.Errored++
@@ -145,6 +208,11 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 			summary.RepoOnly++
 		}
 	}
+	s.reportSyncProgress(SyncProgress{
+		TotalProjects:     totalProjects,
+		ProjectsProcessed: processed,
+		CurrentProject:    "",
+	})
 	return summary, nil
 }
 
@@ -229,6 +297,15 @@ func (s *Syncer) syncProject(ctx context.Context, project model.Project) (string
 
 	result, err := s.Discoverer.Discover(ctx, project)
 	if err != nil {
+		// An exhausted run deadline is a clean stop, not a broken project:
+		// persisting AdoptionStatusError with a fresh DotProjectLastSyncedAt
+		// here would mark an unprocessed project as errored and push it to
+		// the freshest end of the anti-starvation order, so it would also be
+		// retried last next run. Leave it untouched for the caller's
+		// stopped-early branch.
+		if ctx.Err() != nil {
+			return AdoptionStatusError, EnrichmentSummary{}, AutoAddSummary{}, nil, err
+		}
 		status := AdoptionStatusError
 		state := &model.DotProjectSyncState{
 			ProjectID:       project.ID,
@@ -266,7 +343,11 @@ func (s *Syncer) syncProject(ctx context.Context, project model.Project) (string
 			if enrichment.Errored == 0 {
 				enrichment.Errored++
 			}
-			return status, enrichment, AutoAddSummary{}, gistReportRow, FatalSyncError{Err: err}
+			// Fatality is decided at the source (lfx.PlatformAccessError wraps
+			// only 401 and 429 in FatalSyncError; 403 is deliberately nonfatal
+			// because a per-resource ACL denial mid-run must not abort the
+			// rest); a timeout or 5xx on one project must not abort the run.
+			return status, enrichment, AutoAddSummary{}, gistReportRow, err
 		}
 	}
 	autoAdd := AutoAddSummary{}
@@ -276,7 +357,7 @@ func (s *Syncer) syncProject(ctx context.Context, project model.Project) (string
 			if autoAdd.Errored == 0 {
 				autoAdd.Errored++
 			}
-			return status, enrichment, autoAdd, gistReportRow, FatalSyncError{Err: err}
+			return status, enrichment, autoAdd, gistReportRow, err
 		}
 	}
 	return status, enrichment, autoAdd, gistReportRow, nil

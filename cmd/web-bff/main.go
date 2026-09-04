@@ -27,6 +27,7 @@ import (
 	"maintainerd/model"
 	"maintainerd/onboarding"
 	"maintainerd/plugins/fossa"
+	"maintainerd/provenance"
 	"maintainerd/refparse"
 
 	"github.com/google/go-github/v55/github"
@@ -2241,18 +2242,35 @@ type maintainerProjectResponse struct {
 }
 
 type maintainerIdentityObservationResponse struct {
-	Source      string    `json:"source"`
-	SourceRef   string    `json:"sourceRef,omitempty"`
-	Name        string    `json:"name,omitempty"`
-	Email       string    `json:"email,omitempty"`
-	GitHubUser  string    `json:"githubUser,omitempty"`
-	LFID        string    `json:"lfid,omitempty"`
-	CompanyName string    `json:"companyName,omitempty"`
-	MatchStatus string    `json:"matchStatus,omitempty"`
-	MatchReason string    `json:"matchReason,omitempty"`
-	Confidence  string    `json:"confidence,omitempty"`
-	ProjectID   *uint     `json:"projectId,omitempty"`
-	ObservedAt  time.Time `json:"observedAt"`
+	Source               string     `json:"source"`
+	SourceRef            string     `json:"sourceRef,omitempty"`
+	Name                 string     `json:"name,omitempty"`
+	Email                string     `json:"email,omitempty"`
+	GitHubUser           string     `json:"githubUser,omitempty"`
+	LFID                 string     `json:"lfid,omitempty"`
+	CompanyName          string     `json:"companyName,omitempty"`
+	MatchStatus          string     `json:"matchStatus,omitempty"`
+	MatchReason          string     `json:"matchReason,omitempty"`
+	Confidence           string     `json:"confidence,omitempty"`
+	ProjectID            *uint      `json:"projectId,omitempty"`
+	ObservedAt           time.Time  `json:"observedAt"`
+	SourceUserID         string     `json:"sourceUserId,omitempty"`
+	SourceUserType       string     `json:"sourceUserType,omitempty"`
+	SourceGitHubID       string     `json:"sourceGithubId,omitempty"`
+	SourceLastModifiedAt *time.Time `json:"sourceLastModifiedAt,omitempty"`
+	// identityCount is a pointer, not an int with omitempty: 0 linked
+	// identities is the signal that distinguishes a bare lead profile from a
+	// corroborated one and must serialize, while nil (an observation
+	// recorded before the count was measured) must be omitted so the UI
+	// renders unknown rather than a fabricated zero.
+	IdentityCount     *int   `json:"identityCount,omitempty"`
+	SourceFilePath    string `json:"sourceFilePath,omitempty"`
+	SourceLine        int    `json:"sourceLine,omitempty"`
+	SourceCommitSHA   string `json:"sourceCommitSha,omitempty"`
+	SourceLineURL     string `json:"sourceLineUrl,omitempty"`
+	SourcePRNumber    int    `json:"sourcePrNumber,omitempty"`
+	SourcePRURL       string `json:"sourcePrUrl,omitempty"`
+	SourceReviewState string `json:"sourceReviewState,omitempty"`
 }
 
 type maintainerServiceResponse struct {
@@ -2719,18 +2737,30 @@ func mapMaintainerObservations(obs []model.MaintainerIdentityObservation) []main
 	out := make([]maintainerIdentityObservationResponse, 0, len(obs))
 	for _, o := range obs {
 		r := maintainerIdentityObservationResponse{
-			Source:      o.Source,
-			SourceRef:   o.SourceRef,
-			Name:        o.Name,
-			Email:       o.Email,
-			GitHubUser:  o.GitHubUser,
-			LFID:        o.LFID,
-			CompanyName: o.CompanyName,
-			MatchStatus: o.MatchStatus,
-			MatchReason: o.MatchReason,
-			Confidence:  o.Confidence,
-			ProjectID:   o.ProjectID,
-			ObservedAt:  o.ObservedAt,
+			Source:               o.Source,
+			SourceRef:            o.SourceRef,
+			Name:                 o.Name,
+			Email:                o.Email,
+			GitHubUser:           o.GitHubUser,
+			LFID:                 o.LFID,
+			CompanyName:          o.CompanyName,
+			MatchStatus:          o.MatchStatus,
+			MatchReason:          o.MatchReason,
+			Confidence:           o.Confidence,
+			ProjectID:            o.ProjectID,
+			ObservedAt:           o.ObservedAt,
+			SourceUserID:         o.SourceUserID,
+			SourceUserType:       o.SourceUserType,
+			SourceGitHubID:       o.SourceGitHubID,
+			SourceLastModifiedAt: o.SourceLastModifiedAt,
+			IdentityCount:        o.IdentityCount,
+			SourceFilePath:       o.SourceFilePath,
+			SourceLine:           o.SourceLine,
+			SourceCommitSHA:      o.SourceCommitSHA,
+			SourceLineURL:        o.SourceLineURL,
+			SourcePRNumber:       o.SourcePRNumber,
+			SourcePRURL:          o.SourcePRURL,
+			SourceReviewState:    o.SourceReviewState,
 		}
 		out = append(out, r)
 	}
@@ -4829,6 +4859,11 @@ type lfxEnrichmentRun struct {
 	Total              int                    `json:"total"`
 	Processed          int                    `json:"processed"`
 	Current            string                 `json:"current,omitempty"`
+	TotalProjects      int                    `json:"totalProjects"`
+	ProjectsProcessed  int                    `json:"projectsProcessed"`
+	CurrentProject     string                 `json:"currentProject,omitempty"`
+	StoppedEarly       bool                   `json:"stoppedEarly,omitempty"`
+	RemainingProjects  int                    `json:"remainingProjects,omitempty"`
 	Attempted          int                    `json:"attempted"`
 	Matched            int                    `json:"matched"`
 	Ambiguous          int                    `json:"ambiguous"`
@@ -5160,21 +5195,24 @@ func (s *server) runLFXEnrichment(runID string, options lfxEnrichmentRunOptions,
 				Progress:   s.lfxProgressUpdater(runID),
 			}
 		}
+		githubClient := s.githubClientForToken(ctx, s.githubToken)
 		syncer := &dotproject.Syncer{
 			Store: s.store,
 			Discoverer: &dotproject.Discoverer{
-				Client: &dotproject.GitHubRepositoryClient{Client: s.githubClientForToken(ctx, s.githubToken)},
+				Client: &dotproject.GitHubRepositoryClient{Client: githubClient},
 			},
 			AutoAdder: &dotproject.AutoMaintainerAdder{
 				Store:              s.store,
 				Foundation:         foundationIndex,
 				LFX:                lfxIdentityResolver{client: client},
+				Provenance:         provenance.NewResolver(githubClient),
 				Actor:              requestedBy,
 				CheckFoundationCSV: options.CheckFoundationCSV,
 				AutoAddMaintainers: options.AutoAddMaintainers,
 				Logger:             nil,
 			},
 			Enricher: syncEnricher,
+			Progress: s.lfxSyncProgressUpdater(runID),
 		}
 		summary, err = syncer.SyncAll(ctx)
 	}
@@ -5188,14 +5226,21 @@ func (s *server) runLFXEnrichment(runID string, options lfxEnrichmentRunOptions,
 		MaxLookups: options.MaxLookups,
 		Progress:   s.lfxProgressUpdater(runID),
 	}
-	if err == nil && options.EnrichAll && summary.Enrichment.Attempted == 0 && summary.Enrichment.SkippedLimit == 0 {
+	if err == nil && !summary.StoppedEarly && options.EnrichAll && summary.Enrichment.Attempted == 0 && summary.Enrichment.SkippedLimit == 0 {
 		summary.Enrichment, err = enricher.EnrichProject(ctx, model.Project{}, nil)
 	}
+	// Post-run bookkeeping must not reuse the run's context: after a clean
+	// stopped-early return it is already exhausted, and even a run that
+	// finished just inside the deadline leaves only milliseconds - either
+	// way publishing the gist with it would convert a successful sync into
+	// a failed run.
+	postCtx, cancelPost := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancelPost()
 	gistID := strings.TrimSpace(gistOptions.ID)
 	gistURL := ""
 	gistRows := 0
 	if err == nil && gistOptions.Write {
-		gist, rows, publishErr := s.publishLFXDotProjectGist(ctx, gistOptions)
+		gist, rows, publishErr := s.publishLFXDotProjectGist(postCtx, gistOptions)
 		gistRows = rows
 		if publishErr != nil {
 			err = publishErr
@@ -5208,10 +5253,13 @@ func (s *server) runLFXEnrichment(runID string, options lfxEnrichmentRunOptions,
 	s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
 		run.FinishedAt = &finishedAt
 		run.Current = ""
+		run.CurrentProject = ""
 		applyLFXRunSummary(run, summary.Enrichment)
 		run.GistID = gistID
 		run.GistURL = gistURL
 		run.GistRows = gistRows
+		run.StoppedEarly = summary.StoppedEarly
+		run.RemainingProjects = summary.RemainingProjects
 		if err != nil {
 			run.Status = lfxRunFailed
 			run.Error = err.Error()
@@ -5229,6 +5277,16 @@ func (s *server) lfxProgressUpdater(runID string) func(lfx.EnrichmentProgress) {
 			run.Processed = progress.Processed
 			run.Current = progress.Current
 			applyLFXRunSummary(run, progress.Summary)
+		})
+	}
+}
+
+func (s *server) lfxSyncProgressUpdater(runID string) func(dotproject.SyncProgress) {
+	return func(progress dotproject.SyncProgress) {
+		s.ensureLFXRuns().Update(runID, func(run *lfxEnrichmentRun) {
+			run.TotalProjects = progress.TotalProjects
+			run.ProjectsProcessed = progress.ProjectsProcessed
+			run.CurrentProject = progress.CurrentProject
 		})
 	}
 }
@@ -5295,17 +5353,31 @@ func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, gith
 	}
 	var users []lfx.User
 	var err error
+	matchedByGitHubID := false
 	if githubHandle != "" {
 		users, err = r.client.SearchUsers(ctx, lfx.UserSearch{GitHubID: githubHandle, PageSize: 10})
 		if err != nil {
 			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
 		}
+		matchedByGitHubID = len(users) > 0
 	}
 	if len(users) == 0 && email != "" {
 		users, err = r.client.SearchUsers(ctx, lfx.UserSearch{Email: email, PageSize: 10})
 		if err != nil {
 			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
 		}
+	}
+	matchedByUsername := false
+	if len(users) == 0 && githubHandle != "" {
+		// Some LFX/PCC records have no GithubID field populated, but the LF
+		// Username (the openprofile.dev slug) matches the GitHub handle. A
+		// coincidental string match, not a verified linkage, so it must not
+		// inherit "strong" the way a GitHubID/email match does below.
+		users, err = r.client.SearchUsers(ctx, lfx.UserSearch{Username: githubHandle, PageSize: 10})
+		if err != nil {
+			return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
+		}
+		matchedByUsername = len(users) > 0
 	}
 	if len(users) != 1 {
 		return dotproject.LFXIdentityResult{Confidence: "unmatched", Reason: "LFX user search did not return a single user"}, nil
@@ -5315,14 +5387,38 @@ func (r lfxIdentityResolver) ResolveMaintainerIdentity(ctx context.Context, gith
 	if err != nil {
 		return dotproject.LFXIdentityResult{}, lfx.PlatformAccessError(err)
 	}
+	// Start weak and grant strong only for corroborated matches, mirroring
+	// lfx.confidenceFor: the email fallback can match a secondary address
+	// while returning a profile whose primary email differs, and that
+	// uncorroborated profile must not read as strong (it feeds auto-add).
+	confidence := "weak"
+	var reason string
+	switch {
+	case matchedByUsername:
+		reason = "single LFX user match by username only"
+	case matchedByGitHubID && strings.EqualFold(strings.TrimSpace(user.Type), "contact"):
+		confidence = "strong"
+		reason = "single LFX user match by GitHub ID on a claimed (contact) profile"
+	case matchedByGitHubID:
+		// A bare GitHub-ID match on a "lead" (a stale, never-claimed
+		// Salesforce row - see lfx/LFX-USER-API-NOTES.MD finding 8) must not
+		// read as strong; the identity loop below can still upgrade it to
+		// exact, mirroring lfx.confidenceFor.
+		reason = "single LFX user match by GitHub ID on an unclaimed (lead) profile"
+	case email != "" && strings.EqualFold(strings.TrimSpace(user.Email), email):
+		confidence = "strong"
+		reason = "single LFX user match by corroborated email"
+	default:
+		reason = "single LFX user match by email without a corroborating primary email"
+	}
 	result := dotproject.LFXIdentityResult{
 		UserID:     strings.TrimSpace(user.ID),
 		LFID:       strings.TrimSpace(user.Username),
 		Name:       firstNonEmpty(strings.TrimSpace(user.Name), strings.TrimSpace(user.FirstName+" "+user.LastName)),
 		Email:      strings.TrimSpace(user.Email),
 		GitHubUser: githubHandle,
-		Confidence: "strong",
-		Reason:     "single LFX user match",
+		Confidence: confidence,
+		Reason:     reason,
 	}
 	for _, identity := range identities {
 		if strings.EqualFold(strings.TrimSpace(identity.Source), "github") && githubHandle != "" && strings.EqualFold(identity.Username, githubHandle) {

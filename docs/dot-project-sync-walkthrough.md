@@ -284,7 +284,7 @@ when auto-add is running in dry-run mode.
 
 Default lookup limits:
 
-- normal mode: 50 lookups per run
+- normal mode: 100 lookups per run
 - `LFX_ENRICH_ALL_MAINTAINERS=true`: unlimited unless `LFX_MAX_LOOKUPS` is set
 
 Default request pacing:

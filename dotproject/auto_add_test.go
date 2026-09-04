@@ -78,6 +78,19 @@ func (f *fakeAutoAddStore) UpsertMaintainerIdentityObservation(observation *mode
 	return observation, nil
 }
 
+func (f *fakeAutoAddStore) AdoptMaintainerIdentityObservations(maintainerID, projectID uint, sourceRef string) (int64, error) {
+	var adopted int64
+	for i := range f.observed {
+		observation := &f.observed[i]
+		if observation.MaintainerID == nil && observation.ProjectID != nil && *observation.ProjectID == projectID && observation.SourceRef == sourceRef {
+			id := maintainerID
+			observation.MaintainerID = &id
+			adopted++
+		}
+	}
+	return adopted, nil
+}
+
 func (f *fakeAutoAddStore) GetLatestMaintainerIdentityObservation(source string, maintainerID uint) (*model.MaintainerIdentityObservation, error) {
 	for i := len(f.observed) - 1; i >= 0; i-- {
 		observation := f.observed[i]
@@ -152,14 +165,19 @@ Graduated,Kubernetes,Alice Example,Acme,AliceExample
 	assert.Equal(t, "Kubernetes", summary.WouldCreate[0].Project)
 	assert.Equal(t, "AliceExample", summary.WouldCreate[0].GitHub)
 	assert.Empty(t, store.maintainers)
-	require.Len(t, store.observed, 2)
+	require.Len(t, store.observed, 4)
 	statuses := make(map[string]bool)
+	sources := make(map[string]int)
 	for _, observation := range store.observed {
-		assert.Equal(t, FoundationCSVSource, observation.Source)
-		statuses[observation.MatchStatus] = true
+		sources[observation.Source]++
+		if observation.Source == FoundationCSVSource {
+			statuses[observation.MatchStatus] = true
+		}
 	}
 	assert.True(t, statuses["matched"])
 	assert.True(t, statuses["unmatched"])
+	assert.Equal(t, 2, sources[FoundationCSVSource])
+	assert.Equal(t, 2, sources["dot-project"])
 }
 
 func TestAutoMaintainerAdderSkipsInvalidMaintainersFile(t *testing.T) {
@@ -299,4 +317,87 @@ Graduated,Kubernetes,Alice Example,Acme,AliceExample
 	require.Len(t, store.audits, 1)
 	assert.Equal(t, "ADD_DOT_PROJECT_MAINTAINER", store.audits[0].Action)
 	assert.Contains(t, store.audits[0].Message, "aliceexample was added")
+}
+
+// A maintainer created by auto-add is created *after* its dot-project and
+// foundation observations are written, so those rows start with a NULL
+// maintainer ID. They must be adopted in the same run, or the evidence that
+// justified creating the maintainer is orphaned forever (the observation
+// upsert key treats NULL and a concrete maintainer ID as different rows).
+func TestAutoMaintainerAdderWriteModeAdoptsObservationsForCreatedMaintainer(t *testing.T) {
+	t.Parallel()
+
+	index, err := ParseFoundationMaintainersCSV(strings.NewReader(`,Project,Maintainer Name,Company,Github Name
+Graduated,Kubernetes,Alice Example,Acme,AliceExample
+`))
+	require.NoError(t, err)
+
+	store := newFakeAutoAddStore()
+	adder := &AutoMaintainerAdder{
+		Store:              store,
+		Foundation:         index,
+		CheckFoundationCSV: true,
+		AutoAddMaintainers: true,
+	}
+
+	summary, err := adder.ProcessProject(context.Background(), model.Project{Model: gorm.Model{ID: 1}, Name: "Kubernetes"}, &DiscoveryResult{
+		MaintainersFile: FileDiscovery{Exists: true, Body: `maintainers:
+  - teams:
+      - name: project-maintainers
+        members: [AliceExample]
+`},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 1, summary.CreatedMaintainers)
+
+	created, ok := store.maintainers["aliceexample"]
+	require.True(t, ok)
+	require.NotEmpty(t, store.observed)
+	for _, observation := range store.observed {
+		require.NotNil(t, observation.MaintainerID, "observation from source %q must be attached to the created maintainer", observation.Source)
+		assert.Equal(t, created.ID, *observation.MaintainerID, "observation from source %q", observation.Source)
+	}
+}
+
+// With the Foundation CSV gate off no lookup ever happens, so writing a
+// "matched" foundation-csv row would fabricate evidence that was never
+// queried. Only the dot-project observation may be recorded.
+func TestAutoMaintainerAdderSkipsFoundationObservationWhenCSVGateOff(t *testing.T) {
+	t.Parallel()
+
+	store := newFakeAutoAddStore()
+	adder := &AutoMaintainerAdder{
+		Store:              store,
+		CheckFoundationCSV: false,
+		AutoAddMaintainers: false,
+	}
+
+	_, err := adder.ProcessProject(context.Background(), model.Project{Model: gorm.Model{ID: 1}, Name: "Kubernetes"}, &DiscoveryResult{
+		MaintainersFile: FileDiscovery{Exists: true, Body: `maintainers:
+  - teams:
+      - name: project-maintainers
+        members: [AliceExample]
+`},
+	})
+	require.NoError(t, err)
+
+	require.NotEmpty(t, store.observed)
+	for _, observation := range store.observed {
+		assert.NotEqual(t, FoundationCSVSource, observation.Source, "no foundation-csv observation may be written when the CSV was never consulted")
+	}
+}
+
+func TestFoundationCSVPathFollowsConfiguredSource(t *testing.T) {
+	t.Parallel()
+
+	custom := &AutoMaintainerAdder{Foundation: &FoundationMaintainerIndex{
+		SourceURL: "https://github.com/example-org/foundation/blob/abc123/data/region/maintainers.csv",
+	}}
+	assert.Equal(t, "data/region/maintainers.csv", custom.foundationCSVPath(),
+		"SourceFilePath must follow the configured CSV path, not a hard-coded default")
+
+	unparseable := &AutoMaintainerAdder{Foundation: &FoundationMaintainerIndex{SourceURL: "not-a-blob-url"}}
+	assert.Equal(t, "project-maintainers.csv", unparseable.foundationCSVPath())
+
+	assert.Equal(t, "project-maintainers.csv", (&AutoMaintainerAdder{}).foundationCSVPath())
 }

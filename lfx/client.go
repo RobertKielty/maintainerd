@@ -3,8 +3,10 @@ package lfx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"maintainerd/dotproject"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,11 +30,54 @@ type Client struct {
 	lastRequest time.Time
 }
 
+// HTTPStatusError is returned by Client.get for any non-2xx response, so
+// callers can classify LFX failures by status code instead of guessing from
+// error text.
+type HTTPStatusError struct {
+	StatusCode int
+	Status     string
+	Body       string
+	URL        string
+}
+
+func (e *HTTPStatusError) Error() string {
+	return fmt.Sprintf("GET %s: %s: %s", e.URL, e.Status, e.Body)
+}
+
+// PlatformAccessError wraps an LFX API failure with a message matched to its
+// actual cause: an expired/invalid token (401/403) genuinely needs a token
+// refresh, but a timeout, rate limit, or 5xx does not - pointing at
+// LFX_AUTH_TOKEN in those cases is misleading and sends whoever is
+// debugging an outage to the wrong place.
 func PlatformAccessError(err error) error {
 	if err == nil {
 		return nil
 	}
-	return fmt.Errorf("LFX Platform access failed; update LFX_AUTH_TOKEN with a fresh token from %s: %w", TokenRefreshURL, err)
+	var httpErr *HTTPStatusError
+	switch {
+	case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusUnauthorized:
+		// A dead token (401) and a rate limit (429) are marked fatal to a
+		// sync run: every remaining project would hit the same wall, so
+		// retrying per-project just burns quota. A 403 stays an ordinary
+		// per-project error - it can be resource-specific (ACL scope), and
+		// issue #150's verified behavior is that a mid-run LFX-path 403 does
+		// not kill the run. Timeouts, 5xx and transport errors below are
+		// ordinary per-project errors too.
+		return dotproject.FatalSyncError{Err: fmt.Errorf("LFX Platform access failed (HTTP 401, invalid or expired token); update LFX_AUTH_TOKEN with a fresh token from %s: %w", TokenRefreshURL, err)}
+	case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusForbidden:
+		return fmt.Errorf("LFX Platform denied this request (HTTP 403); the token may lack access to this resource (X-ACL scope) or be expired - check LFX_AUTH_TOKEN and LFX_ACL, refresh at %s: %w", TokenRefreshURL, err)
+	case errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusTooManyRequests:
+		return dotproject.FatalSyncError{Err: fmt.Errorf("LFX Platform rate limited this request (HTTP 429); not a token problem, back off LFX_REQUEST_DELAY: %w", err)}
+	case errors.As(err, &httpErr):
+		return fmt.Errorf("LFX Platform returned HTTP %d; not necessarily a token problem: %w", httpErr.StatusCode, err)
+	case errors.Is(err, context.DeadlineExceeded):
+		return fmt.Errorf("LFX Platform request timed out (context deadline exceeded); not a token problem, this is a slow response or the run's overall time budget was exhausted: %w", err)
+	default:
+		// DNS failures, TLS errors, connection resets, and cancellations all
+		// land here; none of them are cured by a fresh token, so the token
+		// guidance stays reserved for the explicit 401/403 branch above.
+		return fmt.Errorf("LFX Platform request failed (transport error, not necessarily a token problem): %w", err)
+	}
 }
 
 func (c *Client) CheckToken(ctx context.Context) error {
@@ -52,14 +97,17 @@ type UserSearch struct {
 }
 
 type User struct {
-	ID        string          `json:"ID"`
-	FirstName string          `json:"FirstName"`
-	LastName  string          `json:"LastName"`
-	Name      string          `json:"Name"`
-	Email     string          `json:"Email"`
-	Username  string          `json:"Username"`
-	Account   json.RawMessage `json:"Account"`
-	Raw       json.RawMessage `json:"-"`
+	ID               string          `json:"ID"`
+	FirstName        string          `json:"FirstName"`
+	LastName         string          `json:"LastName"`
+	Name             string          `json:"Name"`
+	Email            string          `json:"Email"`
+	Username         string          `json:"Username"`
+	Account          json.RawMessage `json:"Account"`
+	Type             string          `json:"Type"` // "lead" | "contact" - see LFX-USER-API-NOTES.MD finding 8
+	GithubID         string          `json:"GithubID"`
+	LastModifiedDate string          `json:"LastModifiedDate"`
+	Raw              json.RawMessage `json:"-"`
 }
 
 type Identity struct {
@@ -172,7 +220,12 @@ func (c *Client) get(ctx context.Context, path string, values url.Values, target
 		return err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("GET %s: %s: %s", endpoint.String(), resp.Status, strings.TrimSpace(string(body)))
+		return &HTTPStatusError{
+			StatusCode: resp.StatusCode,
+			Status:     resp.Status,
+			Body:       strings.TrimSpace(string(body)),
+			URL:        endpoint.String(),
+		}
 	}
 	if target == nil {
 		return nil

@@ -3,6 +3,7 @@ package dotproject
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -260,6 +261,33 @@ func TestSyncAllSummarizesStatuses(t *testing.T) {
 	assert.Contains(t, summary.ErrorSummaries[0], "boom")
 }
 
+func TestSyncAllReportsProjectProgress(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+		},
+	}
+	var updates []SyncProgress
+	syncer := &Syncer{
+		Store:      store,
+		Discoverer: &fakeDiscoveryRunner{},
+		Progress: func(progress SyncProgress) {
+			updates = append(updates, progress)
+		},
+	}
+
+	_, err := syncer.SyncAll(context.Background())
+	require.NoError(t, err)
+
+	require.Len(t, updates, 3, "one update per project visited plus a final completion update")
+	assert.Equal(t, SyncProgress{TotalProjects: 2, ProjectsProcessed: 0, CurrentProject: "Project One"}, updates[0])
+	assert.Equal(t, SyncProgress{TotalProjects: 2, ProjectsProcessed: 1, CurrentProject: "Project Two"}, updates[1])
+	assert.Equal(t, SyncProgress{TotalProjects: 2, ProjectsProcessed: 2, CurrentProject: ""}, updates[2])
+}
+
 func TestSyncAllSummarizesMaintainersParseWarnings(t *testing.T) {
 	t.Parallel()
 
@@ -311,7 +339,7 @@ func TestSyncAllStopsOnFatalEnrichmentError(t *testing.T) {
 	syncer := &Syncer{
 		Store:      store,
 		Discoverer: discoverer,
-		Enricher:   fakeMaintainerEnricher{err: errors.New("LFX Platform access failed; update token")},
+		Enricher:   fakeMaintainerEnricher{err: FatalSyncError{Err: errors.New("LFX Platform access failed; update token")}},
 	}
 
 	summary, err := syncer.SyncAll(context.Background())
@@ -322,6 +350,40 @@ func TestSyncAllStopsOnFatalEnrichmentError(t *testing.T) {
 	assert.Equal(t, 0, summary.Synced)
 	require.Contains(t, discoverer.seen, uint(1))
 	assert.NotContains(t, discoverer.seen, uint(2))
+}
+
+func TestSyncAllTreatsEnricherTimeoutAsProjectError(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+		},
+	}
+	discoverer := &fakeDiscoveryRunner{
+		results: map[uint]*DiscoveryResult{
+			1: {RepoExists: true},
+			2: {RepoExists: true},
+		},
+	}
+	syncer := &Syncer{
+		Store:      store,
+		Discoverer: discoverer,
+		// A single slow LFX request (per-request timeout, run context still
+		// healthy) is not wrapped in FatalSyncError, so the run must record
+		// the project as errored and keep going.
+		Enricher: fakeMaintainerEnricher{err: fmt.Errorf("LFX Platform request timed out: %w", context.DeadlineExceeded)},
+	}
+
+	summary, err := syncer.SyncAll(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, 2, summary.Loaded)
+	assert.Equal(t, 2, summary.Total)
+	assert.Equal(t, 2, summary.Errored)
+	assert.False(t, summary.StoppedEarly)
+	require.Contains(t, discoverer.seen, uint(1))
+	require.Contains(t, discoverer.seen, uint(2))
 }
 
 func TestSyncAllSkipsArchivedAndMaintainerD(t *testing.T) {
@@ -360,4 +422,81 @@ func TestSyncAllSkipsArchivedAndMaintainerD(t *testing.T) {
 
 func uintPtr(v uint) *uint {
 	return &v
+}
+
+// cancelingDiscoveryRunner cancels the run context while "discovering" one
+// specific project, simulating the run's time budget expiring mid-project.
+type cancelingDiscoveryRunner struct {
+	inner    *fakeDiscoveryRunner
+	cancelOn uint
+	cancel   context.CancelFunc
+}
+
+func (c *cancelingDiscoveryRunner) Discover(ctx context.Context, project model.Project) (*DiscoveryResult, error) {
+	if project.ID == c.cancelOn {
+		c.cancel()
+		return nil, ctx.Err()
+	}
+	return c.inner.Discover(ctx, project)
+}
+
+func TestSyncAllStopsCleanlyWhenRunContextExpires(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+			{Model: gorm.Model{ID: 3}, Name: "Project Three", GitHubOrg: "org-three"},
+		},
+	}
+	syncer := &Syncer{
+		Store: store,
+		Discoverer: &cancelingDiscoveryRunner{
+			inner:    &fakeDiscoveryRunner{results: map[uint]*DiscoveryResult{1: {RepoExists: true}}},
+			cancelOn: 2,
+			cancel:   cancel,
+		},
+	}
+
+	summary, err := syncer.SyncAll(ctx)
+	require.NoError(t, err)
+	assert.True(t, summary.StoppedEarly)
+	assert.Equal(t, 1, summary.RemainingProjects)
+	assert.Equal(t, 1, summary.Synced)
+	assert.Equal(t, 0, summary.Errored)
+	assert.Len(t, summary.WarningSummaries, 1)
+	assert.NotContains(t, store.persisted, uint(2),
+		"a project interrupted by the run deadline must not be persisted as errored with a fresh sync timestamp - that would misreport it and push it to the back of the anti-starvation order")
+}
+
+func TestSyncAllTreatsRequestTimeoutAsProjectError(t *testing.T) {
+	t.Parallel()
+
+	store := &fakeSyncStore{
+		projects: []model.Project{
+			{Model: gorm.Model{ID: 1}, Name: "Project One", GitHubOrg: "org-one"},
+			{Model: gorm.Model{ID: 2}, Name: "Project Two", GitHubOrg: "org-two"},
+			{Model: gorm.Model{ID: 3}, Name: "Project Three", GitHubOrg: "org-three"},
+		},
+	}
+	syncer := &Syncer{
+		Store: store,
+		Discoverer: &fakeDiscoveryRunner{
+			results: map[uint]*DiscoveryResult{1: {RepoExists: true}, 3: {RepoExists: true}},
+			// A single slow request surfaces as an error that matches
+			// errors.Is(err, context.DeadlineExceeded) via
+			// http.Client.Timeout; while the run context is healthy this
+			// must stay a per-project error, not end the run.
+			errors: map[uint]error{2: fmt.Errorf("Get \"https://api.github.example\": %w", context.DeadlineExceeded)},
+		},
+	}
+
+	summary, err := syncer.SyncAll(context.Background())
+	require.NoError(t, err)
+	assert.False(t, summary.StoppedEarly)
+	assert.Equal(t, 0, summary.RemainingProjects)
+	assert.Equal(t, 1, summary.Errored)
+	assert.Equal(t, 2, summary.Synced)
 }

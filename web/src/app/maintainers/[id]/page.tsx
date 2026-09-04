@@ -15,6 +15,7 @@ import MaintainerServicesPanel, {
 import MaintainerIdentityPanel, {
   IdentityObservation,
 } from "@/components/MaintainerIdentityPanel";
+import LfxProfilesPanel from "@/components/LfxProfilesPanel";
 import CompanyCreateModal from "@/components/CompanyCreateModal";
 import { getAuthBaseUrl, redirectToAuthLogin } from "@/utils/auth";
 import styles from "./page.module.css";
@@ -394,10 +395,19 @@ export default function MaintainerPage() {
     if (lfxObservations.length === 0) {
       return null;
     }
+    // The chosen row wins even without an LFID: falling back to any row
+    // that happens to carry one would let a duplicate profile drive the
+    // summary card's OpenProfile link.
     const best =
-      lfxObservations.find((observation) => observation.matchStatus === "matched" && observation.lfid) ||
-      lfxObservations.find((observation) => observation.lfid) ||
-      lfxObservations[0];
+      lfxObservations.find((observation) => observation.matchStatus === "chosen") ||
+      lfxObservations.find((observation) => observation.matchStatus === "matched") ||
+      lfxObservations.find(
+        (observation) =>
+          observation.matchStatus !== "duplicate" && observation.matchStatus !== "error"
+      );
+    if (!best) {
+      return null;
+    }
     return { lfid: best.lfid, matchStatus: best.matchStatus };
   }, [maintainer?.observations]);
 
@@ -519,6 +529,9 @@ export default function MaintainerPage() {
               }}
               services={maintainer.services}
             />
+          ) : null}
+          {role === "staff" && maintainer?.observations?.length ? (
+            <LfxProfilesPanel observations={maintainer.observations} />
           ) : null}
           {role === "staff" && maintainer?.observations?.length ? (
             <MaintainerIdentityPanel observations={maintainer.observations} />

@@ -10,8 +10,8 @@ body {
   --md-card-text-strong: #0b1220;
   --md-card-muted: rgba(15, 23, 42, 0.6);
   --md-card-subtle: rgba(15, 23, 42, 0.45);
-  --md-border: rgba(15, 23, 42, 0.08);
-  --md-border-strong: rgba(15, 23, 42, 0.2);
+  --md-border: rgba(15, 23, 42, 0.18);
+  --md-border-strong: rgba(15, 23, 42, 0.32);
   --md-surface: rgba(15, 23, 42, 0.04);
   --md-surface-strong: rgba(15, 23, 42, 0.08);
   --md-chip-bg: rgba(15, 23, 42, 0.12);
