@@ -75,10 +75,16 @@ func sanitize(ctx context.Context, store *db.SQLStore, resolver *provenance.Reso
 		// A project that has adopted .project is managed from its
 		// maintainers.yaml by dot-project-sync; its legacy ref file is on its
 		// way out and often stale. Reconciling status against it would archive
-		// maintainers who only exist in the new file, so sanitize leaves
-		// adopted (and partially adopted) projects alone entirely.
-		if p.DotProjectAdoptionStatus == dotproject.AdoptionStatusAdopted || p.DotProjectAdoptionStatus == dotproject.AdoptionStatusPartial {
-			log.Printf("sanitize: skip project %d (%s), .project adoption status is %q so the legacy ref is no longer authoritative", p.ID, p.Name, p.DotProjectAdoptionStatus)
+		// maintainers who only exist in the new file, so sanitize leaves those
+		// projects alone entirely. "partial" alone is not enough: it also
+		// covers repos where the maintainers file is missing or unparseable
+		// (adoptionStatusFor), so a partial project only bypasses legacy
+		// reconciliation when a maintainer roster was actually parsed -
+		// auto-add runs off a parsed roster regardless of project.yaml.
+		dotProjectAuthoritative := p.DotProjectAdoptionStatus == dotproject.AdoptionStatusAdopted ||
+			(p.DotProjectAdoptionStatus == dotproject.AdoptionStatusPartial && p.DotProjectMaintainerCount != nil)
+		if dotProjectAuthoritative {
+			log.Printf("sanitize: skip project %d (%s), .project adoption status is %q with a parsed maintainer roster so the legacy ref is no longer authoritative", p.ID, p.Name, p.DotProjectAdoptionStatus)
 			continue
 		}
 		ref := strings.TrimSpace(p.LegacyMaintainerRef)
