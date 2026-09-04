@@ -273,7 +273,22 @@ func (e *Enricher) enrichMultipleMatches(ctx context.Context, projectID *uint, c
 	for _, user := range users {
 		identities, err := e.Client.GetUserIdentities(ctx, user.ID)
 		sc := scoredCandidate{user: user, identities: identities, identityErr: err}
-		if err == nil {
+		if err != nil {
+			// Per-profile tolerance only covers nonfatal failures (timeouts,
+			// 5xx, transport). A fatal classification (dead token, rate
+			// limit) would hit every remaining request too, so stop fetching
+			// immediately - after recording this profile's failure as its own
+			// row - instead of burning a doomed request per remaining profile.
+			classified := PlatformAccessError(err)
+			var fatal dotproject.FatalSyncError
+			if errors.As(classified, &fatal) {
+				summary.Errored++
+				if werr := e.writeObservation(projectID, candidate, &user, nil, now, "error", err.Error(), ""); werr != nil {
+					return fmt.Errorf("%w; failed to record LFX error observation for duplicate profile: %v", classified, werr)
+				}
+				return classified
+			}
+		} else {
 			sc.confidence = confidenceFor(user, identities, githubUser, email, matched)
 		}
 		scored = append(scored, sc)
@@ -283,21 +298,13 @@ func (e *Enricher) enrichMultipleMatches(ctx context.Context, projectID *uint, c
 	total := len(scored)
 	for i, sc := range scored {
 		if sc.identityErr != nil {
-			// The failure is recorded as this profile's own row and must not
-			// abort the group, but it still has to count as an error or the
-			// run reports lfx_errored=0 while error rows accumulate.
+			// A nonfatal failure (fatal ones short-circuited during fetching)
+			// is recorded as this profile's own row and must not abort the
+			// group, but it still has to count as an error or the run reports
+			// lfx_errored=0 while error rows accumulate.
 			summary.Errored++
-			classified := PlatformAccessError(sc.identityErr)
 			if err := e.writeObservation(projectID, candidate, &sc.user, nil, now, "error", sc.identityErr.Error(), ""); err != nil {
-				return fmt.Errorf("%w; failed to record LFX error observation for duplicate profile: %v", classified, err)
-			}
-			// Per-profile tolerance only covers nonfatal failures (timeouts,
-			// 5xx, transport). A fatal classification (dead token, rate
-			// limit) would hit every remaining request in the run, so it
-			// must propagate even though this profile's row was recorded.
-			var fatal dotproject.FatalSyncError
-			if errors.As(classified, &fatal) {
-				return classified
+				return fmt.Errorf("failed to record LFX error observation for duplicate profile: %w", err)
 			}
 			continue
 		}
