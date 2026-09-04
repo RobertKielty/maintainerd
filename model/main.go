@@ -246,7 +246,10 @@ type MaintainerIdentityObservation struct {
 	SourceUserType       string     `gorm:"size:32;index"` // lead | contact
 	SourceGitHubID       string     `gorm:"size:100"`
 	SourceLastModifiedAt *time.Time `gorm:"index"`
-	IdentityCount        int
+	// IdentityCount is a pointer so rows recorded before the column existed
+	// stay NULL (never measured) instead of scanning as a measured zero -
+	// zero linked identities is itself a signal in the UI.
+	IdentityCount *int
 
 	// SourceFilePath, SourceLine, SourceCommitSHA, and SourceLineURL let an
 	// investigator navigate from an observation to the exact reviewed line

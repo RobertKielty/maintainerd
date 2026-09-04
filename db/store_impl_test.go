@@ -615,6 +615,7 @@ func TestUpsertMaintainerIdentityObservationUpdatesProfileAndProvenanceFields(t 
 	require.NoError(t, err)
 
 	lastModified := time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)
+	identityCount := 2
 	updated, err := store.UpsertMaintainerIdentityObservation(&model.MaintainerIdentityObservation{
 		MaintainerID:         &maintainerID,
 		ProjectID:            &projectID,
@@ -627,7 +628,7 @@ func TestUpsertMaintainerIdentityObservationUpdatesProfileAndProvenanceFields(t 
 		SourceUserType:       "contact",
 		SourceGitHubID:       "example-handle",
 		SourceLastModifiedAt: &lastModified,
-		IdentityCount:        2,
+		IdentityCount:        &identityCount,
 		SourceFilePath:       "maintainers.yaml",
 		SourceLine:           12,
 		SourceCommitSHA:      "abc123",
@@ -644,7 +645,8 @@ func TestUpsertMaintainerIdentityObservationUpdatesProfileAndProvenanceFields(t 
 	assert.Equal(t, "example-handle", updated.SourceGitHubID)
 	require.NotNil(t, updated.SourceLastModifiedAt)
 	assert.True(t, updated.SourceLastModifiedAt.Equal(lastModified))
-	assert.Equal(t, 2, updated.IdentityCount)
+	require.NotNil(t, updated.IdentityCount, "a measured identity count must persist; NULL means never measured")
+	assert.Equal(t, 2, *updated.IdentityCount)
 	assert.Equal(t, "maintainers.yaml", updated.SourceFilePath)
 	assert.Equal(t, 12, updated.SourceLine)
 	assert.Equal(t, "abc123", updated.SourceCommitSHA)

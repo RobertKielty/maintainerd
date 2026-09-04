@@ -494,7 +494,8 @@ func (e *Enricher) writeRawObservation(projectID *uint, candidate candidate, now
 					observation.SourceLastModifiedAt = &modifiedAt
 				}
 			}
-			observation.IdentityCount = len(payload.Identities)
+			identityCount := len(payload.Identities)
+			observation.IdentityCount = &identityCount
 		}
 	}
 	_, err := e.Store.UpsertMaintainerIdentityObservation(observation)
