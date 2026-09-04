@@ -154,6 +154,15 @@ func (s *Syncer) SyncAll(ctx context.Context) (SyncSummary, error) {
 			// and counting the rest of the run as errors would misreport an
 			// exhausted time budget as dozens of broken projects.
 			if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || ctx.Err() != nil {
+				// The interrupted project may have already persisted work
+				// (enrichment rows, auto-added maintainers) before the clock
+				// ran out; fold its partial counters into the summary so the
+				// audit metrics reflect what actually happened.
+				summary.Enrichment.add(enrichment)
+				summary.AutoAdd.add(autoAdd)
+				if gistReportRow != nil {
+					summary.GistReportRows = append(summary.GistReportRows, *gistReportRow)
+				}
 				summary.StoppedEarly = true
 				processed = i
 				summary.RemainingProjects = totalProjects - i - 1
