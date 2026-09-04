@@ -134,19 +134,20 @@ Each entry is tagged **[LFX]** (a platform-side quirk/bug to be aware of, not ou
    because the other duplicate records' stored `GithubID` values weren't byte-identical (case or
    whitespace differences that v1's substring search tolerates but v2's exact match does not).
 
-   **The multi-match case is already handled safely**: `Enricher.enrich`
-   (`lfx/enricher.go:230,246-252`) routes `len(users) > 1` to `MatchStatus=ambiguous` with
-   confidence forced to `weak` and no canonical field write. **The single-match case is not.**
-   `confidenceFor` (`lfx/enricher.go:373-391`) never reads `user.Type` — it grants `"strong"`
-   confidence to any single GitHub-ID match (`matched == matchedByGitHubID`), so a lone `lead`
-   record with zero supporting identity evidence scores as if it were solid. This is a confirmed
-   confidence-scoring bug, not merely a hypothetical: it was reproduced live against real handles
-   in this same probe run.
+   *(Historical note: at the time of this probe, `Enricher.enrich` routed `len(users) > 1` to a
+   single `MatchStatus=ambiguous` row with confidence forced to `weak`, and `confidenceFor` never
+   read `user.Type` — so a lone `lead` record with zero supporting identity evidence scored
+   `"strong"` on a bare GitHub-ID match. Both have since been fixed: the multi-match case now
+   records one observation row per profile with the best-ranked one marked `chosen` and the rest
+   `duplicate` (`enrichMultipleMatches`), and `confidenceFor` demotes a bare GitHub-ID match on a
+   non-`contact` record to `weak`. The confidence-scoring bug described here was confirmed live
+   against real handles in this same probe run before the fix.)*
 
    **Counter-evidence against a pure `Type` filter:** one probed handle was `Type="lead"` *with* 3
    linked identities — so "`lead` implies zero identities" is not an absolute rule, only a strong
-   correlation. Gating `confidenceFor` on `Type=="contact"` would be a meaningful improvement over
-   today (which checks nothing), but would not be a perfect filter on its own.
+   correlation. Gating `confidenceFor` on `Type=="contact"` (the fix that was ultimately adopted)
+   is a meaningful improvement over checking nothing, but is not a perfect filter on its own — a
+   verified GitHub identity still overrides the type gate and scores `exact`.
 
    **External corroboration:** the CNCF's own `cncf/maintainer-audit-temp` repo
    (`scripts/update_project_maintainers.py`, `lookup_pcc_user()`) independently hits this same
