@@ -395,14 +395,19 @@ export default function MaintainerPage() {
     if (lfxObservations.length === 0) {
       return null;
     }
+    // The chosen row wins even without an LFID: falling back to any row
+    // that happens to carry one would let a duplicate profile drive the
+    // summary card's OpenProfile link.
     const best =
+      lfxObservations.find((observation) => observation.matchStatus === "chosen") ||
+      lfxObservations.find((observation) => observation.matchStatus === "matched") ||
       lfxObservations.find(
         (observation) =>
-          (observation.matchStatus === "matched" || observation.matchStatus === "chosen") &&
-          observation.lfid
-      ) ||
-      lfxObservations.find((observation) => observation.lfid) ||
-      lfxObservations[0];
+          observation.matchStatus !== "duplicate" && observation.matchStatus !== "error"
+      );
+    if (!best) {
+      return null;
+    }
     return { lfid: best.lfid, matchStatus: best.matchStatus };
   }, [maintainer?.observations]);
 
