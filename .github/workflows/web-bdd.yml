@@ -34,23 +34,39 @@ jobs:
           cache: "npm"
           cache-dependency-path: web/package-lock.json
 
+      # Key the browser cache on the Playwright version, not the whole
+      # lockfile: unrelated dependency bumps should not evict the browsers.
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: echo "version=$(jq -r '.packages["node_modules/playwright"].version' web/package-lock.json)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Playwright browsers
+        id: playwright-cache
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('web/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-version.outputs.version }}
 
       - name: Install web deps
         run: |
           cd web
           npm ci
 
+      # The BDD suite only launches chromium (web/tests/steps/hooks.js), so
+      # firefox/webkit/ffmpeg are never needed. On a cache hit the download
+      # is skipped entirely; only the OS packages (which the cache cannot
+      # hold) are installed.
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
           cd web
-          npx playwright install --with-deps
+          npx playwright install --with-deps chromium
+
+      - name: Install Playwright system deps
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: |
+          cd web
+          npx playwright install-deps chromium
 
       - name: Run web BDD tests
         env:
