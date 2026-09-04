@@ -3,6 +3,7 @@ package lfx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -286,8 +287,17 @@ func (e *Enricher) enrichMultipleMatches(ctx context.Context, projectID *uint, c
 			// abort the group, but it still has to count as an error or the
 			// run reports lfx_errored=0 while error rows accumulate.
 			summary.Errored++
+			classified := PlatformAccessError(sc.identityErr)
 			if err := e.writeObservation(projectID, candidate, &sc.user, nil, now, "error", sc.identityErr.Error(), ""); err != nil {
-				return fmt.Errorf("%w; failed to record LFX error observation for duplicate profile: %v", PlatformAccessError(sc.identityErr), err)
+				return fmt.Errorf("%w; failed to record LFX error observation for duplicate profile: %v", classified, err)
+			}
+			// Per-profile tolerance only covers nonfatal failures (timeouts,
+			// 5xx, transport). A fatal classification (dead token, rate
+			// limit) would hit every remaining request in the run, so it
+			// must propagate even though this profile's row was recorded.
+			var fatal dotproject.FatalSyncError
+			if errors.As(classified, &fatal) {
+				return classified
 			}
 			continue
 		}

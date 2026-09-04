@@ -3,6 +3,8 @@ package lfx
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
 	"testing"
 	"time"
 
@@ -477,4 +479,41 @@ func TestRankCandidatesTreatsInvalidTimestampAsOldest(t *testing.T) {
 	assert.Equal(t, "sfid-new", scored[0].user.ID)
 	assert.Equal(t, "sfid-old", scored[1].user.ID)
 	assert.Equal(t, "sfid-invalid", scored[2].user.ID, "an unparseable timestamp must rank below every valid one")
+}
+
+func TestEnrichCandidatePropagatesFatalIdentityFetchFailure(t *testing.T) {
+	t.Parallel()
+
+	users := []User{
+		{ID: "sfid-ok", Type: "contact"},
+		{ID: "sfid-unauthorized", Type: "contact"},
+	}
+	var observed []model.MaintainerIdentityObservation
+	enricher := &Enricher{
+		Store: capturingObservationStore{maintainers: map[string]model.Maintainer{}, observed: &observed},
+		Client: &fakeMultiUserSearcher{
+			users: users,
+			identityErr: map[string]error{
+				"sfid-unauthorized": &HTTPStatusError{StatusCode: http.StatusUnauthorized, Status: "401 Unauthorized"},
+			},
+		},
+	}
+
+	var summary dotproject.EnrichmentSummary
+	err := enricher.enrichCandidate(context.Background(), nil, candidate{
+		GitHubUser: "test-fixture-handle",
+		SourceRef:  "github:test-fixture-handle",
+	}, time.Now().UTC(), &summary)
+	require.Error(t, err, "a dead token hits every remaining request, so it must abort the run even though the profile's error row was written")
+	var fatal dotproject.FatalSyncError
+	assert.True(t, errors.As(err, &fatal), "a 401 identity fetch must classify as FatalSyncError")
+
+	found := false
+	for _, obs := range observed {
+		if obs.SourceUserID == "sfid-unauthorized" {
+			assert.Equal(t, "error", obs.MatchStatus)
+			found = true
+		}
+	}
+	assert.True(t, found, "the failing profile's error row must still be recorded before the fatal error propagates")
 }
